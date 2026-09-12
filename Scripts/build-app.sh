@@ -18,6 +18,11 @@ cp "$projectDirectory/Resources/Cargo-Info.plist" "$appDirectory/Contents/Info.p
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $buildNumber" "$appDirectory/Contents/Info.plist"
 chmod +x "$appDirectory/Contents/MacOS/Cargo"
 /usr/bin/xattr -cr "$appDirectory"
+/usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
+/usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
 codesign --force --deep --sign - --timestamp=none "$appDirectory"
+/usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
+/usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
+codesign --verify --deep --strict "$appDirectory"
 
 printf '%s (version %s, build %s)\n' "$appDirectory" "$CARGO_VERSION" "$buildNumber"
