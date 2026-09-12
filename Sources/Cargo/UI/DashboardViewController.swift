@@ -3,6 +3,8 @@ import AppKit
 final class DashboardViewController: NSViewController {
     private let coordinator: CargoCoordinator
     private let contentStack = NSStackView()
+    private let putIOViewPicker = NSSegmentedControl()
+    private var selectedPutIOView = 0
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let clientIDField = NSTextField()
@@ -45,7 +47,7 @@ final class DashboardViewController: NSViewController {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 12
+        root.spacing = 10
         root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         root.translatesAutoresizingMaskIntoConstraints = false
 
@@ -84,6 +86,14 @@ final class DashboardViewController: NSViewController {
 
         root.addArrangedSubview(header)
         root.addArrangedSubview(Self.separator())
+        putIOViewPicker.segmentCount = 2
+        putIOViewPicker.setLabel("Transfers", forSegment: 0)
+        putIOViewPicker.setLabel("Files", forSegment: 1)
+        putIOViewPicker.trackingMode = .selectOne
+        putIOViewPicker.selectedSegment = selectedPutIOView
+        putIOViewPicker.target = self
+        putIOViewPicker.action = #selector(selectPutIOView(_:))
+        root.addArrangedSubview(putIOViewPicker)
         root.addArrangedSubview(contentStack)
         root.addArrangedSubview(Self.separator())
         root.addArrangedSubview(controls)
@@ -126,7 +136,7 @@ final class DashboardViewController: NSViewController {
         section.spacing = 8
 
         section.addArrangedSubview(sectionHeader("Settings"))
-        section.addArrangedSubview(emptyLabel("Configure the live workflow here. Cargo does not show placeholder media."))
+        section.addArrangedSubview(emptyLabel("Configure the live workflow."))
 
         let putIOTitle = NSTextField(labelWithString: "Put.io account")
         putIOTitle.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -258,29 +268,38 @@ final class DashboardViewController: NSViewController {
 
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         connectionLabel.stringValue = coordinator.putIOStatus
+        putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
 
-        let remoteHeader = sectionHeader("Put.io transfers")
-        contentStack.addArrangedSubview(remoteHeader)
+        if selectedPutIOView == 0 {
+            let remoteHeader = sectionHeader("Put.io transfers · \(state.transfers.count)")
+            contentStack.addArrangedSubview(remoteHeader)
 
-        if state.transfers.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("No active transfers"))
+            if state.transfers.isEmpty {
+                contentStack.addArrangedSubview(emptyLabel("No active transfers"))
+            } else {
+                contentStack.addArrangedSubview(
+                    boundedList(state.transfers.map(remoteRow), height: 210)
+                )
+            }
         } else {
-            state.transfers.forEach { contentStack.addArrangedSubview(remoteRow($0)) }
+            contentStack.addArrangedSubview(remoteFilesHeader())
+            if state.remoteFiles.isEmpty {
+                contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
+            } else {
+                contentStack.addArrangedSubview(
+                    boundedList(state.remoteFiles.map(remoteFileRow), height: 210)
+                )
+            }
         }
 
-        contentStack.addArrangedSubview(remoteFilesHeader())
-        if state.remoteFiles.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
-        } else {
-            state.remoteFiles.forEach { contentStack.addArrangedSubview(remoteFileRow($0)) }
-        }
-
-        contentStack.addArrangedSubview(sectionHeader("Local library queue"))
+        contentStack.addArrangedSubview(sectionHeader("Local library queue · \(state.localJobs.count)"))
         if state.localJobs.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("Nothing waiting for the SSD"))
         } else {
-            state.localJobs.forEach { contentStack.addArrangedSubview(localRow($0)) }
+            contentStack.addArrangedSubview(
+                boundedList(state.localJobs.map(localRow), height: 120)
+            )
         }
     }
 
@@ -291,7 +310,7 @@ final class DashboardViewController: NSViewController {
     }
 
     private func remoteFilesHeader() -> NSView {
-        let title = sectionHeader("Files in Put.io · \(coordinator.remoteFolderName)")
+        let title = sectionHeader("Files in Put.io · \(coordinator.remoteFolderName) · \(coordinator.state.remoteFiles.count)")
         guard coordinator.canGoBackRemoteFolder else { return title }
 
         let backButton = NSButton(title: "Back", target: self, action: #selector(backRemoteFolder(_:)))
@@ -305,10 +324,45 @@ final class DashboardViewController: NSViewController {
         return row
     }
 
+    @objc private func selectPutIOView(_ sender: NSSegmentedControl) {
+        selectedPutIOView = sender.selectedSegment
+        render()
+    }
+
     private func emptyLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         return label
+    }
+
+    private func boundedList(_ rows: [NSView], height: CGFloat) -> NSScrollView {
+        let list = NSStackView(views: rows)
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 7
+        list.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        list.translatesAutoresizingMaskIntoConstraints = false
+
+        let document = NSView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(list)
+
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.borderType = .bezelBorder
+        scrollView.documentView = document
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.heightAnchor.constraint(equalToConstant: height).isActive = true
+
+        NSLayoutConstraint.activate([
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            list.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            list.topAnchor.constraint(equalTo: document.topAnchor),
+            list.bottomAnchor.constraint(equalTo: document.bottomAnchor)
+        ])
+        return scrollView
     }
 
     private func remoteRow(_ transfer: RemoteTransfer) -> NSView {
@@ -325,7 +379,7 @@ final class DashboardViewController: NSViewController {
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 330).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
         return stack
     }
 
@@ -354,7 +408,7 @@ final class DashboardViewController: NSViewController {
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 330).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
         return stack
     }
 
@@ -363,7 +417,8 @@ final class DashboardViewController: NSViewController {
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
 
-        let details = NSTextField(labelWithString: "\(file.type.displayName) · \(Self.bytes(file.sizeBytes))")
+        let downloadStatus = localJob(for: file).map(Self.downloadStatus) ?? "Not downloaded"
+        let details = NSTextField(labelWithString: "\(file.type.displayName) · \(Self.bytes(file.sizeBytes)) · \(downloadStatus)")
         details.textColor = .secondaryLabelColor
         details.font = .systemFont(ofSize: 11)
 
@@ -380,20 +435,47 @@ final class DashboardViewController: NSViewController {
             openButton.tag = file.id
             copy.addArrangedSubview(openButton)
         } else {
-            let syncButton = NSButton(title: isQueued(file) ? "Queued" : "Sync", target: self, action: #selector(syncFile(_:)))
+            let job = localJob(for: file)
+            let syncButton = NSButton(
+                title: job.map(Self.syncButtonTitle) ?? "Sync",
+                target: self,
+                action: #selector(syncFile(_:))
+            )
             syncButton.bezelStyle = .rounded
             syncButton.tag = file.id
-            syncButton.isEnabled = !isQueued(file)
+            syncButton.isEnabled = job == nil
             copy.addArrangedSubview(syncButton)
         }
 
         copy.translatesAutoresizingMaskIntoConstraints = false
-        copy.widthAnchor.constraint(equalToConstant: 330).isActive = true
+        copy.widthAnchor.constraint(equalToConstant: 660).isActive = true
         return copy
     }
 
-    private func isQueued(_ file: RemoteFile) -> Bool {
-        coordinator.state.localJobs.contains(where: { $0.remoteFileID == file.id })
+    private func localJob(for file: RemoteFile) -> LocalSyncJob? {
+        coordinator.state.localJobs
+            .filter { $0.remoteFileID == file.id }
+            .max { $0.updatedAt < $1.updatedAt }
+    }
+
+    private static func downloadStatus(_ job: LocalSyncJob) -> String {
+        switch job.status {
+        case .needsReview:
+            "Downloaded · needs review"
+        case .completed:
+            "Downloaded"
+        default:
+            job.status.displayName
+        }
+    }
+
+    private static func syncButtonTitle(_ job: LocalSyncJob) -> String {
+        switch job.status {
+        case .needsReview, .completed:
+            "Downloaded"
+        default:
+            job.status.displayName
+        }
     }
 
     @objc private func refresh(_ sender: Any?) {
