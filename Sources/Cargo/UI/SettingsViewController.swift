@@ -114,6 +114,9 @@ final class SettingsViewController: NSViewController {
             stack.addArrangedSubview(stepRow(step))
         }
 
+        stack.addArrangedSubview(Self.separator())
+        stack.addArrangedSubview(aboutSection())
+
         let container = NSView()
         container.addSubview(stack)
         scrollView.documentView = container
@@ -269,6 +272,25 @@ final class SettingsViewController: NSViewController {
         return controls
     }
 
+    private func aboutSection() -> NSView {
+        let title = NSTextField(labelWithString: "About Cargo")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let version = NSTextField(labelWithString: "Version \(Self.buildLabel)")
+        version.textColor = .secondaryLabelColor
+        version.font = .systemFont(ofSize: 11)
+
+        let detail = NSTextField(labelWithString: "Native Put.io manager for a local Infuse library.")
+        detail.textColor = .tertiaryLabelColor
+        detail.font = .systemFont(ofSize: 11)
+
+        let section = NSStackView(views: [title, version, detail])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 4
+        return section
+    }
+
     @objc private func saveAndTestPutIO(_ sender: Any?) {
         let token = tokenField.stringValue
         connectButton.isEnabled = false
@@ -336,6 +358,13 @@ final class SettingsViewController: NSViewController {
         box.boxType = .separator
         return box
     }
+
+    private static var buildLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let version, let build, !version.isEmpty, !build.isEmpty else { return "development build" }
+        return "v\(version) (build \(build))"
+    }
 }
 
 final class SettingsWindowController: NSWindowController {
@@ -345,6 +374,7 @@ final class SettingsWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 680, height: 620))
         window.minSize = NSSize(width: 600, height: 480)
+        window.isReleasedWhenClosed = false
         super.init(window: window)
     }
 

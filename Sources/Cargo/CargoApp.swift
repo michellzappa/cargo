@@ -104,6 +104,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
 
         popover.performClose(nil)
         settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.orderFrontRegardless()
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
