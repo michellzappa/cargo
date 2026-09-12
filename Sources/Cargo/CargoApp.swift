@@ -11,6 +11,13 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
 
+    static func main() {
+        let application = NSApplication.shared
+        let delegate = CargoAppDelegate()
+        application.delegate = delegate
+        application.run()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
 
@@ -95,6 +102,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private func showDashboardWindow() {
         if let dashboardWindowController {
             dashboardWindowController.showWindow(nil)
+            dashboardWindowController.window?.orderFrontRegardless()
             dashboardWindowController.window?.makeKeyAndOrderFront(nil)
         } else {
             let window = NSWindow(contentViewController: makeDashboardViewController())
@@ -102,8 +110,11 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             window.setContentSize(NSSize(width: 420, height: 560))
             window.minSize = NSSize(width: 380, height: 480)
+            window.center()
+            window.isReleasedWhenClosed = false
             dashboardWindowController = NSWindowController(window: window)
             dashboardWindowController?.showWindow(nil)
+            dashboardWindowController?.window?.orderFrontRegardless()
         }
 
         NSApplication.shared.activate(ignoringOtherApps: true)
