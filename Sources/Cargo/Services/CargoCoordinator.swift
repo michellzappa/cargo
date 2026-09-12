@@ -2,6 +2,14 @@ import Foundation
 
 @MainActor
 final class CargoCoordinator {
+    enum SettingsError: LocalizedError {
+        case emptyDirectoryName
+
+        var errorDescription: String? {
+            "Library folder names cannot be empty."
+        }
+    }
+
     private let store: CargoStore
     private let keychain = KeychainStore()
     private var putIOClient: PutIOClient
@@ -80,6 +88,21 @@ final class CargoCoordinator {
         )
         state.settings.libraryRootBookmark = bookmark
         state.settings.libraryRootPath = url.path
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+    }
+
+    func saveDirectorySettings(staging: String, movies: String, tvShows: String) throws {
+        let values = [staging, movies, tvShows].map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard values.allSatisfy({ !$0.isEmpty }) else {
+            throw SettingsError.emptyDirectoryName
+        }
+
+        state.settings.stagingDirectoryName = values[0]
+        state.settings.moviesDirectoryName = values[1]
+        state.settings.tvShowsDirectoryName = values[2]
         state.lastUpdated = Date()
         try store.replace(with: state)
     }

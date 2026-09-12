@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import XCTest
 @testable import Cargo
 
@@ -73,39 +72,6 @@ final class CargoTests: XCTestCase {
     func testStatusesHaveHumanReadableNames() {
         XCTAssertEqual(RemoteTransferStatus.downloading.displayName, "Downloading")
         XCTAssertEqual(LocalSyncStatus.needsReview.displayName, "Needs review")
-    }
-
-    @MainActor
-    func testSettingsButtonOpensNormalWindow() throws {
-        let store = CargoStore(
-            stateURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent("CargoSettingsTests-\(UUID().uuidString)")
-                .appendingPathComponent("state.json")
-        )
-        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
-        let dashboard = DashboardViewController(coordinator: coordinator)
-        dashboard.loadViewIfNeeded()
-
-        let settingsButton = try XCTUnwrap(button(named: "Settings…", in: dashboard.view))
-        settingsButton.performClick(nil)
-
-        XCTAssertNotNil(NSApplication.shared.windows.first(where: { $0.title == "Cargo Settings" }))
-        NSApplication.shared.windows
-            .filter { $0.title == "Cargo Settings" }
-            .forEach { $0.close() }
-    }
-
-    @MainActor
-    private func button(named title: String, in view: NSView) -> NSButton? {
-        if let button = view as? NSButton, button.title == title {
-            return button
-        }
-        for child in view.subviews {
-            if let button = button(named: title, in: child) {
-                return button
-            }
-        }
-        return nil
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {

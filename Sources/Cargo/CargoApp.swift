@@ -4,8 +4,6 @@ import AppKit
 @MainActor
 final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
-    private lazy var settingsWindowController = SettingsWindowController(coordinator: coordinator)
     private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: DashboardViewController!
     private var refreshTask: Task<Void, Never>?
@@ -35,16 +33,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             button.imageScaling = .scaleProportionallyDown
             button.setAccessibilityLabel("Cargo menu")
             button.target = self
-            button.action = #selector(togglePopover(_:))
+            button.action = #selector(showDashboard(_:))
             button.toolTip = "Cargo"
         }
-
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.contentSize = NSSize(width: 370, height: 420)
-        dashboardViewController = makeDashboardViewController()
-        popover.contentViewController = dashboardViewController
 
         showDashboardWindow()
 
@@ -86,22 +77,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem.button else { return }
-
-        if popover.isShown {
-            popover.performClose(sender)
-        } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
-        }
-    }
-
-    private func makeDashboardViewController() -> DashboardViewController {
-        DashboardViewController(
-            coordinator: coordinator,
-            settingsWindowController: settingsWindowController
-        )
+    @objc private func showDashboard(_ sender: Any?) {
+        showDashboardWindow()
     }
 
     private func showDashboardWindow() {
@@ -110,11 +87,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             dashboardWindowController.window?.orderFrontRegardless()
             dashboardWindowController.window?.makeKeyAndOrderFront(nil)
         } else {
-            let window = NSWindow(contentViewController: makeDashboardViewController())
+            dashboardViewController = DashboardViewController(coordinator: coordinator)
+            let window = NSWindow(contentViewController: dashboardViewController)
             window.title = "Cargo"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 420, height: 560))
-            window.minSize = NSSize(width: 380, height: 480)
+            window.setContentSize(NSSize(width: 760, height: 820))
+            window.minSize = NSSize(width: 680, height: 560)
             window.center()
             window.isReleasedWhenClosed = false
             dashboardWindowController = NSWindowController(window: window)
