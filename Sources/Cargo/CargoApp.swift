@@ -13,13 +13,16 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: "shippingbox",
                 accessibilityDescription: "Cargo"
             )
             button.image?.isTemplate = true
+            button.title = "Cargo"
+            button.imagePosition = .imageLeft
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.toolTip = "Cargo"
