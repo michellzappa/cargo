@@ -62,7 +62,7 @@ To build a launchable app bundle locally:
 open /Users/mz/Applications/Cargo.app
 ```
 
-Cargo currently uses version `0.1.0` for the alpha product line. The packaging script derives `CFBundleVersion` from the current git commit count, so each committed build receives a reproducible increasing build number.
+Cargo currently uses version `0.3.0` for the alpha product line. The packaging script derives `CFBundleVersion` from the current git commit count, so each committed build receives a reproducible increasing build number.
 
 ## Build
 
