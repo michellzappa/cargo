@@ -5,6 +5,10 @@ import AppKit
 final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
+    private var connectionStatusMenuItem: NSMenuItem!
+    private var transfersStatusMenuItem: NSMenuItem!
+    private var inboxStatusMenuItem: NSMenuItem!
+    private var updatedStatusMenuItem: NSMenuItem!
     private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: CargoNavigationViewController!
     private var refreshTask: Task<Void, Never>?
@@ -43,6 +47,20 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         statusMenu = NSMenu()
+        connectionStatusMenuItem = NSMenuItem(title: "Put.io · Not connected yet", action: nil, keyEquivalent: "")
+        transfersStatusMenuItem = NSMenuItem(title: "Transfers · 0", action: nil, keyEquivalent: "")
+        inboxStatusMenuItem = NSMenuItem(title: "Inbox · 0 waiting", action: nil, keyEquivalent: "")
+        updatedStatusMenuItem = NSMenuItem(title: "Updated · not yet", action: nil, keyEquivalent: "")
+        for item in [
+            connectionStatusMenuItem!,
+            transfersStatusMenuItem!,
+            inboxStatusMenuItem!,
+            updatedStatusMenuItem!
+        ] {
+            item.isEnabled = false
+            statusMenu.addItem(item)
+        }
+        statusMenu.addItem(.separator())
         statusMenu.addItem(
             NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "")
         )
@@ -57,6 +75,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q")
         )
         statusMenu.items.forEach { $0.target = self }
+        updateStatusMenu()
 
         showDashboardWindow()
 
@@ -66,6 +85,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
                 let summary = await coordinator.runBackgroundCycle()
                 notify(summary)
                 dashboardViewController.refreshView()
+                updateStatusMenu()
                 try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
             }
         }
@@ -81,6 +101,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
                 do {
                     try await coordinator.finishPutIOAuthorization(from: url)
                     dashboardViewController.refreshView()
+                    updateStatusMenu()
                 } catch {
                     let alert = NSAlert(error: error)
                     alert.runModal()
@@ -101,9 +122,11 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showDashboard(_ sender: Any?) {
         showDashboardWindow()
+        dashboardViewController.showTransfers()
     }
 
     @objc private func statusItemAction(_ sender: NSStatusBarButton) {
+        updateStatusMenu()
         statusMenu.popUp(
             positioning: nil,
             at: NSPoint(x: 0, y: sender.bounds.height),
@@ -121,6 +144,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             let summary = await coordinator.runBackgroundCycle()
             notify(summary)
             dashboardViewController.refreshView()
+            updateStatusMenu()
         }
     }
 
@@ -183,4 +207,24 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             body: lines.joined(separator: " · ")
         )
     }
+
+    private func updateStatusMenu() {
+        guard statusMenu != nil else { return }
+
+        let state = coordinator.state
+        connectionStatusMenuItem.title = "Put.io · \(coordinator.putIOStatus)"
+        transfersStatusMenuItem.title = "Transfers · \(state.transfers.count) active"
+
+        let inboxCount = coordinator.inboxFileURLs().count
+        let inboxLabel = inboxCount == 1 ? "file waiting" : "files waiting"
+        inboxStatusMenuItem.title = "Inbox · \(inboxCount) \(inboxLabel)"
+        updatedStatusMenuItem.title = "Updated · \(Self.menuTimeFormatter.string(from: state.lastUpdated))"
+    }
+
+    private static let menuTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
 }

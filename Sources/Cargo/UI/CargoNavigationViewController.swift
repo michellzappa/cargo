@@ -75,6 +75,10 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         select(.settings)
     }
 
+    func showTransfers() {
+        select(.transfers)
+    }
+
     private func select(_ destination: Destination) {
         dashboard.selectView(destination.rawValue)
         guard isViewLoaded else { return }
