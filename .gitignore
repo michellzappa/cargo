@@ -1,0 +1,10 @@
+.build/
+DerivedData/
+build/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+.DS_Store
+
+# Local app state and credentials
+state.json
+*.local.json
