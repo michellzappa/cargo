@@ -24,6 +24,7 @@ The first vertical slice is in place:
 - remote-folder navigation from the menu-bar dashboard
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
+- periodic Put.io refresh while Cargo is running
 - build and test target
 - documented implementation plan and known risks
 

@@ -29,6 +29,11 @@ final class DashboardViewController: NSViewController {
         render()
     }
 
+    func refreshView() {
+        guard isViewLoaded else { return }
+        render()
+    }
+
     private func buildInterface() {
         let root = NSStackView()
         root.orientation = .vertical

@@ -6,6 +6,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var settingsWindowController: SettingsWindowController?
+    private var dashboardViewController: DashboardViewController!
+    private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,13 +29,23 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.contentSize = NSSize(width: 370, height: 420)
-        popover.contentViewController = DashboardViewController(coordinator: coordinator) { [weak self] in
+        dashboardViewController = DashboardViewController(coordinator: coordinator) { [weak self] in
             self?.openSettings()
         }
+        popover.contentViewController = dashboardViewController
 
-        Task { @MainActor in
-            await coordinator.refreshFromPutIO()
+        refreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                await coordinator.refreshFromPutIO()
+                dashboardViewController.refreshView()
+                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+            }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        refreshTask?.cancel()
     }
 
     @objc private func togglePopover(_ sender: Any?) {

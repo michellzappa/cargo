@@ -26,6 +26,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Map Put.io statuses into Cargo statuses.
 - [ ] Add refresh, retry, cancel, and open-in-browser actions.
 - [ ] Keep the app useful when Put.io is unavailable by showing cached state and a stale indicator.
+- [x] Poll Put.io on a basic fixed interval and update the open dashboard.
 
 ### 2. Local sync pipeline
 
@@ -50,7 +51,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 ### 4. Background operation
 
 - [ ] Add launch-at-login with a proper login-item helper.
-- [ ] Poll Put.io while transfers are active and back off when idle.
+- [ ] Add transfer-aware polling and back off when idle.
 - [ ] Watch the SSD mount/unmount state.
 - [ ] Send actionable macOS notifications.
 - [ ] Add a history view for completed, skipped, and failed jobs.
