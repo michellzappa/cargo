@@ -163,6 +163,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         var lines: [String] = []
+        if !summary.discovered.isEmpty {
+            lines.append("Found \(summary.discovered.count) new media item\(summary.discovered.count == 1 ? "" : "s")")
+        }
         if !summary.organized.isEmpty {
             lines.append("Organized \(summary.organized.count) item\(summary.organized.count == 1 ? "" : "s")")
         } else if !summary.downloaded.isEmpty {

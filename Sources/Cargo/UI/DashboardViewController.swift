@@ -341,13 +341,13 @@ final class DashboardViewController: NSViewController {
                 )
             }
         case 1:
-            contentStack.addArrangedSubview(remoteFilesHeader())
-            let visibleRemoteFiles = state.remoteFiles.filter { $0.isFolder || $0.isMediaFile }
-            if visibleRemoteFiles.isEmpty {
-                contentStack.addArrangedSubview(emptyLabel("No media files at this Put.io location"))
+            contentStack.addArrangedSubview(sectionHeader("Put.io media · all folders · \(state.remoteMediaFiles.count)"))
+            contentStack.addArrangedSubview(emptyLabel("Video files Cargo can sync, wherever they are in Put.io"))
+            if state.remoteMediaFiles.isEmpty {
+                contentStack.addArrangedSubview(emptyLabel("No video files found in Put.io"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(visibleRemoteFiles.map(remoteFileRow), maxHeight: 210, rowHeight: 70)
+                    boundedList(state.remoteMediaFiles.map(remoteFileRow), maxHeight: 300, rowHeight: 70)
                 )
             }
         case 2:
@@ -443,22 +443,6 @@ final class DashboardViewController: NSViewController {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         return label
-    }
-
-    private func remoteFilesHeader() -> NSView {
-        let visibleCount = coordinator.state.remoteFiles.filter { $0.isFolder || $0.isMediaFile }.count
-        let title = sectionHeader("Media in Put.io · \(coordinator.remoteFolderName) · \(visibleCount)")
-        guard coordinator.canGoBackRemoteFolder else { return title }
-
-        let backButton = NSButton(title: "Back", target: self, action: #selector(backRemoteFolder(_:)))
-        backButton.bezelStyle = .rounded
-        backButton.controlSize = .small
-
-        let row = NSStackView(views: [title, backButton])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        return row
     }
 
     @objc private func selectPutIOView(_ sender: NSSegmentedControl) {
@@ -658,7 +642,7 @@ final class DashboardViewController: NSViewController {
     }
 
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
-        let title = NSTextField(labelWithString: file.name)
+        let title = NSTextField(labelWithString: file.displayPath)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         clampedLabel(title)
 
@@ -726,7 +710,7 @@ final class DashboardViewController: NSViewController {
 
     @objc private func refresh(_ sender: Any?) {
         Task { @MainActor in
-            await coordinator.refreshFromPutIO()
+            _ = await coordinator.runBackgroundCycle()
             putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
             render()
         }

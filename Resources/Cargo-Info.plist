@@ -8,6 +8,8 @@
 	<string>Cargo</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.cargo.media</string>
+	<key>CFBundleIconFile</key>
+	<string>CargoIcon</string>
 	<key>CFBundleName</key>
 	<string>Cargo</string>
 	<key>CFBundlePackageType</key>

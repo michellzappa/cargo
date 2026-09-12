@@ -76,6 +76,7 @@ struct RemoteTransfer: Codable, Identifiable, Sendable {
 struct RemoteFile: Codable, Identifiable, Sendable {
     let id: Int
     var name: String
+    var path: String? = nil
     var type: RemoteFileType
     var parentID: Int
     var sizeBytes: Int64
@@ -87,6 +88,10 @@ struct RemoteFile: Codable, Identifiable, Sendable {
 
     var isMediaFile: Bool {
         type == .video
+    }
+
+    var displayPath: String {
+        path ?? name
     }
 }
 
@@ -184,41 +189,48 @@ struct CargoSettings: Codable, Equatable, Sendable {
 struct CargoState: Codable, Sendable {
     var transfers: [RemoteTransfer]
     var remoteFiles: [RemoteFile]
+    var remoteMediaFiles: [RemoteFile]
     var localJobs: [LocalSyncJob]
     var history: [CargoHistoryEntry]
-    var seenCompletedTransferIDs: [Int]
-    var backgroundBaselineEstablished: Bool
+    var seenRemoteMediaFileIDs: [Int]
+    var remoteMediaBaselineEstablished: Bool
     var settings: CargoSettings
     var lastUpdated: Date
 
     init(
         transfers: [RemoteTransfer],
         remoteFiles: [RemoteFile] = [],
+        remoteMediaFiles: [RemoteFile] = [],
         localJobs: [LocalSyncJob],
         history: [CargoHistoryEntry] = [],
-        seenCompletedTransferIDs: [Int] = [],
-        backgroundBaselineEstablished: Bool = false,
+        seenRemoteMediaFileIDs: [Int] = [],
+        remoteMediaBaselineEstablished: Bool = false,
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
         self.transfers = transfers
         self.remoteFiles = remoteFiles
+        self.remoteMediaFiles = remoteMediaFiles
         self.localJobs = localJobs
         self.history = history
-        self.seenCompletedTransferIDs = seenCompletedTransferIDs
-        self.backgroundBaselineEstablished = backgroundBaselineEstablished
+        self.seenRemoteMediaFileIDs = seenRemoteMediaFileIDs
+        self.remoteMediaBaselineEstablished = remoteMediaBaselineEstablished
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        let legacyContainer = try decoder.container(keyedBy: LegacyCodingKeys.self)
         transfers = try container.decode([RemoteTransfer].self, forKey: .transfers)
         remoteFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteFiles) ?? []
+        remoteMediaFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteMediaFiles) ?? []
         localJobs = try container.decode([LocalSyncJob].self, forKey: .localJobs)
         history = try container.decodeIfPresent([CargoHistoryEntry].self, forKey: .history) ?? []
-        seenCompletedTransferIDs = try container.decodeIfPresent([Int].self, forKey: .seenCompletedTransferIDs) ?? []
-        backgroundBaselineEstablished = try container.decodeIfPresent(Bool.self, forKey: .backgroundBaselineEstablished) ?? false
+        seenRemoteMediaFileIDs = try container.decodeIfPresent([Int].self, forKey: .seenRemoteMediaFileIDs) ?? []
+        let currentBaseline = try container.decodeIfPresent(Bool.self, forKey: .remoteMediaBaselineEstablished)
+        let legacyBaseline = try legacyContainer.decodeIfPresent(Bool.self, forKey: .backgroundBaselineEstablished)
+        remoteMediaBaselineEstablished = currentBaseline ?? legacyBaseline ?? false
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -226,12 +238,17 @@ struct CargoState: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case transfers
         case remoteFiles
+        case remoteMediaFiles
         case localJobs
         case history
-        case seenCompletedTransferIDs
-        case backgroundBaselineEstablished
+        case seenRemoteMediaFileIDs
+        case remoteMediaBaselineEstablished
         case settings
         case lastUpdated
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case backgroundBaselineEstablished
     }
 
     static let empty = CargoState(

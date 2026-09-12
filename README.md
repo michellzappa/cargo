@@ -20,8 +20,8 @@ The first vertical slice is in place:
 - remote transfer and local sync job models
 - browser-only Put.io OAuth with the access token stored in macOS Keychain
 - read-only Put.io account and transfer refresh
-- remote root file browsing with idempotent local-sync queueing
-- remote-folder navigation from the menu-bar dashboard
+- recursive Put.io media inventory across all folders
+- remote media paths and idempotent local-sync queueing
 - video-only tracking for Put.io files and local Inbox items
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
@@ -33,7 +33,7 @@ The first vertical slice is in place:
 
 Cargo now has an explicit Inbox organization step: it classifies media, previews the destination, removes common release metadata from the filename, and moves the file into the configured Movies or TV Shows layout.
 
-The Automation section controls each background step independently. Cargo establishes a baseline on its first background pass, then can sync only newly completed Put.io transfers, organize and rename the resulting Inbox media, send notifications, and launch at login. A failed or conflicting organization remains in `_Inbox` and is recorded in History.
+The Automation section controls each background step independently. Cargo establishes a baseline on its first background pass, then scans every Put.io folder and can sync only newly discovered video media, organize and rename the resulting Inbox media, send notifications, and launch at login. A failed or conflicting organization remains in `_Inbox` and is recorded in History.
 
 ### Browser authentication setup
 
@@ -42,6 +42,8 @@ Cargo uses one registered Put.io OAuth app (`9732`) and the native `cargo://oaut
 ### Local library workflow
 
 Cargo treats the folder selected in “Local library” as the existing root that Infuse reads. It does not currently scan or rearrange that folder, and it never assumes that an empty new library should replace an existing one.
+
+The Files view is a recursive inventory of video files in Put.io, not just the current root folder. Each row shows its Put.io path and whether Cargo has not downloaded it, has placed it in `_Inbox`, or has organized it into the library. Cargo ignores non-media sidecars and folders for syncing.
 
 The intended handoff is:
 

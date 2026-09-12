@@ -1,12 +1,13 @@
 import Foundation
 
 struct CargoBackgroundCycleSummary: Sendable {
+    var discovered: [String] = []
     var downloaded: [String] = []
     var organized: [String] = []
     var failures: [String] = []
 
     var hasMeaningfulChanges: Bool {
-        !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
+        !discovered.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
     }
 }
 
@@ -217,6 +218,7 @@ final class CargoCoordinator {
             let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
             state.transfers = transfers
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
+            state.remoteMediaFiles = try await fetchAllRemoteMediaFiles()
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
@@ -236,29 +238,28 @@ final class CargoCoordinator {
         var summary = CargoBackgroundCycleSummary()
         await refreshFromPutIO()
 
-        let completedTransfers = state.transfers.filter {
-            $0.status == .completed || $0.status == .seeding
-        }
-        let previousCompletedTransferIDs = Set(state.seenCompletedTransferIDs)
-        let isFirstObservation = !state.backgroundBaselineEstablished
-        let newlyCompletedTransfers = isFirstObservation
+        let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
+        let isFirstObservation = !state.remoteMediaBaselineEstablished
+        let newlyDiscoveredMedia = isFirstObservation
             ? []
-            : completedTransfers.filter { !previousCompletedTransferIDs.contains($0.id) }
-        state.seenCompletedTransferIDs = completedTransfers.map(\.id).sorted()
-        state.backgroundBaselineEstablished = true
+            : state.remoteMediaFiles.filter { !previousRemoteMediaFileIDs.contains($0.id) }
+        state.seenRemoteMediaFileIDs = state.remoteMediaFiles.map(\.id).sorted()
+        state.remoteMediaBaselineEstablished = true
         try? store.replace(with: state)
 
-        if state.settings.automaticSyncEnabled && !newlyCompletedTransfers.isEmpty {
-            do {
-                let mediaFiles = try await fetchAllRemoteMediaFiles()
-                let transferNames = Set(newlyCompletedTransfers.map { normalizedRemoteName($0.name) })
-                for mediaFile in mediaFiles where transferNames.contains(normalizedRemoteName(mediaFile.name)) {
-                    enqueueLocalSync(remoteFile: mediaFile)
-                }
-            } catch {
-                let detail = "Could not inspect Put.io folders: \(error.localizedDescription)"
-                summary.failures.append(detail)
-                recordHistory(kind: .failure, title: "Background scan failed", detail: detail)
+        if !newlyDiscoveredMedia.isEmpty {
+            summary.discovered = newlyDiscoveredMedia.map(\.displayPath)
+            let detail = newlyDiscoveredMedia.map(\.displayPath).joined(separator: ", ")
+            recordHistory(
+                kind: .info,
+                title: "New Put.io media found",
+                detail: "\(newlyDiscoveredMedia.count) item\(newlyDiscoveredMedia.count == 1 ? "" : "s"): \(detail)"
+            )
+        }
+
+        if state.settings.automaticSyncEnabled {
+            for mediaFile in newlyDiscoveredMedia {
+                enqueueLocalSync(remoteFile: mediaFile)
             }
         }
 
@@ -295,27 +296,44 @@ final class CargoCoordinator {
     }
 
     private func fetchAllRemoteMediaFiles() async throws -> [RemoteFile] {
-        var mediaFiles = state.remoteFiles.filter(\.isMediaFile)
-        var folderIDs = state.remoteFiles.filter(\.isFolder).map(\.id)
+        var mediaFilesByID = [Int: RemoteFile]()
+        var folderQueue: [(id: Int, path: String)] = []
+
+        for file in state.remoteFiles {
+            if file.isFolder {
+                folderQueue.append((id: file.id, path: file.name))
+            } else if file.isMediaFile {
+                var mediaFile = file
+                mediaFile.path = file.name
+                mediaFilesByID[file.id] = mediaFile
+            }
+        }
+
         var visitedFolderIDs = Set<Int>()
 
-        while let folderID = folderIDs.popLast() {
-            guard visitedFolderIDs.insert(folderID).inserted else { continue }
-            let files = try await putIOClient.fetchFiles(parentID: folderID)
+        while let folder = folderQueue.popLast() {
+            guard visitedFolderIDs.insert(folder.id).inserted else { continue }
+            let files = try await putIOClient.fetchFiles(parentID: folder.id)
             for file in files {
                 if file.isFolder {
-                    folderIDs.append(file.id)
+                    folderQueue.append(
+                        (id: file.id, path: Self.joinRemotePath(folder.path, file.name))
+                    )
                 } else if file.isMediaFile {
-                    mediaFiles.append(file)
+                    var mediaFile = file
+                    mediaFile.path = Self.joinRemotePath(folder.path, file.name)
+                    mediaFilesByID[file.id] = mediaFile
                 }
             }
         }
 
-        return mediaFiles
+        return mediaFilesByID.values.sorted {
+            $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending
+        }
     }
 
-    private func normalizedRemoteName(_ name: String) -> String {
-        URL(fileURLWithPath: name).lastPathComponent.lowercased()
+    private static func joinRemotePath(_ parent: String, _ child: String) -> String {
+        parent.isEmpty ? child : "\(parent)/\(child)"
     }
 
     func openRemoteFolder(remoteFolderID: Int) async {
@@ -353,7 +371,8 @@ final class CargoCoordinator {
     }
 
     func enqueueLocalSync(remoteFileID: Int) {
-        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID })
+            ?? state.remoteMediaFiles.first(where: { $0.id == remoteFileID }) else {
             return
         }
         enqueueLocalSync(remoteFile: remoteFile)

@@ -61,7 +61,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 ### 4. Background operation
 
 - [x] Add launch-at-login with the native macOS login-item service.
-- [x] Add transfer-aware background polling for newly completed media.
+- [x] Add recursive background polling for newly discovered Put.io media in any folder.
 - [ ] Watch the SSD mount/unmount state.
 - [x] Send meaningful macOS notifications for workflow changes.
 - [x] Add a history view for completed, organized, and failed jobs.

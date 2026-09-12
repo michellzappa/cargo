@@ -68,8 +68,9 @@ final class CargoTests: XCTestCase {
                 detail: "Roundtrip Movie"
             )
         ]
-        state.seenCompletedTransferIDs = [1002]
-        state.backgroundBaselineEstablished = true
+        state.remoteMediaFiles = [state.remoteFiles[0]]
+        state.seenRemoteMediaFileIDs = [2001]
+        state.remoteMediaBaselineEstablished = true
         state.settings = CargoSettings(
             automaticSyncEnabled: false,
             automaticOrganizationEnabled: true,
@@ -85,8 +86,9 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(reloaded.snapshot().remoteFiles.count, 2)
         XCTAssertEqual(reloaded.snapshot().localJobs.count, 1)
         XCTAssertEqual(reloaded.snapshot().history.count, 1)
-        XCTAssertEqual(reloaded.snapshot().seenCompletedTransferIDs, [1002])
-        XCTAssertTrue(reloaded.snapshot().backgroundBaselineEstablished)
+        XCTAssertEqual(reloaded.snapshot().remoteMediaFiles.map(\.id), [2001])
+        XCTAssertEqual(reloaded.snapshot().seenRemoteMediaFileIDs, [2001])
+        XCTAssertTrue(reloaded.snapshot().remoteMediaBaselineEstablished)
         XCTAssertFalse(reloaded.snapshot().settings.automaticSyncEnabled)
         XCTAssertTrue(reloaded.snapshot().settings.automaticOrganizationEnabled)
         XCTAssertFalse(reloaded.snapshot().settings.notificationsEnabled)
@@ -205,6 +207,14 @@ final class CargoTests: XCTestCase {
             sizeBytes: 4,
             createdAt: Date()
         )
+        let showsFolder = RemoteFile(
+            id: 80,
+            name: "Shows",
+            type: .folder,
+            parentID: 0,
+            sizeBytes: 0,
+            createdAt: Date()
+        )
         let previousTransfer = RemoteTransfer(
             id: 70,
             name: "Previous.Movie.mkv",
@@ -225,15 +235,15 @@ final class CargoTests: XCTestCase {
         let store = CargoStore(stateURL: stateURL)
         var state = store.snapshot()
         state.settings = CargoSettings(libraryRootPath: libraryRoot.path)
-        state.seenCompletedTransferIDs = [previousTransfer.id]
-        state.backgroundBaselineEstablished = true
+        state.seenRemoteMediaFileIDs = [previousTransfer.id]
+        state.remoteMediaBaselineEstablished = true
         try store.replace(with: state)
 
         let coordinator = CargoCoordinator(
             store: store,
             client: StubPutIOClient(
                 transfers: [previousTransfer, newTransfer],
-                filesByParent: [0: [newFile]]
+                filesByParent: [0: [showsFolder], 80: [newFile]]
             )
         )
         let summary = await coordinator.runBackgroundCycle()
@@ -242,10 +252,14 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(job.status, .completed)
         XCTAssertTrue(job.destination?.hasSuffix("Movies/New Movie (2026).mkv") == true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: job.destination!))
+        XCTAssertEqual(summary.discovered, ["Shows/New.Movie.2026.1080p.mkv"])
         XCTAssertEqual(summary.downloaded, [newFile.name])
         XCTAssertEqual(summary.organized, [newFile.name])
         XCTAssertTrue(summary.failures.isEmpty)
-        XCTAssertEqual(coordinator.state.history.map(\.title), ["Organized", "Downloaded"])
+        XCTAssertEqual(
+            coordinator.state.history.map(\.title),
+            ["Organized", "Downloaded", "New Put.io media found"]
+        )
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
