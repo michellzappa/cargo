@@ -35,6 +35,8 @@ final class DashboardViewController: NSViewController {
     private var selectedPutIOView = 0
     private var lastOrganizationMessage: String?
     private var settingsView: NSView?
+    private let pageTitleLabel = NSTextField(labelWithString: "")
+    private var wrappingLabels: [NSTextField] = []
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
@@ -133,38 +135,30 @@ final class DashboardViewController: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         root.setContentHuggingPriority(.required, for: .vertical)
 
-        let title = NSTextField(labelWithString: "Cargo")
-        title.font = .systemFont(ofSize: 22, weight: .semibold)
-
-        let subtitle = NSTextField(labelWithString: "Put.io → local library · \(Self.buildLabel)")
-        subtitle.textColor = .secondaryLabelColor
+        pageTitleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
 
         connectionLabel.stringValue = coordinator.putIOStatus
-        connectionLabel.textColor = .tertiaryLabelColor
+        connectionLabel.textColor = .secondaryLabelColor
         connectionLabel.font = .systemFont(ofSize: 11)
 
-        refreshedLabel.textColor = .tertiaryLabelColor
+        refreshedLabel.textColor = .secondaryLabelColor
         refreshedLabel.font = .systemFont(ofSize: 11)
 
-        let header = NSStackView(views: [title, subtitle, connectionLabel, refreshedLabel])
+        let header = NSStackView(views: [pageTitleLabel, connectionLabel, refreshedLabel])
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = Layout.headerSpacing
 
         contentStack.orientation = .vertical
-        contentStack.alignment = .width
+        contentStack.alignment = .leading
         contentStack.spacing = Layout.sectionSpacing
         contentStack.setContentHuggingPriority(.required, for: .vertical)
         contentStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        contentStack.widthAnchor.constraint(
-            equalTo: root.widthAnchor,
-            constant: -(Layout.pageInsets.left + Layout.pageInsets.right)
-        ).isActive = true
 
         let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refresh(_:)))
         styleButton(refreshButton)
 
-        let headerRow = NSStackView(views: [header, refreshButton])
+        let headerRow = NSStackView(views: [header, flexibleSpacer(), refreshButton])
         headerRow.orientation = .horizontal
         headerRow.alignment = .top
         headerRow.spacing = Layout.controlSpacing
@@ -174,6 +168,13 @@ final class DashboardViewController: NSViewController {
         root.addArrangedSubview(headerRow)
         root.addArrangedSubview(Self.separator())
         root.addArrangedSubview(contentStack)
+        headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        // Must come after contentStack is in root's hierarchy; activating earlier
+        // throws "no common ancestor" and aborts view loading.
+        contentStack.widthAnchor.constraint(
+            equalTo: root.widthAnchor,
+            constant: -(Layout.pageInsets.left + Layout.pageInsets.right)
+        ).isActive = true
 
         settingsView = settingsSection()
 
@@ -208,11 +209,8 @@ final class DashboardViewController: NSViewController {
     private func settingsSection() -> NSView {
         let section = NSStackView()
         section.orientation = .vertical
-        section.alignment = .width
+        section.alignment = .leading
         section.spacing = Layout.sectionSpacing
-
-        section.addArrangedSubview(sectionHeader("Settings"))
-        section.addArrangedSubview(emptyLabel("Configure the live workflow."))
 
         section.addArrangedSubview(sectionHeader("Put.io account"))
 
@@ -236,7 +234,7 @@ final class DashboardViewController: NSViewController {
         section.addArrangedSubview(emptyLabel("OAuth callback: cargo://oauth/callback"))
 
         section.addArrangedSubview(sectionHeader("IMDb Watchlist"))
-        section.addArrangedSubview(emptyLabel("Cargo watches this public list and compares it with Put.io media."))
+        section.addArrangedSubview(wrappingLabel("Cargo watches this public list and compares it with Put.io media."))
 
         imdbWatchlistURLField.stringValue = coordinator.state.settings.imdbWatchlistURL
         styleField(imdbWatchlistURLField, width: Layout.urlFieldWidth)
@@ -298,7 +296,7 @@ final class DashboardViewController: NSViewController {
         section.addArrangedSubview(directorySettingsStatusLabel)
 
         section.addArrangedSubview(sectionHeader("Automation"))
-        section.addArrangedSubview(emptyLabel("Checked steps run automatically in the background."))
+        section.addArrangedSubview(wrappingLabel("Checked steps run automatically in the background."))
         configureWorkflowToggle(automaticSyncToggle, tag: 0)
         configureWorkflowToggle(automaticOrganizationToggle, tag: 1)
         configureWorkflowToggle(notificationsToggle, tag: 2)
@@ -311,20 +309,13 @@ final class DashboardViewController: NSViewController {
         section.addArrangedSubview(launchAtLoginToggle)
         section.addArrangedSubview(automaticRemoteCleanupToggle)
         section.addArrangedSubview(automaticInboxCleanupToggle)
-        section.addArrangedSubview(emptyLabel("Put.io deletion happens only after a verified local copy. Inbox cleanup removes non-media sidecars only when a nested folder has no media or subfolders left."))
+        section.addArrangedSubview(wrappingLabel("Put.io deletion happens only after a verified local copy. Inbox cleanup removes non-media sidecars only when a nested folder has no media or subfolders left."))
         workflowSettingsStatusLabel.textColor = .secondaryLabelColor
         workflowSettingsStatusLabel.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(workflowSettingsStatusLabel)
 
-        let workflow = NSTextField(labelWithString: "Workflow: Put.io queue → SSD staging → local library → EasySubs")
-        workflow.textColor = .tertiaryLabelColor
-        workflow.font = .systemFont(ofSize: 11)
-        section.addArrangedSubview(workflow)
-
-        let about = NSTextField(labelWithString: "Cargo \(Self.buildLabel)")
-        about.textColor = .tertiaryLabelColor
-        about.font = .systemFont(ofSize: 11)
-        section.addArrangedSubview(about)
+        section.addArrangedSubview(sectionHeader("About"))
+        section.addArrangedSubview(emptyLabel("Cargo \(Self.buildLabel) · Put.io queue → SSD staging → local library → EasySubs"))
 
         return section
     }
@@ -358,11 +349,14 @@ final class DashboardViewController: NSViewController {
     ) -> NSStackView {
         let row = NSStackView(views: views)
         row.orientation = .vertical
-        row.alignment = .width
+        row.alignment = .leading
         row.spacing = spacing
         row.translatesAutoresizingMaskIntoConstraints = false
         if let width {
             row.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        for case let child as NSStackView in views where child.orientation == .horizontal {
+            child.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
         }
         return row
     }
@@ -428,11 +422,10 @@ final class DashboardViewController: NSViewController {
         connectButton.isHidden = isConnected
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
         updateWorkflowControls(with: state.settings)
+        pageTitleLabel.stringValue = pageTitle(for: selectedPutIOView, state: state)
 
         switch selectedPutIOView {
         case 0:
-            addSection("Put.io transfers · \(state.transfers.count)")
-
             if state.transfers.isEmpty {
                 contentStack.addArrangedSubview(emptyLabel("No active transfers"))
             } else {
@@ -445,10 +438,7 @@ final class DashboardViewController: NSViewController {
                 )
             }
         case 1:
-            addSection(
-                "Put.io media · all folders · \(state.remoteMediaFiles.count)",
-                description: "Video files Cargo can sync, wherever they are in Put.io"
-            )
+            contentStack.addArrangedSubview(emptyLabel("Video files Cargo can sync, wherever they are in Put.io"))
             if state.remoteMediaFiles.isEmpty {
                 contentStack.addArrangedSubview(emptyLabel("No video files found in Put.io"))
             } else {
@@ -473,10 +463,25 @@ final class DashboardViewController: NSViewController {
         default:
             break
         }
+
+        for subview in contentStack.arrangedSubviews where subview is NSScrollView || subview === settingsView {
+            subview.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+    }
+
+    private func pageTitle(for index: Int, state: CargoState) -> String {
+        switch index {
+        case 0: "Transfers · \(state.transfers.count)"
+        case 1: "Files · \(state.remoteMediaFiles.count)"
+        case 2: "Inbox"
+        case 3: "Watchlist · \(state.imdbWatchlistItems.count)"
+        case 4: "History · \(state.history.count)"
+        case 5: "Settings"
+        default: "Cargo"
+        }
     }
 
     private func renderHistory(_ state: CargoState) {
-        addSection("History · \(state.history.count)")
         if state.history.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("No workflow activity yet"))
             return
@@ -492,10 +497,7 @@ final class DashboardViewController: NSViewController {
     }
 
     private func renderWatchlist(_ state: CargoState) {
-        addSection(
-            "IMDb Watchlist · \(state.imdbWatchlistItems.count)",
-            description: coordinator.imdbWatchlistStatus
-        )
+        contentStack.addArrangedSubview(emptyLabel(coordinator.imdbWatchlistStatus))
 
         if state.imdbWatchlistItems.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("No Watchlist titles synced yet"))
@@ -671,6 +673,24 @@ final class DashboardViewController: NSViewController {
         return label
     }
 
+    private func wrappingLabel(_ text: String) -> NSTextField {
+        let label = emptyLabel(text)
+        label.lineBreakMode = .byWordWrapping
+        label.maximumNumberOfLines = 0
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        wrappingLabels.append(label)
+        return label
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        let width = contentStack.bounds.width
+        guard width > 0 else { return }
+        for label in wrappingLabels where label.preferredMaxLayoutWidth != width {
+            label.preferredMaxLayoutWidth = width
+        }
+    }
+
     @discardableResult
     private func clampedLabel(
         _ label: NSTextField,
@@ -701,7 +721,7 @@ final class DashboardViewController: NSViewController {
 
         let list = NSStackView(views: listRows)
         list.orientation = .vertical
-        list.alignment = .width
+        list.alignment = .leading
         list.spacing = 0
         list.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         list.translatesAutoresizingMaskIntoConstraints = false
@@ -727,6 +747,9 @@ final class DashboardViewController: NSViewController {
         let contentHeight = min(maxHeight, max(44, naturalHeight))
         scrollView.heightAnchor.constraint(equalToConstant: contentHeight).isActive = true
 
+        NSLayoutConstraint.activate(
+            listRows.map { $0.widthAnchor.constraint(equalTo: list.widthAnchor) }
+        )
         NSLayoutConstraint.activate([
             document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
             list.leadingAnchor.constraint(equalTo: document.leadingAnchor),
@@ -740,7 +763,7 @@ final class DashboardViewController: NSViewController {
     private func listRow(_ row: NSView) -> NSView {
         let container = NSStackView(views: [row])
         container.orientation = .vertical
-        container.alignment = .width
+        container.alignment = .leading
         container.edgeInsets = NSEdgeInsets(
             top: Layout.listRowPadding,
             left: 12,
@@ -748,6 +771,10 @@ final class DashboardViewController: NSViewController {
             right: 12
         )
         container.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(
+            equalTo: container.widthAnchor,
+            constant: -(container.edgeInsets.left + container.edgeInsets.right)
+        ).isActive = true
         return container
     }
 
@@ -886,11 +913,21 @@ final class DashboardViewController: NSViewController {
         let copy = verticalRow([title, details])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        let deleteButton = NSButton(
+            title: "Delete from Put.io",
+            target: self,
+            action: #selector(deleteRemoteFile(_:))
+        )
+        styleButton(deleteButton)
+        deleteButton.tag = file.id
+        deleteButton.identifier = NSUserInterfaceItemIdentifier(file.displayPath)
+        deleteButton.isEnabled = !coordinator.state.deletedRemoteFileIDs.contains(file.id)
+
         if file.isFolder {
             let openButton = NSButton(title: "Open", target: self, action: #selector(openRemoteFolder(_:)))
             styleButton(openButton)
             openButton.tag = file.id
-            copy.addArrangedSubview(actionRow(openButton))
+            copy.addArrangedSubview(horizontalRow([flexibleSpacer(), deleteButton, openButton]))
         } else {
             let job = localJob(for: file)
             let syncButton = NSButton(
@@ -901,7 +938,7 @@ final class DashboardViewController: NSViewController {
             styleButton(syncButton)
             syncButton.tag = file.id
             syncButton.isEnabled = job == nil
-            copy.addArrangedSubview(actionRow(syncButton))
+            copy.addArrangedSubview(horizontalRow([flexibleSpacer(), deleteButton, syncButton]))
         }
 
         return copy
@@ -1093,6 +1130,31 @@ final class DashboardViewController: NSViewController {
         } catch {
             let errorAlert = NSAlert(error: error)
             errorAlert.runModal()
+        }
+    }
+
+    @objc private func deleteRemoteFile(_ sender: NSButton) {
+        let remoteFileID = sender.tag
+        let name = sender.identifier?.rawValue ?? "this item"
+
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(name)” from Put.io?"
+        alert.informativeText = "This permanently removes it from your Put.io account. Local copies are not affected."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        sender.isEnabled = false
+        sender.title = "Deleting…"
+        Task { @MainActor in
+            do {
+                try await coordinator.deleteRemoteFile(remoteFileID: remoteFileID)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            render()
         }
     }
 

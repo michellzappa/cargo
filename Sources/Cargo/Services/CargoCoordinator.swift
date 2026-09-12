@@ -631,6 +631,30 @@ final class CargoCoordinator {
         }
     }
 
+    /// User-initiated deletion from the Files page. No local-copy verification —
+    /// the UI is responsible for confirming with the user first.
+    func deleteRemoteFile(remoteFileID: Int) async throws {
+        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
+            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+            throw SettingsError.remoteFileMissing
+        }
+
+        try await putIOClient.deleteFile(fileID: remoteFileID)
+        state.remoteFiles.removeAll { $0.id == remoteFileID }
+        state.remoteMediaFiles.removeAll { $0.id == remoteFileID || $0.parentID == remoteFileID }
+        state.remoteFolders.removeAll { $0.id == remoteFileID }
+        if !state.deletedRemoteFileIDs.contains(remoteFileID) {
+            state.deletedRemoteFileIDs.append(remoteFileID)
+        }
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+        recordHistory(
+            kind: .success,
+            title: remoteFile.isFolder ? "Deleted Put.io folder" : "Deleted from Put.io",
+            detail: "\(remoteFile.displayPath) · manual"
+        )
+    }
+
     private func deleteRemoteFileAfterVerifiedCopy(
         remoteFileID: Int,
         localURL: URL,
