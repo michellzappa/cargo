@@ -59,6 +59,23 @@ final class CargoTests: XCTestCase {
                 updatedAt: Date()
             )
         ]
+        state.history = [
+            CargoHistoryEntry(
+                id: UUID(),
+                date: Date(),
+                kind: .success,
+                title: "Downloaded",
+                detail: "Roundtrip Movie"
+            )
+        ]
+        state.seenCompletedTransferIDs = [1002]
+        state.backgroundBaselineEstablished = true
+        state.settings = CargoSettings(
+            automaticSyncEnabled: false,
+            automaticOrganizationEnabled: true,
+            notificationsEnabled: false,
+            launchAtLoginEnabled: false
+        )
         try store.replace(with: state)
 
         XCTAssertEqual(store.snapshot().transfers.count, 2)
@@ -67,6 +84,13 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(reloaded.snapshot().transfers.map(\.id), [1001, 1002])
         XCTAssertEqual(reloaded.snapshot().remoteFiles.count, 2)
         XCTAssertEqual(reloaded.snapshot().localJobs.count, 1)
+        XCTAssertEqual(reloaded.snapshot().history.count, 1)
+        XCTAssertEqual(reloaded.snapshot().seenCompletedTransferIDs, [1002])
+        XCTAssertTrue(reloaded.snapshot().backgroundBaselineEstablished)
+        XCTAssertFalse(reloaded.snapshot().settings.automaticSyncEnabled)
+        XCTAssertTrue(reloaded.snapshot().settings.automaticOrganizationEnabled)
+        XCTAssertFalse(reloaded.snapshot().settings.notificationsEnabled)
+        XCTAssertFalse(reloaded.snapshot().settings.launchAtLoginEnabled)
     }
 
     func testStatusesHaveHumanReadableNames() {
@@ -163,6 +187,65 @@ final class CargoTests: XCTestCase {
 
         coordinator.enqueueLocalSync(remoteFileID: 61)
         XCTAssertEqual(coordinator.state.localJobs.map(\.remoteFileID), [61])
+    }
+
+    @MainActor
+    func testBackgroundCycleDownloadsAndOrganizesNewCompletedTransfer() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoBackgroundTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let newFile = RemoteFile(
+            id: 71,
+            name: "New.Movie.2026.1080p.mkv",
+            type: .video,
+            parentID: 0,
+            sizeBytes: 4,
+            createdAt: Date()
+        )
+        let previousTransfer = RemoteTransfer(
+            id: 70,
+            name: "Previous.Movie.mkv",
+            status: .completed,
+            progress: 1,
+            sizeBytes: 4,
+            updatedAt: Date()
+        )
+        let newTransfer = RemoteTransfer(
+            id: 71,
+            name: newFile.name,
+            status: .completed,
+            progress: 1,
+            sizeBytes: 4,
+            updatedAt: Date()
+        )
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.settings = CargoSettings(libraryRootPath: libraryRoot.path)
+        state.seenCompletedTransferIDs = [previousTransfer.id]
+        state.backgroundBaselineEstablished = true
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(
+            store: store,
+            client: StubPutIOClient(
+                transfers: [previousTransfer, newTransfer],
+                filesByParent: [0: [newFile]]
+            )
+        )
+        let summary = await coordinator.runBackgroundCycle()
+
+        let job = try XCTUnwrap(coordinator.state.localJobs.first)
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertTrue(job.destination?.hasSuffix("Movies/New Movie (2026).mkv") == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: job.destination!))
+        XCTAssertEqual(summary.downloaded, [newFile.name])
+        XCTAssertEqual(summary.organized, [newFile.name])
+        XCTAssertTrue(summary.failures.isEmpty)
+        XCTAssertEqual(coordinator.state.history.map(\.title), ["Organized", "Downloaded"])
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
@@ -375,13 +458,27 @@ final class CargoTests: XCTestCase {
 }
 
 private struct StubPutIOClient: PutIOClient {
+    let transfers: [RemoteTransfer]
+    let filesByParent: [Int: [RemoteFile]]
+
+    init(
+        transfers: [RemoteTransfer] = [],
+        filesByParent: [Int: [RemoteFile]] = [:]
+    ) {
+        self.transfers = transfers
+        self.filesByParent = filesByParent
+    }
+
     func fetchAccount() async throws -> PutIOAccountSummary {
         PutIOAccountSummary(id: 1, username: "test")
     }
 
-    func fetchTransfers() async throws -> [RemoteTransfer] { [] }
+    func fetchTransfers() async throws -> [RemoteTransfer] { transfers }
 
     func fetchFiles(parentID: Int) async throws -> [RemoteFile] {
+        if let files = filesByParent[parentID] {
+            return files
+        }
         guard parentID == 42 else { return [] }
         return [
             RemoteFile(

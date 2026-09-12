@@ -20,11 +20,38 @@ final class DashboardViewController: NSViewController {
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
+    private let connectButton = NSButton(
+        title: "Connect with Put.io",
+        target: nil,
+        action: nil
+    )
+    private var oauthRow: NSStackView?
     private let libraryRootLabel = NSTextField(labelWithString: "")
     private let stagingDirectoryField = NSTextField()
     private let moviesDirectoryField = NSTextField()
     private let tvShowsDirectoryField = NSTextField()
     private let directorySettingsStatusLabel = NSTextField(labelWithString: "")
+    private let automaticSyncToggle = NSButton(
+        checkboxWithTitle: "Sync new completed Put.io media",
+        target: nil,
+        action: nil
+    )
+    private let automaticOrganizationToggle = NSButton(
+        checkboxWithTitle: "Organize and rename Inbox media",
+        target: nil,
+        action: nil
+    )
+    private let notificationsToggle = NSButton(
+        checkboxWithTitle: "Send Cargo notifications",
+        target: nil,
+        action: nil
+    )
+    private let launchAtLoginToggle = NSButton(
+        checkboxWithTitle: "Launch Cargo at login",
+        target: nil,
+        action: nil
+    )
+    private let workflowSettingsStatusLabel = NSTextField(labelWithString: "")
 
     init(coordinator: CargoCoordinator) {
         self.coordinator = coordinator
@@ -50,6 +77,14 @@ final class DashboardViewController: NSViewController {
     func refreshView() {
         guard isViewLoaded else { return }
         render()
+    }
+
+    func showSettings() {
+        selectedPutIOView = 4
+        if isViewLoaded {
+            putIOViewPicker.selectedSegment = selectedPutIOView
+            render()
+        }
     }
 
     private func buildInterface() {
@@ -97,11 +132,12 @@ final class DashboardViewController: NSViewController {
 
         root.addArrangedSubview(headerRow)
         root.addArrangedSubview(Self.separator())
-        putIOViewPicker.segmentCount = 4
+        putIOViewPicker.segmentCount = 5
         putIOViewPicker.setLabel("Transfers", forSegment: 0)
         putIOViewPicker.setLabel("Files", forSegment: 1)
         putIOViewPicker.setLabel("Inbox", forSegment: 2)
-        putIOViewPicker.setLabel("Settings", forSegment: 3)
+        putIOViewPicker.setLabel("History", forSegment: 3)
+        putIOViewPicker.setLabel("Settings", forSegment: 4)
         putIOViewPicker.trackingMode = .selectOne
         putIOViewPicker.selectedSegment = selectedPutIOView
         putIOViewPicker.target = self
@@ -152,12 +188,9 @@ final class DashboardViewController: NSViewController {
         putIOTitle.font = .systemFont(ofSize: 13, weight: .semibold)
         section.addArrangedSubview(putIOTitle)
 
-        let connectButton = NSButton(
-            title: "Connect with Put.io",
-            target: self,
-            action: #selector(connectWithPutIO(_:))
-        )
         connectButton.bezelStyle = .rounded
+        connectButton.target = self
+        connectButton.action = #selector(connectWithPutIO(_:))
 
         let appLabel = NSTextField(labelWithString: "Browser sign-in · OAuth app \(PutIOOAuth.clientID)")
         appLabel.textColor = .secondaryLabelColor
@@ -167,6 +200,8 @@ final class DashboardViewController: NSViewController {
         oauthRow.orientation = .horizontal
         oauthRow.alignment = .centerY
         oauthRow.spacing = 8
+        oauthRow.detachesHiddenViews = true
+        self.oauthRow = oauthRow
         section.addArrangedSubview(oauthRow)
 
         putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
@@ -223,6 +258,22 @@ final class DashboardViewController: NSViewController {
         directorySettingsStatusLabel.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(directorySettingsStatusLabel)
 
+        let automationTitle = NSTextField(labelWithString: "Automation")
+        automationTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        section.addArrangedSubview(automationTitle)
+        section.addArrangedSubview(emptyLabel("Checked steps run automatically in the background."))
+        configureWorkflowToggle(automaticSyncToggle, tag: 0)
+        configureWorkflowToggle(automaticOrganizationToggle, tag: 1)
+        configureWorkflowToggle(notificationsToggle, tag: 2)
+        configureWorkflowToggle(launchAtLoginToggle, tag: 3)
+        section.addArrangedSubview(automaticSyncToggle)
+        section.addArrangedSubview(automaticOrganizationToggle)
+        section.addArrangedSubview(notificationsToggle)
+        section.addArrangedSubview(launchAtLoginToggle)
+        workflowSettingsStatusLabel.textColor = .secondaryLabelColor
+        workflowSettingsStatusLabel.font = .systemFont(ofSize: 11)
+        section.addArrangedSubview(workflowSettingsStatusLabel)
+
         let workflow = NSTextField(labelWithString: "Workflow: Put.io queue → SSD staging → local library → EasySubs")
         workflow.textColor = .tertiaryLabelColor
         workflow.font = .systemFont(ofSize: 11)
@@ -250,6 +301,19 @@ final class DashboardViewController: NSViewController {
         return row
     }
 
+    private func configureWorkflowToggle(_ toggle: NSButton, tag: Int) {
+        toggle.tag = tag
+        toggle.target = self
+        toggle.action = #selector(toggleWorkflowStep(_:))
+    }
+
+    private func updateWorkflowControls(with settings: CargoSettings) {
+        automaticSyncToggle.state = settings.automaticSyncEnabled ? .on : .off
+        automaticOrganizationToggle.state = settings.automaticOrganizationEnabled ? .on : .off
+        notificationsToggle.state = settings.notificationsEnabled ? .on : .off
+        launchAtLoginToggle.state = settings.launchAtLoginEnabled ? .on : .off
+    }
+
     private func render() {
         coordinator.refresh()
         let state = coordinator.state
@@ -257,7 +321,10 @@ final class DashboardViewController: NSViewController {
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         connectionLabel.stringValue = coordinator.putIOStatus
         putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
+        let isConnected = coordinator.putIOStatus.hasPrefix("Connected as ")
+        connectButton.isHidden = isConnected
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
+        updateWorkflowControls(with: state.settings)
         let inboxCount = coordinator.inboxFileURLs().count
         putIOViewPicker.setLabel(inboxCount > 0 ? "Inbox \(inboxCount)" : "Inbox", forSegment: 2)
 
@@ -286,12 +353,30 @@ final class DashboardViewController: NSViewController {
         case 2:
             renderInbox(state)
         case 3:
+            renderHistory(state)
+        case 4:
             if let settingsView {
                 contentStack.addArrangedSubview(settingsView)
             }
         default:
             break
         }
+    }
+
+    private func renderHistory(_ state: CargoState) {
+        contentStack.addArrangedSubview(sectionHeader("History · \(state.history.count)"))
+        if state.history.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel("No workflow activity yet"))
+            return
+        }
+
+        contentStack.addArrangedSubview(
+            boundedList(
+                state.history.prefix(50).map(historyRow),
+                maxHeight: 360,
+                rowHeight: 52
+            )
+        )
     }
 
     private func renderInbox(_ state: CargoState) {
@@ -550,6 +635,28 @@ final class DashboardViewController: NSViewController {
         return stack
     }
 
+    private func historyRow(_ entry: CargoHistoryEntry) -> NSView {
+        let title = NSTextField(labelWithString: entry.title)
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.textColor = Self.historyColor(for: entry.kind)
+        clampedLabel(title)
+
+        let detail = NSTextField(
+            labelWithString: "\(Self.historyTimeFormatter.string(from: entry.date)) · \(entry.detail)"
+        )
+        detail.textColor = .secondaryLabelColor
+        detail.font = .systemFont(ofSize: 11)
+        clampedLabel(detail, mode: .byTruncatingMiddle)
+
+        let stack = NSStackView(views: [title, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        return stack
+    }
+
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
         let title = NSTextField(labelWithString: file.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
@@ -670,6 +777,37 @@ final class DashboardViewController: NSViewController {
         }
     }
 
+    @objc private func toggleWorkflowStep(_ sender: NSButton) {
+        var settings = coordinator.state.settings
+        let enabled = sender.state == .on
+        switch sender.tag {
+        case 0:
+            settings.automaticSyncEnabled = enabled
+        case 1:
+            settings.automaticOrganizationEnabled = enabled
+        case 2:
+            settings.notificationsEnabled = enabled
+        case 3:
+            settings.launchAtLoginEnabled = enabled
+        default:
+            return
+        }
+
+        do {
+            try coordinator.saveWorkflowSettings(
+                automaticSync: settings.automaticSyncEnabled,
+                automaticOrganization: settings.automaticOrganizationEnabled,
+                notifications: settings.notificationsEnabled,
+                launchAtLogin: settings.launchAtLoginEnabled
+            )
+            workflowSettingsStatusLabel.stringValue = "Saved"
+        } catch {
+            workflowSettingsStatusLabel.stringValue = error.localizedDescription
+            updateWorkflowControls(with: coordinator.state.settings)
+        }
+        render()
+    }
+
     @objc private func syncFile(_ sender: NSButton) {
         let remoteFileID = sender.tag
         coordinator.enqueueLocalSync(remoteFileID: remoteFileID)
@@ -736,6 +874,26 @@ final class DashboardViewController: NSViewController {
         formatter.dateStyle = .none
         return formatter
     }()
+
+    private static let historyTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static func historyColor(for kind: CargoHistoryKind) -> NSColor {
+        switch kind {
+        case .info:
+            .labelColor
+        case .success:
+            .systemGreen
+        case .warning:
+            .systemOrange
+        case .failure:
+            .systemRed
+        }
+    }
 
     private static var buildLabel: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String

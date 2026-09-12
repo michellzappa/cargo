@@ -4,10 +4,12 @@ import AppKit
 @MainActor
 final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
+    private var statusMenu: NSMenu!
     private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: DashboardViewController!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
+    private let notificationService = CargoNotificationService()
 
     static func main() {
         let application = NSApplication.shared
@@ -18,6 +20,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        notificationService.requestAuthorization()
+        try? LaunchAtLoginManager.shared.setEnabled(coordinator.state.settings.launchAtLoginEnabled)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.isVisible = true
@@ -33,16 +37,34 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             button.imageScaling = .scaleProportionallyDown
             button.setAccessibilityLabel("Cargo menu")
             button.target = self
-            button.action = #selector(showDashboard(_:))
+            button.action = #selector(statusItemAction(_:))
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.toolTip = "Cargo"
         }
+
+        statusMenu = NSMenu()
+        statusMenu.addItem(
+            NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "")
+        )
+        statusMenu.addItem(
+            NSMenuItem(title: "Settings", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        )
+        statusMenu.addItem(
+            NSMenuItem(title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: "r")
+        )
+        statusMenu.addItem(.separator())
+        statusMenu.addItem(
+            NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q")
+        )
+        statusMenu.items.forEach { $0.target = self }
 
         showDashboardWindow()
 
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                await coordinator.refreshFromPutIO()
+                let summary = await coordinator.runBackgroundCycle()
+                notify(summary)
                 dashboardViewController.refreshView()
                 try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
             }
@@ -81,6 +103,37 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         showDashboardWindow()
     }
 
+    @objc private func statusItemAction(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        let shouldShowMenu = event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true
+        if shouldShowMenu {
+            statusMenu.popUp(
+                positioning: nil,
+                at: NSPoint(x: 0, y: sender.bounds.height),
+                in: sender
+            )
+        } else {
+            showDashboardWindow()
+        }
+    }
+
+    @objc private func showSettings(_ sender: Any?) {
+        showDashboardWindow()
+        dashboardViewController.showSettings()
+    }
+
+    @objc private func refreshNow(_ sender: Any?) {
+        Task { @MainActor in
+            let summary = await coordinator.runBackgroundCycle()
+            notify(summary)
+            dashboardViewController.refreshView()
+        }
+    }
+
+    @objc private func quitCargo(_ sender: Any?) {
+        NSApp.terminate(nil)
+    }
+
     private func showDashboardWindow() {
         if let dashboardWindowController {
             dashboardWindowController.showWindow(nil)
@@ -101,5 +154,27 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func notify(_ summary: CargoBackgroundCycleSummary) {
+        guard coordinator.state.settings.notificationsEnabled,
+              summary.hasMeaningfulChanges else {
+            return
+        }
+
+        var lines: [String] = []
+        if !summary.organized.isEmpty {
+            lines.append("Organized \(summary.organized.count) item\(summary.organized.count == 1 ? "" : "s")")
+        } else if !summary.downloaded.isEmpty {
+            lines.append("Downloaded \(summary.downloaded.count) item\(summary.downloaded.count == 1 ? "" : "s") to Inbox")
+        }
+        if !summary.failures.isEmpty {
+            lines.append("\(summary.failures.count) item\(summary.failures.count == 1 ? " needs" : " items need") attention")
+        }
+
+        notificationService.post(
+            title: "Cargo workflow updated",
+            body: lines.joined(separator: " · ")
+        )
     }
 }

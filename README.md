@@ -15,7 +15,7 @@ The project is intentionally independent of Sonarr and Radarr. It is a focused P
 The first vertical slice is in place:
 
 - native `NSStatusItem` menu-bar app
-- normal dashboard window opened from the menu bar
+- normal dashboard window opened from the menu bar or its context menu
 - persisted local state store
 - remote transfer and local sync job models
 - browser-only Put.io OAuth with the access token stored in macOS Keychain
@@ -25,11 +25,15 @@ The first vertical slice is in place:
 - video-only tracking for Put.io files and local Inbox items
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
-- periodic Put.io refresh while Cargo is running
+- background workflow cycles for newly completed Put.io media
+- durable workflow history and meaningful macOS notifications
+- native launch-at-login support
 - build and test target
 - documented implementation plan and known risks
 
 Cargo now has an explicit Inbox organization step: it classifies media, previews the destination, removes common release metadata from the filename, and moves the file into the configured Movies or TV Shows layout.
+
+The Automation section controls each background step independently. Cargo establishes a baseline on its first background pass, then can sync only newly completed Put.io transfers, organize and rename the resulting Inbox media, send notifications, and launch at login. A failed or conflicting organization remains in `_Inbox` and is recorded in History.
 
 ### Browser authentication setup
 
@@ -71,7 +75,7 @@ swift build
 swift test
 ```
 
-The executable can be run directly from the build directory, although a proper `.app` bundle and login item will be added before distribution.
+The executable can be run directly from the build directory, although a proper signed `.app` bundle is the supported launch path.
 
 ## Product boundary
 

@@ -16,7 +16,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add a durable local state model.
 - [x] Add unit-test scaffolding.
 - [x] Make Settings mirror the media workflow step by step.
-- [x] Separate Transfers, Files, Inbox, and Settings into focused main-window views.
+- [x] Separate Transfers, Files, Inbox, History, and Settings into focused main-window views.
 - [x] Add reproducible app version and build-number packaging.
 
 ### 1. Put.io read-only integration
@@ -60,11 +60,11 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 4. Background operation
 
-- [ ] Add launch-at-login with a proper login-item helper.
-- [ ] Add transfer-aware polling and back off when idle.
+- [x] Add launch-at-login with the native macOS login-item service.
+- [x] Add transfer-aware background polling for newly completed media.
 - [ ] Watch the SSD mount/unmount state.
-- [ ] Send actionable macOS notifications.
-- [ ] Add a history view for completed, skipped, and failed jobs.
+- [x] Send meaningful macOS notifications for workflow changes.
+- [x] Add a history view for completed, organized, and failed jobs.
 
 ### 5. EasySubs integration
 

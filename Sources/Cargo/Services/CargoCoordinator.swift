@@ -1,5 +1,15 @@
 import Foundation
 
+struct CargoBackgroundCycleSummary: Sendable {
+    var downloaded: [String] = []
+    var organized: [String] = []
+    var failures: [String] = []
+
+    var hasMeaningfulChanges: Bool {
+        !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
+    }
+}
+
 @MainActor
 final class CargoCoordinator {
     enum SettingsError: LocalizedError {
@@ -127,6 +137,21 @@ final class CargoCoordinator {
         try store.replace(with: state)
     }
 
+    func saveWorkflowSettings(
+        automaticSync: Bool,
+        automaticOrganization: Bool,
+        notifications: Bool,
+        launchAtLogin: Bool
+    ) throws {
+        try LaunchAtLoginManager.shared.setEnabled(launchAtLogin)
+        state.settings.automaticSyncEnabled = automaticSync
+        state.settings.automaticOrganizationEnabled = automaticOrganization
+        state.settings.notificationsEnabled = notifications
+        state.settings.launchAtLoginEnabled = launchAtLogin
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+    }
+
     func clearLibraryRoot() throws {
         state.settings.libraryRootBookmark = nil
         state.settings.libraryRootPath = nil
@@ -207,6 +232,92 @@ final class CargoCoordinator {
         }
     }
 
+    func runBackgroundCycle() async -> CargoBackgroundCycleSummary {
+        var summary = CargoBackgroundCycleSummary()
+        await refreshFromPutIO()
+
+        let completedTransfers = state.transfers.filter {
+            $0.status == .completed || $0.status == .seeding
+        }
+        let previousCompletedTransferIDs = Set(state.seenCompletedTransferIDs)
+        let isFirstObservation = !state.backgroundBaselineEstablished
+        let newlyCompletedTransfers = isFirstObservation
+            ? []
+            : completedTransfers.filter { !previousCompletedTransferIDs.contains($0.id) }
+        state.seenCompletedTransferIDs = completedTransfers.map(\.id).sorted()
+        state.backgroundBaselineEstablished = true
+        try? store.replace(with: state)
+
+        if state.settings.automaticSyncEnabled && !newlyCompletedTransfers.isEmpty {
+            do {
+                let mediaFiles = try await fetchAllRemoteMediaFiles()
+                let transferNames = Set(newlyCompletedTransfers.map { normalizedRemoteName($0.name) })
+                for mediaFile in mediaFiles where transferNames.contains(normalizedRemoteName(mediaFile.name)) {
+                    enqueueLocalSync(remoteFile: mediaFile)
+                }
+            } catch {
+                let detail = "Could not inspect Put.io folders: \(error.localizedDescription)"
+                summary.failures.append(detail)
+                recordHistory(kind: .failure, title: "Background scan failed", detail: detail)
+            }
+        }
+
+        let queuedJobIDs = state.localJobs
+            .filter { $0.status == .queued }
+            .map(\.id)
+        for jobID in queuedJobIDs {
+            guard let jobBeforeDownload = state.localJobs.first(where: { $0.id == jobID }) else { continue }
+            await processLocalSync(remoteFileID: jobBeforeDownload.remoteFileID)
+
+            guard let jobAfterDownload = state.localJobs.first(where: { $0.id == jobID }) else { continue }
+            switch jobAfterDownload.status {
+            case .needsReview where state.settings.automaticOrganizationEnabled:
+                do {
+                    _ = try organizeLocalJob(jobID: jobID)
+                    summary.downloaded.append(jobAfterDownload.name)
+                    summary.organized.append(jobAfterDownload.name)
+                } catch {
+                    let detail = "\(jobAfterDownload.name): \(error.localizedDescription)"
+                    summary.failures.append(detail)
+                    recordHistory(kind: .failure, title: "Automatic organization failed", detail: detail)
+                }
+            case .needsReview:
+                summary.downloaded.append(jobAfterDownload.name)
+            case .failed:
+                let detail = "\(jobAfterDownload.name): \(jobAfterDownload.errorMessage ?? "Download failed.")"
+                summary.failures.append(detail)
+            default:
+                break
+            }
+        }
+
+        return summary
+    }
+
+    private func fetchAllRemoteMediaFiles() async throws -> [RemoteFile] {
+        var mediaFiles = state.remoteFiles.filter(\.isMediaFile)
+        var folderIDs = state.remoteFiles.filter(\.isFolder).map(\.id)
+        var visitedFolderIDs = Set<Int>()
+
+        while let folderID = folderIDs.popLast() {
+            guard visitedFolderIDs.insert(folderID).inserted else { continue }
+            let files = try await putIOClient.fetchFiles(parentID: folderID)
+            for file in files {
+                if file.isFolder {
+                    folderIDs.append(file.id)
+                } else if file.isMediaFile {
+                    mediaFiles.append(file)
+                }
+            }
+        }
+
+        return mediaFiles
+    }
+
+    private func normalizedRemoteName(_ name: String) -> String {
+        URL(fileURLWithPath: name).lastPathComponent.lowercased()
+    }
+
     func openRemoteFolder(remoteFolderID: Int) async {
         guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
             return
@@ -242,9 +353,15 @@ final class CargoCoordinator {
     }
 
     func enqueueLocalSync(remoteFileID: Int) {
-        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
-              remoteFile.isMediaFile,
-              !state.localJobs.contains(where: { $0.remoteFileID == remoteFileID }) else {
+        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+            return
+        }
+        enqueueLocalSync(remoteFile: remoteFile)
+    }
+
+    private func enqueueLocalSync(remoteFile: RemoteFile) {
+        guard remoteFile.isMediaFile,
+              !state.localJobs.contains(where: { $0.remoteFileID == remoteFile.id }) else {
             return
         }
 
@@ -269,10 +386,12 @@ final class CargoCoordinator {
 
     func processLocalSync(remoteFileID: Int) async {
         guard let jobIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFileID }),
-              let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
-              remoteFile.isMediaFile else {
+              state.localJobs[jobIndex].status == .queued,
+              LibraryOrganizer.isMediaFile(named: state.localJobs[jobIndex].name) else {
             return
         }
+
+        let jobName = state.localJobs[jobIndex].name
 
         guard let rootURL = libraryRootURL() else {
             updateLocalJob(
@@ -289,7 +408,7 @@ final class CargoCoordinator {
             state.settings.stagingDirectoryName,
             isDirectory: true
         )
-        let destinationURL = stagingURL.appendingPathComponent(Self.safeFilename(remoteFile.name))
+        let destinationURL = stagingURL.appendingPathComponent(Self.safeFilename(jobName))
 
         updateLocalJob(
             at: jobIndex,
@@ -307,13 +426,18 @@ final class CargoCoordinator {
         }
 
         do {
-            try await putIOClient.downloadFile(fileID: remoteFile.id, to: destinationURL)
+            try await putIOClient.downloadFile(fileID: remoteFileID, to: destinationURL)
             updateLocalJob(
                 at: jobIndex,
                 status: .needsReview,
                 progress: 1,
                 destination: destinationURL.path,
                 errorMessage: nil
+            )
+            recordHistory(
+                kind: .success,
+                title: "Downloaded",
+                detail: "\(jobName) → \(destinationURL.path)"
             )
         } catch {
             updateLocalJob(
@@ -323,10 +447,16 @@ final class CargoCoordinator {
                 destination: destinationURL.path,
                 errorMessage: error.localizedDescription
             )
+            recordHistory(
+                kind: .failure,
+                title: "Download failed",
+                detail: "\(jobName): \(error.localizedDescription)"
+            )
         }
     }
 
-    func organizeLocalJob(jobID: UUID) throws {
+    @discardableResult
+    func organizeLocalJob(jobID: UUID) throws -> URL {
         guard let jobIndex = state.localJobs.firstIndex(where: { $0.id == jobID }),
               state.localJobs[jobIndex].status == .needsReview,
               let sourcePath = state.localJobs[jobIndex].destination else {
@@ -383,9 +513,16 @@ final class CargoCoordinator {
         state.localJobs[jobIndex].updatedAt = Date()
         state.lastUpdated = Date()
         try store.replace(with: state)
+        recordHistory(
+            kind: .success,
+            title: "Organized",
+            detail: "\(job.name) → \(destinationURL.path)"
+        )
+        return destinationURL
     }
 
-    func organizeInboxFile(at sourceURL: URL) throws {
+    @discardableResult
+    func organizeInboxFile(at sourceURL: URL) throws -> URL {
         guard let rootURL = libraryRootURL() else {
             throw SettingsError.inboxFileMissing
         }
@@ -430,6 +567,12 @@ final class CargoCoordinator {
             throw SettingsError.unableToMoveFile
         }
         removeEmptyInboxFolders(afterMoving: normalizedSourceURL, rootURL: rootURL)
+        recordHistory(
+            kind: .success,
+            title: "Organized",
+            detail: "\(normalizedSourceURL.lastPathComponent) → \(destinationURL.path)"
+        )
+        return destinationURL
     }
 
     private func removeEmptyInboxFolders(afterMoving sourceURL: URL, rootURL: URL) {
@@ -489,6 +632,22 @@ final class CargoCoordinator {
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "untitled-download" : cleaned
+    }
+
+    private func recordHistory(kind: CargoHistoryKind, title: String, detail: String) {
+        state.history.insert(
+            CargoHistoryEntry(
+                id: UUID(),
+                date: Date(),
+                kind: kind,
+                title: title,
+                detail: detail
+            ),
+            at: 0
+        )
+        state.history = Array(state.history.prefix(200))
+        state.lastUpdated = Date()
+        try? store.replace(with: state)
     }
 
     private static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
