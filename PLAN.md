@@ -16,6 +16,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add a durable local state model.
 - [x] Add unit-test scaffolding.
 - [x] Make Settings mirror the media workflow step by step.
+- [x] Add reproducible app version and build-number packaging.
 
 ### 1. Put.io read-only integration
 

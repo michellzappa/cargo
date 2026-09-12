@@ -45,7 +45,7 @@ final class DashboardViewController: NSViewController {
         let title = NSTextField(labelWithString: "Cargo")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
 
-        let subtitle = NSTextField(labelWithString: "Put.io → local library")
+        let subtitle = NSTextField(labelWithString: "Put.io → local library · \(Self.buildLabel)")
         subtitle.textColor = .secondaryLabelColor
 
         connectionLabel.stringValue = coordinator.putIOStatus
@@ -285,6 +285,13 @@ final class DashboardViewController: NSViewController {
         formatter.dateStyle = .none
         return formatter
     }()
+
+    private static var buildLabel: String {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+        guard let version, let build, !version.isEmpty, !build.isEmpty else { return "development build" }
+        return "v\(version) (\(build))"
+    }
 
     private static func percent(_ progress: Double) -> String {
         "\(Int((progress * 100).rounded()))%"

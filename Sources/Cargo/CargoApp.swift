@@ -29,6 +29,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
                 accessibilityDescription: "Cargo"
             )
             button.image?.isTemplate = true
+            button.image?.size = NSSize(width: 16, height: 16)
             button.title = "Cargo"
             button.imagePosition = .imageLeft
             button.imageScaling = .scaleProportionallyUpOrDown
