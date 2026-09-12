@@ -12,6 +12,7 @@ final class SettingsViewController: NSViewController {
 
     private let coordinator: CargoCoordinator
     private let tokenField = NSSecureTextField()
+    private let clientIDField = NSTextField()
     private let connectionStatusLabel = NSTextField(labelWithString: "")
     private let connectButton = NSButton()
     private let libraryRootLabel = NSTextField(labelWithString: "")
@@ -191,6 +192,27 @@ final class SettingsViewController: NSViewController {
     }
 
     private func connectionControls() -> NSView {
+        clientIDField.placeholderString = "Put.io OAuth app ID"
+        clientIDField.controlSize = .small
+        clientIDField.stringValue = coordinator.state.settings.putIOClientID ?? ""
+        clientIDField.translatesAutoresizingMaskIntoConstraints = false
+        clientIDField.widthAnchor.constraint(equalToConstant: 230).isActive = true
+
+        let oauthButton = NSButton(
+            title: "Connect with Put.io",
+            target: self,
+            action: #selector(connectWithPutIO(_:))
+        )
+        oauthButton.bezelStyle = .rounded
+
+        let createAppButton = NSButton(
+            title: "Create Put.io app…",
+            target: self,
+            action: #selector(createPutIOApp(_:))
+        )
+        createAppButton.bezelStyle = .inline
+        createAppButton.contentTintColor = .controlAccentColor
+
         tokenField.placeholderString = "Paste Put.io access token"
         tokenField.controlSize = .small
         tokenField.translatesAutoresizingMaskIntoConstraints = false
@@ -205,7 +227,17 @@ final class SettingsViewController: NSViewController {
         connectionStatusLabel.textColor = .tertiaryLabelColor
         connectionStatusLabel.font = .systemFont(ofSize: 11)
 
-        let controls = NSStackView(views: [tokenField, connectButton, connectionStatusLabel])
+        let callbackLabel = NSTextField(labelWithString: "Callback: cargo://oauth/callback")
+        callbackLabel.textColor = .tertiaryLabelColor
+        callbackLabel.font = .systemFont(ofSize: 10)
+
+        let manualLabel = NSTextField(labelWithString: "Manual token fallback")
+        manualLabel.textColor = .tertiaryLabelColor
+        manualLabel.font = .systemFont(ofSize: 10, weight: .medium)
+
+        let controls = NSStackView(
+            views: [clientIDField, oauthButton, createAppButton, callbackLabel, manualLabel, tokenField, connectButton, connectionStatusLabel]
+        )
         controls.orientation = .vertical
         controls.alignment = .leading
         controls.spacing = 5
@@ -252,6 +284,23 @@ final class SettingsViewController: NSViewController {
                 connectionStatusLabel.stringValue = error.localizedDescription
             }
         }
+    }
+
+    @objc private func connectWithPutIO(_ sender: Any?) {
+        do {
+            let url = try coordinator.beginPutIOAuthorization(clientID: clientIDField.stringValue)
+            guard NSWorkspace.shared.open(url) else {
+                throw PutIOOAuth.OAuthError.invalidCallback
+            }
+            connectionStatusLabel.stringValue = coordinator.putIOStatus
+        } catch {
+            connectionStatusLabel.stringValue = error.localizedDescription
+        }
+    }
+
+    @objc private func createPutIOApp(_ sender: Any?) {
+        guard let url = URL(string: "https://app.put.io/oauth") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func configureStep(_ sender: NSButton) {

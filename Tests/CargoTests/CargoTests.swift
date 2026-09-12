@@ -57,6 +57,39 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(video.sizeBytes, 4096)
     }
 
+    func testPutIOOAuthBuildsAndParsesCallback() throws {
+        let authorizationURL = try PutIOOAuth.authorizationURL(
+            clientID: "12345",
+            state: "state-123"
+        )
+        let queryItems = try XCTUnwrap(URLComponents(url: authorizationURL, resolvingAgainstBaseURL: false)?.queryItems)
+        let query = queryItems.reduce(into: [String: String]()) { values, item in
+            if let value = item.value {
+                values[item.name] = value
+            }
+        }
+
+        XCTAssertEqual(query["client_id"], "12345")
+        XCTAssertEqual(query["response_type"], "token")
+        XCTAssertEqual(query["redirect_uri"], "cargo://oauth/callback")
+        XCTAssertEqual(query["state"], "state-123")
+
+        let callbackURL = try XCTUnwrap(
+            URL(string: "cargo://oauth/callback#access_token=token-abc&state=state-123")
+        )
+        let callback = try PutIOOAuth.parseCallback(callbackURL, expectedState: "state-123")
+        XCTAssertEqual(callback.accessToken, "token-abc")
+    }
+
+    func testPutIOOAuthRejectsStateMismatch() throws {
+        let callbackURL = try XCTUnwrap(
+            URL(string: "cargo://oauth/callback#access_token=token-abc&state=wrong")
+        )
+        XCTAssertThrowsError(try PutIOOAuth.parseCallback(callbackURL, expectedState: "expected")) { error in
+            XCTAssertEqual(error as? PutIOOAuth.OAuthError, .stateMismatch)
+        }
+    }
+
     @MainActor
     func testLocalSyncWritesToStagingAndNeedsReview() async throws {
         let directory = FileManager.default.temporaryDirectory

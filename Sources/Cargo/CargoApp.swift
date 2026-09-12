@@ -61,6 +61,20 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         refreshTask?.cancel()
     }
 
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme == PutIOOAuth.redirectURI.scheme {
+            Task { @MainActor in
+                do {
+                    try await coordinator.finishPutIOAuthorization(from: url)
+                    dashboardViewController.refreshView()
+                } catch {
+                    let alert = NSAlert(error: error)
+                    alert.runModal()
+                }
+            }
+        }
+    }
+
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool

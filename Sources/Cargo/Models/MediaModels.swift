@@ -98,6 +98,7 @@ struct LocalSyncJob: Codable, Identifiable, Sendable {
 }
 
 struct CargoSettings: Codable, Equatable, Sendable {
+    var putIOClientID: String?
     var libraryRootBookmark: Data?
     var libraryRootPath: String?
     var stagingDirectoryName: String
@@ -105,12 +106,14 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var tvShowsDirectoryName: String
 
     init(
+        putIOClientID: String? = nil,
         libraryRootBookmark: Data? = nil,
         libraryRootPath: String? = nil,
         stagingDirectoryName: String = ".cargo-incoming",
         moviesDirectoryName: String = "Movies",
         tvShowsDirectoryName: String = "TV Shows"
     ) {
+        self.putIOClientID = putIOClientID
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
         self.stagingDirectoryName = stagingDirectoryName

@@ -6,6 +6,7 @@ final class CargoCoordinator {
     private let keychain = KeychainStore()
     private var putIOClient: PutIOClient
     private var remoteFolderStack: [(id: Int, name: String)] = []
+    private var pendingOAuthState: String?
     private(set) var state: CargoState
     private(set) var putIOStatus = "Not connected yet"
     private(set) var remoteFolderID = 0
@@ -42,6 +43,27 @@ final class CargoCoordinator {
         try keychain.saveToken(trimmedToken)
         putIOClient = PutIOAPIClient(token: trimmedToken)
         putIOStatus = "Token saved · testing…"
+    }
+
+    func beginPutIOAuthorization(clientID: String) throws -> URL {
+        let oauthState = UUID().uuidString
+        let url = try PutIOOAuth.authorizationURL(clientID: clientID, state: oauthState)
+        let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        state.settings.putIOClientID = trimmedClientID
+        pendingOAuthState = oauthState
+        try store.replace(with: state)
+        putIOStatus = "Waiting for Put.io authorization…"
+        return url
+    }
+
+    func finishPutIOAuthorization(from callbackURL: URL) async throws {
+        guard let pendingOAuthState else {
+            throw PutIOOAuth.OAuthError.invalidCallback
+        }
+        let callback = try PutIOOAuth.parseCallback(callbackURL, expectedState: pendingOAuthState)
+        self.pendingOAuthState = nil
+        try savePutIOToken(callback.accessToken)
+        await refreshFromPutIO()
     }
 
     func removePutIOToken() throws {

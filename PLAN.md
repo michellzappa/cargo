@@ -21,7 +21,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 - [x] Add manual token setup using the macOS Keychain.
 - [x] Fetch account information and remote transfers.
-- [ ] Add browser OAuth sign-in with state validation.
+- [x] Add browser OAuth sign-in with state validation.
 - [x] Fetch remote files and navigate Put.io folders.
 - [x] Map Put.io statuses into Cargo statuses.
 - [ ] Add refresh, retry, cancel, and open-in-browser actions.

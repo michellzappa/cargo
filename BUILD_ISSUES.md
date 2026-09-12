@@ -4,7 +4,7 @@ This is the implementation ledger for risks that can affect the native Mac build
 
 ## Put.io authentication
 
-Cargo currently supports pasting a Put.io access token into Settings and stores it in Keychain, never in the JSON state file or logs. A browser OAuth flow still needs to be added. The client is behind a protocol so the UI can be tested with fixtures without requiring a live account.
+Cargo supports a browser OAuth flow using the `cargo://oauth/callback` scheme and stores the resulting access token in Keychain, never in the JSON state file or logs. The flow still needs validation against a real Put.io OAuth app because provider-side redirect registration and implicit-flow behavior cannot be tested without the user's app ID.
 
 ## Put.io API semantics
 

@@ -30,6 +30,17 @@ The first vertical slice is in place:
 
 OAuth browser sign-in, resumable downloads, and library organization are the next implementation steps.
 
+### Browser authentication setup
+
+Cargo uses a native `cargo://oauth/callback` URL scheme for the Put.io browser flow. Create a Put.io OAuth app, register that callback URI, copy its app ID into Settings, and then choose “Connect with Put.io”. The access token returned to Cargo is stored in macOS Keychain.
+
+To build a launchable app bundle locally:
+
+```sh
+./Scripts/build-app.sh
+open build/Cargo.app
+```
+
 ## Build
 
 ```sh
