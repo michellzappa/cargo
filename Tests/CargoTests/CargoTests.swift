@@ -238,6 +238,7 @@ final class CargoTests: XCTestCase {
 
         try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
         try Data("test file".utf8).write(to: sourceURL)
+        try Data().write(to: inboxURL.appendingPathComponent(".DS_Store"))
 
         let store = CargoStore(stateURL: stateURL)
         var state = store.snapshot()

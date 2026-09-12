@@ -171,6 +171,7 @@ final class CargoCoordinator {
             options: []
         ))?
             .filter { url in
+                url.lastPathComponent != ".DS_Store" &&
                 (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
             }
             .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
