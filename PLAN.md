@@ -19,6 +19,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Separate Transfers, Files, Inbox, History, and Settings into focused main-window views.
 - [x] Use a native macOS sidebar navigation shell with live queue badges.
 - [x] Add reproducible app version and build-number packaging.
+- [x] Normalize page spacing, list containers, rows, forms, and controls through shared UI helpers.
 
 ### 1. Put.io read-only integration
 

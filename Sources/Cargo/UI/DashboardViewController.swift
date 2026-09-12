@@ -1,6 +1,25 @@
 import AppKit
 
 final class DashboardViewController: NSViewController {
+    private enum Layout {
+        static let pageInsets = NSEdgeInsets(top: 20, left: 24, bottom: 24, right: 24)
+        static let pageSpacing: CGFloat = 16
+        static let headerSpacing: CGFloat = 4
+        static let sectionSpacing: CGFloat = 10
+        static let rowSpacing: CGFloat = 4
+        static let controlSpacing: CGFloat = 8
+        static let listWidth: CGFloat = 640
+        static let standardListHeight: CGFloat = 360
+        static let compactListHeight: CGFloat = 220
+        static let standardRowHeight: CGFloat = 56
+        static let compactRowHeight: CGFloat = 48
+        static let detailRowHeight: CGFloat = 88
+        static let formLabelWidth: CGFloat = 120
+        static let formFieldWidth: CGFloat = 280
+        static let urlFieldWidth: CGFloat = 520
+        static let libraryPathWidth: CGFloat = 480
+    }
+
     private struct InboxEntry {
         let sourceURL: URL
         let job: LocalSyncJob?
@@ -15,7 +34,6 @@ final class DashboardViewController: NSViewController {
     private var selectedPutIOView = 0
     private var lastOrganizationMessage: String?
     private var settingsView: NSView?
-    private static let listWidth: CGFloat = 640
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
@@ -109,8 +127,8 @@ final class DashboardViewController: NSViewController {
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 12
-        root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        root.spacing = Layout.pageSpacing
+        root.edgeInsets = Layout.pageInsets
         root.translatesAutoresizingMaskIntoConstraints = false
         root.setContentHuggingPriority(.required, for: .vertical)
 
@@ -130,21 +148,21 @@ final class DashboardViewController: NSViewController {
         let header = NSStackView(views: [title, subtitle, connectionLabel, refreshedLabel])
         header.orientation = .vertical
         header.alignment = .leading
-        header.spacing = 3
+        header.spacing = Layout.headerSpacing
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
-        contentStack.spacing = 10
+        contentStack.spacing = Layout.sectionSpacing
         contentStack.setContentHuggingPriority(.required, for: .vertical)
         contentStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refresh(_:)))
-        refreshButton.bezelStyle = .rounded
+        styleButton(refreshButton)
 
         let headerRow = NSStackView(views: [header, refreshButton])
         headerRow.orientation = .horizontal
         headerRow.alignment = .top
-        headerRow.spacing = 12
+        headerRow.spacing = Layout.controlSpacing
         header.setContentHuggingPriority(.defaultLow, for: .horizontal)
         refreshButton.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -186,16 +204,15 @@ final class DashboardViewController: NSViewController {
         let section = NSStackView()
         section.orientation = .vertical
         section.alignment = .leading
-        section.spacing = 8
+        section.spacing = Layout.sectionSpacing
+        section.widthAnchor.constraint(equalToConstant: Layout.listWidth).isActive = true
 
         section.addArrangedSubview(sectionHeader("Settings"))
         section.addArrangedSubview(emptyLabel("Configure the live workflow."))
 
-        let putIOTitle = NSTextField(labelWithString: "Put.io account")
-        putIOTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        section.addArrangedSubview(putIOTitle)
+        section.addArrangedSubview(sectionHeader("Put.io account"))
 
-        connectButton.bezelStyle = .rounded
+        styleButton(connectButton)
         connectButton.target = self
         connectButton.action = #selector(connectWithPutIO(_:))
 
@@ -203,10 +220,7 @@ final class DashboardViewController: NSViewController {
         appLabel.textColor = .secondaryLabelColor
         appLabel.font = .systemFont(ofSize: 11)
 
-        let oauthRow = NSStackView(views: [connectButton, appLabel])
-        oauthRow.orientation = .horizontal
-        oauthRow.alignment = .centerY
-        oauthRow.spacing = 8
+        let oauthRow = horizontalRow([connectButton, appLabel])
         oauthRow.detachesHiddenViews = true
         self.oauthRow = oauthRow
         section.addArrangedSubview(oauthRow)
@@ -217,26 +231,19 @@ final class DashboardViewController: NSViewController {
         section.addArrangedSubview(putIOSettingsStatusLabel)
         section.addArrangedSubview(emptyLabel("OAuth callback: cargo://oauth/callback"))
 
-        let watchlistTitle = NSTextField(labelWithString: "IMDb Watchlist")
-        watchlistTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        section.addArrangedSubview(watchlistTitle)
+        section.addArrangedSubview(sectionHeader("IMDb Watchlist"))
         section.addArrangedSubview(emptyLabel("Cargo watches this public list and compares it with Put.io media."))
 
         imdbWatchlistURLField.stringValue = coordinator.state.settings.imdbWatchlistURL
-        imdbWatchlistURLField.controlSize = .small
-        imdbWatchlistURLField.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        styleField(imdbWatchlistURLField, width: Layout.urlFieldWidth)
         imdbWatchlistURLField.lineBreakMode = .byTruncatingMiddle
         let saveWatchlistButton = NSButton(
             title: "Save & refresh",
             target: self,
             action: #selector(refreshIMDbWatchlist(_:))
         )
-        saveWatchlistButton.bezelStyle = .rounded
-        saveWatchlistButton.controlSize = .small
-        let watchlistURLRow = NSStackView(views: [imdbWatchlistURLField, saveWatchlistButton])
-        watchlistURLRow.orientation = .horizontal
-        watchlistURLRow.alignment = .centerY
-        watchlistURLRow.spacing = 8
+        styleButton(saveWatchlistButton)
+        let watchlistURLRow = horizontalRow([imdbWatchlistURLField, saveWatchlistButton])
         section.addArrangedSubview(watchlistURLRow)
 
         imdbWatchlistStatusLabel.textColor = .secondaryLabelColor
@@ -244,36 +251,30 @@ final class DashboardViewController: NSViewController {
         imdbWatchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
         section.addArrangedSubview(imdbWatchlistStatusLabel)
 
-        let libraryTitle = NSTextField(labelWithString: "Local library")
-        libraryTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        section.addArrangedSubview(libraryTitle)
+        section.addArrangedSubview(sectionHeader("Local library"))
 
         let chooseButton = NSButton(
             title: coordinator.state.settings.hasLibraryRoot ? "Change folder…" : "Choose folder…",
             target: self,
             action: #selector(chooseLibraryRoot(_:))
         )
-        chooseButton.bezelStyle = .rounded
+        styleButton(chooseButton)
         libraryRootLabel.stringValue = coordinator.state.settings.libraryRootPath ?? "No SSD folder selected"
         libraryRootLabel.textColor = coordinator.state.settings.hasLibraryRoot
             ? .secondaryLabelColor
             : .systemOrange
         libraryRootLabel.font = .systemFont(ofSize: 11)
         libraryRootLabel.lineBreakMode = .byTruncatingMiddle
-        libraryRootLabel.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        libraryRootLabel.widthAnchor.constraint(equalToConstant: Layout.libraryPathWidth).isActive = true
 
-        let folderRow = NSStackView(views: [chooseButton, libraryRootLabel])
-        folderRow.orientation = .horizontal
-        folderRow.alignment = .centerY
-        folderRow.spacing = 10
+        let folderRow = horizontalRow([chooseButton, libraryRootLabel])
         section.addArrangedSubview(folderRow)
 
         stagingDirectoryField.stringValue = coordinator.state.settings.stagingDirectoryName
         moviesDirectoryField.stringValue = coordinator.state.settings.moviesDirectoryName
         tvShowsDirectoryField.stringValue = coordinator.state.settings.tvShowsDirectoryName
         for field in [stagingDirectoryField, moviesDirectoryField, tvShowsDirectoryField] {
-            field.controlSize = .small
-            field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            styleField(field, width: Layout.formFieldWidth)
         }
 
         section.addArrangedSubview(fieldRow("Staging folder", stagingDirectoryField))
@@ -285,16 +286,14 @@ final class DashboardViewController: NSViewController {
             target: self,
             action: #selector(saveDirectorySettings(_:))
         )
-        saveDirectoriesButton.bezelStyle = .rounded
+        styleButton(saveDirectoriesButton)
         section.addArrangedSubview(saveDirectoriesButton)
 
         directorySettingsStatusLabel.textColor = .secondaryLabelColor
         directorySettingsStatusLabel.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(directorySettingsStatusLabel)
 
-        let automationTitle = NSTextField(labelWithString: "Automation")
-        automationTitle.font = .systemFont(ofSize: 13, weight: .semibold)
-        section.addArrangedSubview(automationTitle)
+        section.addArrangedSubview(sectionHeader("Automation"))
         section.addArrangedSubview(emptyLabel("Checked steps run automatically in the background."))
         configureWorkflowToggle(automaticSyncToggle, tag: 0)
         configureWorkflowToggle(automaticOrganizationToggle, tag: 1)
@@ -328,15 +327,50 @@ final class DashboardViewController: NSViewController {
 
     private func fieldLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.widthAnchor.constraint(equalToConstant: 105).isActive = true
+        label.alignment = .right
+        label.textColor = .secondaryLabelColor
+        label.widthAnchor.constraint(equalToConstant: Layout.formLabelWidth).isActive = true
         return label
     }
 
     private func fieldRow(_ title: String, _ field: NSTextField) -> NSView {
-        let row = NSStackView(views: [fieldLabel(title), field])
+        horizontalRow([fieldLabel(title), field])
+    }
+
+    private func styleButton(_ button: NSButton, small: Bool = true) {
+        button.bezelStyle = .rounded
+        button.controlSize = small ? .small : .regular
+    }
+
+    private func styleField(_ field: NSTextField, width: CGFloat) {
+        field.controlSize = .small
+        field.widthAnchor.constraint(equalToConstant: width).isActive = true
+    }
+
+    private func verticalRow(
+        _ views: [NSView],
+        spacing: CGFloat = Layout.rowSpacing,
+        width: CGFloat = Layout.listWidth
+    ) -> NSStackView {
+        let row = NSStackView(views: views)
+        row.orientation = .vertical
+        row.alignment = .leading
+        row.spacing = spacing
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: width).isActive = true
+        return row
+    }
+
+    private func horizontalRow(
+        _ views: [NSView],
+        spacing: CGFloat = Layout.controlSpacing
+    ) -> NSStackView {
+        let row = NSStackView(views: views)
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 8
+        row.spacing = spacing
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: Layout.listWidth).isActive = true
         return row
     }
 
@@ -355,6 +389,13 @@ final class DashboardViewController: NSViewController {
         automaticInboxCleanupToggle.state = settings.automaticInboxCleanupEnabled ? .on : .off
     }
 
+    private func addSection(_ title: String, description: String? = nil) {
+        contentStack.addArrangedSubview(sectionHeader(title))
+        if let description {
+            contentStack.addArrangedSubview(emptyLabel(description))
+        }
+    }
+
     private func render() {
         coordinator.refresh()
         let state = coordinator.state
@@ -370,24 +411,33 @@ final class DashboardViewController: NSViewController {
 
         switch selectedPutIOView {
         case 0:
-            let remoteHeader = sectionHeader("Put.io transfers · \(state.transfers.count)")
-            contentStack.addArrangedSubview(remoteHeader)
+            addSection("Put.io transfers · \(state.transfers.count)")
 
             if state.transfers.isEmpty {
                 contentStack.addArrangedSubview(emptyLabel("No active transfers"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(state.transfers.map(remoteRow), maxHeight: 210, rowHeight: 45)
+                    boundedList(
+                        state.transfers.map(remoteRow),
+                        maxHeight: Layout.compactListHeight,
+                        rowHeight: Layout.compactRowHeight
+                    )
                 )
             }
         case 1:
-            contentStack.addArrangedSubview(sectionHeader("Put.io media · all folders · \(state.remoteMediaFiles.count)"))
-            contentStack.addArrangedSubview(emptyLabel("Video files Cargo can sync, wherever they are in Put.io"))
+            addSection(
+                "Put.io media · all folders · \(state.remoteMediaFiles.count)",
+                description: "Video files Cargo can sync, wherever they are in Put.io"
+            )
             if state.remoteMediaFiles.isEmpty {
                 contentStack.addArrangedSubview(emptyLabel("No video files found in Put.io"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(state.remoteMediaFiles.map(remoteFileRow), maxHeight: 300, rowHeight: 70)
+                    boundedList(
+                        state.remoteMediaFiles.map(remoteFileRow),
+                        maxHeight: Layout.standardListHeight,
+                        rowHeight: Layout.detailRowHeight
+                    )
                 )
             }
         case 2:
@@ -406,7 +456,7 @@ final class DashboardViewController: NSViewController {
     }
 
     private func renderHistory(_ state: CargoState) {
-        contentStack.addArrangedSubview(sectionHeader("History · \(state.history.count)"))
+        addSection("History · \(state.history.count)")
         if state.history.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("No workflow activity yet"))
             return
@@ -415,15 +465,17 @@ final class DashboardViewController: NSViewController {
         contentStack.addArrangedSubview(
             boundedList(
                 state.history.prefix(50).map(historyRow),
-                maxHeight: 360,
-                rowHeight: 52
+                maxHeight: Layout.standardListHeight,
+                rowHeight: Layout.standardRowHeight
             )
         )
     }
 
     private func renderWatchlist(_ state: CargoState) {
-        contentStack.addArrangedSubview(sectionHeader("IMDb Watchlist · \(state.imdbWatchlistItems.count)"))
-        contentStack.addArrangedSubview(emptyLabel(coordinator.imdbWatchlistStatus))
+        addSection(
+            "IMDb Watchlist · \(state.imdbWatchlistItems.count)",
+            description: coordinator.imdbWatchlistStatus
+        )
 
         if state.imdbWatchlistItems.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("No Watchlist titles synced yet"))
@@ -445,14 +497,18 @@ final class DashboardViewController: NSViewController {
         }
 
         contentStack.addArrangedSubview(
-            boundedList(state.imdbWatchlistItems.map { watchlistRow($0, state: state) }, maxHeight: 360, rowHeight: 56)
+            boundedList(
+                state.imdbWatchlistItems.map { watchlistRow($0, state: state) },
+                maxHeight: Layout.standardListHeight,
+                rowHeight: Layout.standardRowHeight
+            )
         )
     }
 
     private func watchlistRow(_ item: IMDbWatchlistItem, state: CargoState) -> NSView {
         let title = NSTextField(labelWithString: item.year.map { "\(item.title) (\($0))" } ?? item.title)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        clampedLabel(title, width: Self.listWidth - 90)
+        clampedLabel(title, width: Layout.listWidth - 90)
 
         let status = Self.watchlistStatus(for: item, state: state)
         let addedLabel = item.addedAt.map {
@@ -461,12 +517,9 @@ final class DashboardViewController: NSViewController {
         let detail = NSTextField(labelWithString: "\(status) · \(addedLabel)")
         detail.textColor = Self.watchlistStatusColor(status)
         detail.font = .systemFont(ofSize: 11)
-        clampedLabel(detail, width: Self.listWidth - 90)
+        clampedLabel(detail, width: Layout.listWidth - 90)
 
-        let textStack = NSStackView(views: [title, detail])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
+        let textStack = verticalRow([title, detail], width: Layout.listWidth - 90)
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let searchButton = NSButton(
@@ -474,17 +527,10 @@ final class DashboardViewController: NSViewController {
             target: self,
             action: #selector(searchWatchlistItem(_:))
         )
-        searchButton.bezelStyle = .rounded
-        searchButton.controlSize = .small
+        styleButton(searchButton)
         searchButton.identifier = NSUserInterfaceItemIdentifier(item.title)
 
-        let row = NSStackView(views: [textStack, searchButton])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return row
+        return horizontalRow([textStack, searchButton])
     }
 
     private static func watchlistStatus(for item: IMDbWatchlistItem, state: CargoState) -> String {
@@ -536,11 +582,13 @@ final class DashboardViewController: NSViewController {
 
         let activeLocalJobs = state.localJobs.filter(Self.isActiveLocalJob)
         if !activeLocalJobs.isEmpty {
+            addSection("Downloading to \(state.settings.stagingDirectoryName) · \(activeLocalJobs.count)")
             contentStack.addArrangedSubview(
-                sectionHeader("Downloading to \(state.settings.stagingDirectoryName) · \(activeLocalJobs.count)")
-            )
-            contentStack.addArrangedSubview(
-                boundedList(activeLocalJobs.map(localRow), maxHeight: 120, rowHeight: 52)
+                boundedList(
+                    activeLocalJobs.map(localRow),
+                    maxHeight: Layout.compactListHeight,
+                    rowHeight: Layout.standardRowHeight
+                )
             )
         }
 
@@ -556,13 +604,19 @@ final class DashboardViewController: NSViewController {
             InboxEntry(sourceURL: url, job: jobsByDestination[url.path])
         }
 
-        contentStack.addArrangedSubview(sectionHeader("Inbox · \(inboxEntries.count)"))
-        contentStack.addArrangedSubview(emptyLabel("Files physically in \(state.settings.stagingDirectoryName)"))
+        addSection(
+            "Inbox · \(inboxEntries.count)",
+            description: "Files physically in \(state.settings.stagingDirectoryName)"
+        )
         if inboxEntries.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("Nothing waiting for organization"))
         } else {
             contentStack.addArrangedSubview(
-                boundedList(inboxEntries.map { inboxRow($0, state: state) }, maxHeight: 320, rowHeight: 88)
+                boundedList(
+                    inboxEntries.map { inboxRow($0, state: state) },
+                    maxHeight: Layout.standardListHeight,
+                    rowHeight: Layout.detailRowHeight
+                )
             )
         }
 
@@ -571,9 +625,13 @@ final class DashboardViewController: NSViewController {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(5)
         if !recentlyOrganized.isEmpty {
-            contentStack.addArrangedSubview(sectionHeader("Recently organized"))
+            addSection("Recently organized")
             contentStack.addArrangedSubview(
-                boundedList(recentlyOrganized.map(organizedRow), maxHeight: 170, rowHeight: 44)
+                boundedList(
+                    recentlyOrganized.map(organizedRow),
+                    maxHeight: Layout.compactListHeight,
+                    rowHeight: Layout.compactRowHeight
+                )
             )
         }
     }
@@ -590,12 +648,14 @@ final class DashboardViewController: NSViewController {
     private func sectionHeader(_ title: String) -> NSTextField {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
+        label.textColor = .labelColor
         return label
     }
 
     private func emptyLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
+        label.font = .systemFont(ofSize: 12)
         return label
     }
 
@@ -603,7 +663,7 @@ final class DashboardViewController: NSViewController {
     private func clampedLabel(
         _ label: NSTextField,
         mode: NSLineBreakMode = .byTruncatingTail,
-        width: CGFloat = 640
+        width: CGFloat = Layout.listWidth
     ) -> NSTextField {
         label.lineBreakMode = mode
         label.maximumNumberOfLines = 1
@@ -612,12 +672,16 @@ final class DashboardViewController: NSViewController {
         return label
     }
 
-    private func boundedList(_ rows: [NSView], maxHeight: CGFloat, rowHeight: CGFloat) -> NSScrollView {
+    private func boundedList(
+        _ rows: [NSView],
+        maxHeight: CGFloat = Layout.standardListHeight,
+        rowHeight: CGFloat = Layout.standardRowHeight
+    ) -> NSScrollView {
         let list = NSStackView(views: rows)
         list.orientation = .vertical
         list.alignment = .leading
-        list.spacing = 7
-        list.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 4, right: 0)
+        list.spacing = Layout.rowSpacing
+        list.edgeInsets = NSEdgeInsets(top: 6, left: 0, bottom: 6, right: 0)
         list.translatesAutoresizingMaskIntoConstraints = false
 
         let document = NSView()
@@ -627,11 +691,18 @@ final class DashboardViewController: NSViewController {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
-        scrollView.borderType = .bezelBorder
+        scrollView.borderType = .noBorder
+        scrollView.wantsLayer = true
+        scrollView.layer?.cornerRadius = 8
+        scrollView.layer?.borderWidth = 1
+        scrollView.layer?.borderColor = NSColor.separatorColor.cgColor
+        scrollView.clipsToBounds = true
         scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        let contentHeight = min(maxHeight, max(38, CGFloat(rows.count) * rowHeight + 8))
+        scrollView.widthAnchor.constraint(equalToConstant: Layout.listWidth).isActive = true
+        let spacingHeight = max(0, CGFloat(rows.count - 1)) * Layout.rowSpacing
+        let naturalHeight = CGFloat(rows.count) * rowHeight + spacingHeight + 12
+        let contentHeight = min(maxHeight, max(44, naturalHeight))
         scrollView.heightAnchor.constraint(equalToConstant: contentHeight).isActive = true
 
         NSLayoutConstraint.activate([
@@ -654,13 +725,7 @@ final class DashboardViewController: NSViewController {
         details.font = .systemFont(ofSize: 11)
         clampedLabel(details)
 
-        let stack = NSStackView(views: [title, details])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        return verticalRow([title, details])
     }
 
     private func localRow(_ job: LocalSyncJob) -> NSView {
@@ -683,13 +748,7 @@ final class DashboardViewController: NSViewController {
             labels.append(errorLabel)
         }
 
-        let stack = NSStackView(views: labels)
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        return verticalRow(labels)
     }
 
     private func inboxRow(_ entry: InboxEntry, state: CargoState) -> NSView {
@@ -730,18 +789,11 @@ final class DashboardViewController: NSViewController {
             target: self,
             action: #selector(organizeInboxItem(_:))
         )
-        organizeButton.bezelStyle = .rounded
-        organizeButton.controlSize = .small
+        styleButton(organizeButton)
         organizeButton.identifier = NSUserInterfaceItemIdentifier(entry.sourceURL.path)
         organizeButton.isEnabled = fileExists && preview.relativePath != nil
 
-        let stack = NSStackView(views: [title, status, destinationLabel, explanation, organizeButton])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        return verticalRow([title, status, destinationLabel, explanation, organizeButton])
     }
 
     private func organizedRow(_ job: LocalSyncJob) -> NSView {
@@ -754,13 +806,7 @@ final class DashboardViewController: NSViewController {
         destination.font = .systemFont(ofSize: 11)
         clampedLabel(destination, mode: .byTruncatingMiddle)
 
-        let stack = NSStackView(views: [title, destination])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        return verticalRow([title, destination])
     }
 
     private func historyRow(_ entry: CargoHistoryEntry) -> NSView {
@@ -776,13 +822,7 @@ final class DashboardViewController: NSViewController {
         detail.font = .systemFont(ofSize: 11)
         clampedLabel(detail, mode: .byTruncatingMiddle)
 
-        let stack = NSStackView(views: [title, detail])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        return verticalRow([title, detail])
     }
 
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
@@ -801,16 +841,12 @@ final class DashboardViewController: NSViewController {
         details.font = .systemFont(ofSize: 11)
         clampedLabel(details)
 
-        let copy = NSStackView(views: [title, details])
-        copy.orientation = .vertical
-        copy.alignment = .leading
-        copy.spacing = 2
+        let copy = verticalRow([title, details])
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         if file.isFolder {
             let openButton = NSButton(title: "Open", target: self, action: #selector(openRemoteFolder(_:)))
-            openButton.bezelStyle = .rounded
-            openButton.controlSize = .small
+            styleButton(openButton)
             openButton.tag = file.id
             copy.addArrangedSubview(openButton)
         } else {
@@ -820,14 +856,12 @@ final class DashboardViewController: NSViewController {
                 target: self,
                 action: #selector(syncFile(_:))
             )
-            syncButton.bezelStyle = .rounded
+            styleButton(syncButton)
             syncButton.tag = file.id
             syncButton.isEnabled = job == nil
             copy.addArrangedSubview(syncButton)
         }
 
-        copy.translatesAutoresizingMaskIntoConstraints = false
-        copy.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return copy
     }
 
