@@ -28,7 +28,6 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         try? LaunchAtLoginManager.shared.setEnabled(coordinator.state.settings.launchAtLoginEnabled)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = NSImage(
                 systemSymbolName: "shippingbox",
@@ -44,6 +43,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         statusMenu = NSMenu()
+        statusMenu.autoenablesItems = false
         connectionStatusMenuItem = NSMenuItem(title: "Put.io · Not connected yet", action: nil, keyEquivalent: "")
         transfersStatusMenuItem = NSMenuItem(title: "Transfers · 0", action: nil, keyEquivalent: "")
         inboxStatusMenuItem = NSMenuItem(title: "Inbox · 0 waiting", action: nil, keyEquivalent: "")
@@ -74,6 +74,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMenu.items.forEach { $0.target = self }
         statusMenu.delegate = self
         statusItem.menu = statusMenu
+        statusItem.isVisible = true
         updateStatusMenu()
 
         showDashboardWindow()
@@ -119,7 +120,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
-    @objc private func showDashboard(_ sender: Any?) {
+    @objc func showDashboard(_ sender: Any?) {
         showDashboardWindow()
         dashboardViewController.showTransfers()
     }
@@ -129,12 +130,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusMenu()
     }
 
-    @objc private func showSettings(_ sender: Any?) {
+    @objc func showSettings(_ sender: Any?) {
         showDashboardWindow()
         dashboardViewController.showSettings()
     }
 
-    @objc private func refreshNow(_ sender: Any?) {
+    @objc func refreshNow(_ sender: Any?) {
         Task { @MainActor in
             let summary = await coordinator.runBackgroundCycle()
             notify(summary)
@@ -143,7 +144,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    @objc private func quitCargo(_ sender: Any?) {
+    @objc func quitCargo(_ sender: Any?) {
         NSApp.terminate(nil)
     }
 
