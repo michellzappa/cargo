@@ -373,6 +373,7 @@ final class CargoCoordinator {
         } catch {
             throw SettingsError.unableToMoveFile
         }
+        removeEmptyInboxFolders(afterMoving: sourceURL, rootURL: rootURL)
 
         state.localJobs[jobIndex].status = .completed
         state.localJobs[jobIndex].progress = 1
@@ -426,6 +427,43 @@ final class CargoCoordinator {
             try FileManager.default.moveItem(at: normalizedSourceURL, to: destinationURL)
         } catch {
             throw SettingsError.unableToMoveFile
+        }
+        removeEmptyInboxFolders(afterMoving: normalizedSourceURL, rootURL: rootURL)
+    }
+
+    private func removeEmptyInboxFolders(afterMoving sourceURL: URL, rootURL: URL) {
+        let inboxURL = rootURL.appendingPathComponent(
+            state.settings.stagingDirectoryName,
+            isDirectory: true
+        ).standardizedFileURL
+        let inboxPrefix = inboxURL.path.hasSuffix("/") ? inboxURL.path : inboxURL.path + "/"
+        var folderURL = sourceURL.deletingLastPathComponent().standardizedFileURL
+        let fileManager = FileManager.default
+
+        while folderURL != inboxURL && folderURL.path.hasPrefix(inboxPrefix) {
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: nil,
+                options: []
+            ) else {
+                break
+            }
+
+            let metadata = children.filter { $0.lastPathComponent == ".DS_Store" }
+            let meaningfulChildren = children.filter { $0.lastPathComponent != ".DS_Store" }
+            guard meaningfulChildren.isEmpty else { break }
+            metadata.forEach { try? fileManager.removeItem(at: $0) }
+
+            guard let remaining = try? fileManager.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: nil,
+                options: []
+            ), remaining.isEmpty else {
+                break
+            }
+            try? fileManager.removeItem(at: folderURL)
+            guard !fileManager.fileExists(atPath: folderURL.path) else { break }
+            folderURL = folderURL.deletingLastPathComponent()
         }
     }
 

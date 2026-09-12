@@ -83,11 +83,36 @@ final class CargoTests: XCTestCase {
 
         let movie = LibraryOrganizer.preview(for: "Arrival.2016.1080p.mkv", settings: settings)
         XCTAssertEqual(movie.kind, .movie)
-        XCTAssertEqual(movie.relativePath, "Films/Arrival.2016.1080p.mkv")
+        XCTAssertEqual(movie.relativePath, "Films/Arrival (2016).mkv")
 
         let episode = LibraryOrganizer.preview(for: "Severance.S02E03.1080p.mkv", settings: settings)
         XCTAssertEqual(episode.kind, .tvEpisode)
-        XCTAssertEqual(episode.relativePath, "Series/Severance/Season 02/Severance.S02E03.1080p.mkv")
+        XCTAssertEqual(episode.relativePath, "Series/Severance/Season 02/Severance - S02E03.mkv")
+    }
+
+    func testLibraryOrganizerCleansMovieAndTVReleaseNames() {
+        let settings = CargoSettings()
+
+        let dune = LibraryOrganizer.preview(
+            for: "Jodorowsky's Dune (2013) (1080p BDRip x265 10bit EAC3 5.1 - timesuck).mkv",
+            settings: settings
+        )
+        XCTAssertEqual(dune.relativePath, "Movies/Jodorowsky's Dune (2013).mkv")
+
+        let sin = LibraryOrganizer.preview(
+            for: "A.Touch.Of.Sin.2013.1080p.BluRay.x264.AAC5.1-[YTS.MX].mkv",
+            settings: settings
+        )
+        XCTAssertEqual(sin.relativePath, "Movies/A Touch Of Sin (2013).mkv")
+
+        let episode = LibraryOrganizer.preview(
+            for: "Adults.2025.S02E01.1080p.WEB.h264-ETHEL[EZTVx.to].mkv",
+            settings: settings
+        )
+        XCTAssertEqual(
+            episode.relativePath,
+            "TV Shows/Adults (2025)/Season 02/Adults (2025) - S02E01.mkv"
+        )
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
@@ -222,7 +247,7 @@ final class CargoTests: XCTestCase {
 
         let job = try XCTUnwrap(coordinator.state.localJobs.first)
         XCTAssertEqual(job.status, .completed)
-        XCTAssertEqual(job.destination?.hasSuffix("Movies/Arrival.2016.1080p.mkv"), true)
+        XCTAssertEqual(job.destination?.hasSuffix("Movies/Arrival (2016).mkv"), true)
         XCTAssertTrue(FileManager.default.fileExists(atPath: job.destination!))
     }
 
@@ -251,9 +276,10 @@ final class CargoTests: XCTestCase {
 
         try coordinator.organizeInboxFile(at: sourceURL)
 
-        let destination = libraryRoot.appendingPathComponent("Movies/Untracked.Movie.2026.mp4")
+        let destination = libraryRoot.appendingPathComponent("Movies/Untracked Movie (2026).mp4")
         XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: nestedInboxURL.path))
     }
 
     @MainActor

@@ -28,7 +28,7 @@ The first vertical slice is in place:
 - build and test target
 - documented implementation plan and known risks
 
-Library organization is the next implementation step after the staging handoff.
+Cargo now has an explicit Inbox organization step: it classifies media, previews the destination, removes common release metadata from the filename, and moves the file into the configured Movies or TV Shows layout.
 
 ### Browser authentication setup
 
@@ -52,7 +52,7 @@ preview destination using the existing Movies and TV Shows folders
 move into the library, then run EasySubs
 ```
 
-The current build has a focused Inbox view that recursively scans the physical `_Inbox` folder and can explicitly move a confidently classified item. It keeps the downloaded filename for now and proposes a destination based on a conservative filename check: `S01E02`-style names become TV episodes under `TV Shows/<show>/Season 01/`, recognized standalone video files become movie candidates, and ambiguous files go to review. The folder names shown in Settings are destination names inside the selected root, so the next organization slice should first inspect and respect the folders already present there. Ambiguous names, duplicates, and unsupported files should be reviewed instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
+The current build has a focused Inbox view that recursively scans the physical `_Inbox` folder and can immediately move a confidently classified item. After the last file leaves a nested Inbox folder, Cargo removes that empty folder but never removes `_Inbox` itself or any non-empty folder. On organize, Cargo cleans common release metadata: movies become names such as `Jodorowsky's Dune (2013).mkv`, while TV episodes become names such as `Adults (2025) - S02E01.mkv` inside `TV Shows/Adults (2025)/Season 02/`. The original downloaded filename remains visible in Inbox and the final path is shown after the move. Ambiguous names, duplicates, and unsupported files should be reviewed instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
 
 To build a launchable app bundle locally:
 
