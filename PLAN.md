@@ -25,6 +25,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Fetch account information and remote transfers.
 - [x] Add browser OAuth sign-in with state validation.
 - [x] Fetch remote files and navigate Put.io folders.
+- [x] Limit Cargo tracking to video media files while retaining folders for navigation.
 - [x] Map Put.io statuses into Cargo statuses.
 - [ ] Add refresh, retry, cancel, and open-in-browser actions.
 - [ ] Keep the app useful when Put.io is unavailable by showing cached state and a stale indicator.
@@ -48,6 +49,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Identify common movie and episode filename patterns, using the filename as the initial signal.
 - [x] Show a proposed destination from the configured library layout before moving anything.
 - [x] Recursively scan the physical `_Inbox` folder so nested, manually placed, or previously untracked files are visible.
+- [x] Ignore non-video Inbox files and sidecars such as subtitles, artwork, metadata, and archives.
 - [x] Remove empty nested Inbox folders after their final file is organized, while preserving `_Inbox` itself.
 - [x] Apply conservative movie and TV episode rename rules during explicit Inbox organization.
 - [ ] Confirm finer rename and reorganization rules with the existing Infuse folder layout.

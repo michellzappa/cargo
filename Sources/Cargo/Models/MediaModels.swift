@@ -84,6 +84,10 @@ struct RemoteFile: Codable, Identifiable, Sendable {
     var isFolder: Bool {
         type == .folder
     }
+
+    var isMediaFile: Bool {
+        type == .video
+    }
 }
 
 struct LocalSyncJob: Codable, Identifiable, Sendable {

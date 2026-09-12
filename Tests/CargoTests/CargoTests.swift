@@ -113,6 +113,56 @@ final class CargoTests: XCTestCase {
             episode.relativePath,
             "TV Shows/Adults (2025)/Season 02/Adults (2025) - S02E01.mkv"
         )
+
+        let subtitle = LibraryOrganizer.preview(for: "Adults.S02E01.srt", settings: settings)
+        XCTAssertEqual(subtitle.kind, .review)
+        XCTAssertNil(subtitle.relativePath)
+    }
+
+    @MainActor
+    func testOnlyVideoRemoteFilesCanBeQueued() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoMediaQueueTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.remoteFiles = [
+            RemoteFile(
+                id: 61,
+                name: "Movie.mkv",
+                type: .video,
+                parentID: 0,
+                sizeBytes: 4,
+                createdAt: Date()
+            ),
+            RemoteFile(
+                id: 62,
+                name: "Movie.srt",
+                type: .other,
+                parentID: 0,
+                sizeBytes: 1,
+                createdAt: Date()
+            ),
+            RemoteFile(
+                id: 63,
+                name: "Movie.jpg",
+                type: .image,
+                parentID: 0,
+                sizeBytes: 1,
+                createdAt: Date()
+            )
+        ]
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
+        coordinator.enqueueLocalSync(remoteFileID: 62)
+        coordinator.enqueueLocalSync(remoteFileID: 63)
+        XCTAssertTrue(coordinator.state.localJobs.isEmpty)
+
+        coordinator.enqueueLocalSync(remoteFileID: 61)
+        XCTAssertEqual(coordinator.state.localJobs.map(\.remoteFileID), [61])
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
@@ -265,6 +315,9 @@ final class CargoTests: XCTestCase {
         try FileManager.default.createDirectory(at: nestedInboxURL, withIntermediateDirectories: true)
         try Data("test file".utf8).write(to: sourceURL)
         try Data().write(to: nestedInboxURL.appendingPathComponent(".DS_Store"))
+        try Data().write(to: nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.srt"))
+        try Data().write(to: nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.jpg"))
+        try Data().write(to: nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.nfo"))
 
         let store = CargoStore(stateURL: stateURL)
         var state = store.snapshot()
@@ -279,7 +332,12 @@ final class CargoTests: XCTestCase {
         let destination = libraryRoot.appendingPathComponent("Movies/Untracked Movie (2026).mp4")
         XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: nestedInboxURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: nestedInboxURL.path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.srt").path
+            )
+        )
     }
 
     @MainActor

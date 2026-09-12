@@ -22,6 +22,7 @@ The first vertical slice is in place:
 - read-only Put.io account and transfer refresh
 - remote root file browsing with idempotent local-sync queueing
 - remote-folder navigation from the menu-bar dashboard
+- video-only tracking for Put.io files and local Inbox items
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
 - periodic Put.io refresh while Cargo is running
@@ -52,7 +53,7 @@ preview destination using the existing Movies and TV Shows folders
 move into the library, then run EasySubs
 ```
 
-The current build has a focused Inbox view that recursively scans the physical `_Inbox` folder and can immediately move a confidently classified item. After the last file leaves a nested Inbox folder, Cargo removes that empty folder but never removes `_Inbox` itself or any non-empty folder. On organize, Cargo cleans common release metadata: movies become names such as `Jodorowsky's Dune (2013).mkv`, while TV episodes become names such as `Adults (2025) - S02E01.mkv` inside `TV Shows/Adults (2025)/Season 02/`. The original downloaded filename remains visible in Inbox and the final path is shown after the move. Ambiguous names, duplicates, and unsupported files should be reviewed instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
+The current build has a focused Inbox view that recursively scans the physical `_Inbox` folder and can immediately move a confidently classified item. Cargo tracks video media only: non-video files such as subtitles, artwork, metadata, archives, and hidden macOS files are ignored. Put.io folders remain visible for navigation, but only video files can be queued. After the last file leaves a nested Inbox folder, Cargo removes that empty folder but never removes `_Inbox` itself or any non-empty folder. On organize, Cargo cleans common release metadata: movies become names such as `Jodorowsky's Dune (2013).mkv`, while TV episodes become names such as `Adults (2025) - S02E01.mkv` inside `TV Shows/Adults (2025)/Season 02/`. The original downloaded filename remains visible in Inbox and the final path is shown after the move. Ambiguous names, duplicates, and unsupported video files should be reviewed instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
 
 To build a launchable app bundle locally:
 

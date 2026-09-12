@@ -16,6 +16,7 @@ final class DashboardViewController: NSViewController {
     private var selectedPutIOView = 0
     private var lastOrganizationMessage: String?
     private var settingsView: NSView?
+    private static let listWidth: CGFloat = 640
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
@@ -274,11 +275,12 @@ final class DashboardViewController: NSViewController {
             }
         case 1:
             contentStack.addArrangedSubview(remoteFilesHeader())
-            if state.remoteFiles.isEmpty {
-                contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
+            let visibleRemoteFiles = state.remoteFiles.filter { $0.isFolder || $0.isMediaFile }
+            if visibleRemoteFiles.isEmpty {
+                contentStack.addArrangedSubview(emptyLabel("No media files at this Put.io location"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(state.remoteFiles.map(remoteFileRow), maxHeight: 210, rowHeight: 70)
+                    boundedList(visibleRemoteFiles.map(remoteFileRow), maxHeight: 210, rowHeight: 70)
                 )
             }
         case 2:
@@ -294,7 +296,7 @@ final class DashboardViewController: NSViewController {
 
     private func renderInbox(_ state: CargoState) {
         if let lastOrganizationMessage {
-            let notice = emptyLabel(lastOrganizationMessage)
+            let notice = clampedLabel(emptyLabel(lastOrganizationMessage), mode: .byTruncatingMiddle)
             notice.textColor = .systemGreen
             contentStack.addArrangedSubview(notice)
         }
@@ -359,7 +361,8 @@ final class DashboardViewController: NSViewController {
     }
 
     private func remoteFilesHeader() -> NSView {
-        let title = sectionHeader("Files in Put.io · \(coordinator.remoteFolderName) · \(coordinator.state.remoteFiles.count)")
+        let visibleCount = coordinator.state.remoteFiles.filter { $0.isFolder || $0.isMediaFile }.count
+        let title = sectionHeader("Media in Put.io · \(coordinator.remoteFolderName) · \(visibleCount)")
         guard coordinator.canGoBackRemoteFolder else { return title }
 
         let backButton = NSButton(title: "Back", target: self, action: #selector(backRemoteFolder(_:)))
@@ -384,6 +387,18 @@ final class DashboardViewController: NSViewController {
         return label
     }
 
+    @discardableResult
+    private func clampedLabel(
+        _ label: NSTextField,
+        mode: NSLineBreakMode = .byTruncatingTail
+    ) -> NSTextField {
+        label.lineBreakMode = mode
+        label.maximumNumberOfLines = 1
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        return label
+    }
+
     private func boundedList(_ rows: [NSView], maxHeight: CGFloat, rowHeight: CGFloat) -> NSScrollView {
         let list = NSStackView(views: rows)
         list.orientation = .vertical
@@ -402,6 +417,7 @@ final class DashboardViewController: NSViewController {
         scrollView.borderType = .bezelBorder
         scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         let contentHeight = min(maxHeight, max(38, CGFloat(rows.count) * rowHeight + 8))
         scrollView.heightAnchor.constraint(equalToConstant: contentHeight).isActive = true
 
@@ -418,38 +434,39 @@ final class DashboardViewController: NSViewController {
     private func remoteRow(_ transfer: RemoteTransfer) -> NSView {
         let title = NSTextField(labelWithString: transfer.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.lineBreakMode = .byTruncatingTail
+        clampedLabel(title)
 
         let details = NSTextField(labelWithString: "\(transfer.status.displayName) · \(Self.percent(transfer.progress)) · \(Self.bytes(transfer.sizeBytes))")
         details.textColor = transfer.status == .failed ? .systemRed : .secondaryLabelColor
         details.font = .systemFont(ofSize: 11)
+        clampedLabel(details)
 
         let stack = NSStackView(views: [title, details])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return stack
     }
 
     private func localRow(_ job: LocalSyncJob) -> NSView {
         let title = NSTextField(labelWithString: job.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.lineBreakMode = .byTruncatingTail
+        clampedLabel(title)
 
         let destination = job.destination ?? "Destination not chosen"
         let details = NSTextField(labelWithString: "\(job.status.displayName) · \(Self.percent(job.progress)) · \(destination)")
         details.textColor = job.status == .failed || job.status == .needsReview ? .systemOrange : .secondaryLabelColor
         details.font = .systemFont(ofSize: 11)
-        details.lineBreakMode = .byTruncatingTail
+        clampedLabel(details)
 
         var labels: [NSView] = [title, details]
         if let errorMessage = job.errorMessage {
             let errorLabel = NSTextField(labelWithString: errorMessage)
             errorLabel.textColor = .systemRed
             errorLabel.font = .systemFont(ofSize: 11)
-            errorLabel.lineBreakMode = .byTruncatingTail
+            clampedLabel(errorLabel)
             labels.append(errorLabel)
         }
 
@@ -458,14 +475,14 @@ final class DashboardViewController: NSViewController {
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return stack
     }
 
     private func inboxRow(_ entry: InboxEntry, state: CargoState) -> NSView {
         let title = NSTextField(labelWithString: entry.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.lineBreakMode = .byTruncatingTail
+        clampedLabel(title)
 
         let fileExists = FileManager.default.fileExists(atPath: entry.sourceURL.path)
         let inboxStatus = entry.job == nil
@@ -474,6 +491,7 @@ final class DashboardViewController: NSViewController {
         let status = NSTextField(labelWithString: inboxStatus)
         status.textColor = fileExists ? .systemOrange : .systemRed
         status.font = .systemFont(ofSize: 11, weight: .medium)
+        clampedLabel(status)
 
         let preview = LibraryOrganizer.preview(for: entry.name, settings: state.settings)
         let destination = preview.relativePath.map { relativePath in
@@ -487,12 +505,12 @@ final class DashboardViewController: NSViewController {
         let destinationLabel = NSTextField(labelWithString: "Proposed \(preview.kind.displayName.lowercased()) destination: \(destination)")
         destinationLabel.textColor = .secondaryLabelColor
         destinationLabel.font = .systemFont(ofSize: 11)
-        destinationLabel.lineBreakMode = .byTruncatingMiddle
+        clampedLabel(destinationLabel, mode: .byTruncatingMiddle)
 
         let explanation = NSTextField(labelWithString: "Preview only · \(preview.explanation)")
         explanation.textColor = .tertiaryLabelColor
         explanation.font = .systemFont(ofSize: 10)
-        explanation.lineBreakMode = .byTruncatingTail
+        clampedLabel(explanation)
 
         let organizeButton = NSButton(
             title: preview.relativePath == nil ? "Review manually" : "Organize",
@@ -509,38 +527,39 @@ final class DashboardViewController: NSViewController {
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return stack
     }
 
     private func organizedRow(_ job: LocalSyncJob) -> NSView {
         let title = NSTextField(labelWithString: job.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.lineBreakMode = .byTruncatingTail
+        clampedLabel(title)
 
         let destination = NSTextField(labelWithString: "Organized → \(job.destination ?? "Destination unavailable")")
         destination.textColor = .systemGreen
         destination.font = .systemFont(ofSize: 11)
-        destination.lineBreakMode = .byTruncatingMiddle
+        clampedLabel(destination, mode: .byTruncatingMiddle)
 
         let stack = NSStackView(views: [title, destination])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return stack
     }
 
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
         let title = NSTextField(labelWithString: file.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        title.lineBreakMode = .byTruncatingTail
+        clampedLabel(title)
 
         let downloadStatus = localJob(for: file).map(Self.downloadStatus) ?? "Not downloaded"
         let details = NSTextField(labelWithString: "\(file.type.displayName) · \(Self.bytes(file.sizeBytes)) · \(downloadStatus)")
         details.textColor = .secondaryLabelColor
         details.font = .systemFont(ofSize: 11)
+        clampedLabel(details)
 
         let copy = NSStackView(views: [title, details])
         copy.orientation = .vertical
@@ -568,7 +587,7 @@ final class DashboardViewController: NSViewController {
         }
 
         copy.translatesAutoresizingMaskIntoConstraints = false
-        copy.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        copy.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
         return copy
     }
 

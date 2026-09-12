@@ -25,8 +25,23 @@ enum LibraryOrganizer {
         "avi", "m4v", "mkv", "mov", "mp4", "mpeg", "mpg", "ts", "webm", "wmv"
     ]
 
+    static func isMediaFile(named fileName: String) -> Bool {
+        let safeName = safeFilename(fileName)
+        let fileExtension = URL(fileURLWithPath: safeName).pathExtension.lowercased()
+        return videoExtensions.contains(fileExtension)
+    }
+
     static func preview(for fileName: String, settings: CargoSettings) -> LibrarySortPreview {
         let safeName = safeFilename(fileName)
+        let extensionName = URL(fileURLWithPath: safeName).pathExtension.lowercased()
+
+        guard videoExtensions.contains(extensionName) else {
+            return LibrarySortPreview(
+                kind: .review,
+                relativePath: nil,
+                explanation: "Unsupported or ambiguous media filename."
+            )
+        }
 
         if let episode = episodeMarker(in: safeName) {
             let showName = normalizedShowTitle(episode.prefix)
@@ -50,15 +65,6 @@ enum LibraryOrganizer {
                 kind: .tvEpisode,
                 relativePath: relativePath,
                 explanation: "Filename contains \(episode.marker); release metadata will be removed."
-            )
-        }
-
-        let fileExtension = URL(fileURLWithPath: safeName).pathExtension.lowercased()
-        guard videoExtensions.contains(fileExtension) else {
-            return LibrarySortPreview(
-                kind: .review,
-                relativePath: nil,
-                explanation: "Unsupported or ambiguous media filename."
             )
         }
 

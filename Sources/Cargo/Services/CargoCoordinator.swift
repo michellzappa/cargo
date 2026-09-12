@@ -176,7 +176,8 @@ final class CargoCoordinator {
         return enumerator.compactMap { item in
             guard let url = item as? URL,
                   url.lastPathComponent != ".DS_Store",
-                  (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true else {
+                  (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true,
+                  LibraryOrganizer.isMediaFile(named: url.lastPathComponent) else {
                 return nil
             }
             return url
@@ -190,7 +191,7 @@ final class CargoCoordinator {
             let transfers = try await putIOClient.fetchTransfers()
             let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
             state.transfers = transfers
-            state.remoteFiles = remoteFiles
+            state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
@@ -216,7 +217,7 @@ final class CargoCoordinator {
             remoteFolderStack.append((id: self.remoteFolderID, name: remoteFolderName))
             self.remoteFolderID = folder.id
             remoteFolderName = folder.name
-            state.remoteFiles = remoteFiles
+            state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
             state.lastUpdated = Date()
             try store.replace(with: state)
         } catch {
@@ -231,7 +232,7 @@ final class CargoCoordinator {
             let remoteFiles = try await putIOClient.fetchFiles(parentID: previousFolder.id)
             remoteFolderID = previousFolder.id
             remoteFolderName = previousFolder.name
-            state.remoteFiles = remoteFiles
+            state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
             state.lastUpdated = Date()
             try store.replace(with: state)
         } catch {
@@ -242,7 +243,7 @@ final class CargoCoordinator {
 
     func enqueueLocalSync(remoteFileID: Int) {
         guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
-              !remoteFile.isFolder,
+              remoteFile.isMediaFile,
               !state.localJobs.contains(where: { $0.remoteFileID == remoteFileID }) else {
             return
         }
@@ -269,7 +270,7 @@ final class CargoCoordinator {
     func processLocalSync(remoteFileID: Int) async {
         guard let jobIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFileID }),
               let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
-              !remoteFile.isFolder else {
+              remoteFile.isMediaFile else {
             return
         }
 
@@ -488,6 +489,10 @@ final class CargoCoordinator {
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "untitled-download" : cleaned
+    }
+
+    private static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
+        files.filter { $0.isFolder || $0.isMediaFile }
     }
 
 }
