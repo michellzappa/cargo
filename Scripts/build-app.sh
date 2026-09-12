@@ -7,6 +7,7 @@ projectDirectory="$(cd "$scriptDirectory/.." && pwd)"
 versionFile="$projectDirectory/Resources/Cargo-Version.env"
 source "$versionFile"
 buildNumber="$(git -C "$projectDirectory" rev-list --count HEAD)"
+swift build --package-path "$projectDirectory" -c release
 binaryDirectory="$(swift build --package-path "$projectDirectory" -c release --show-bin-path)"
 appDirectory="$projectDirectory/build/Cargo.app"
 
