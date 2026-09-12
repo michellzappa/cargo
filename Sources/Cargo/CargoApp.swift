@@ -2,7 +2,7 @@ import AppKit
 
 @main
 @MainActor
-final class CargoAppDelegate: NSObject, NSApplicationDelegate {
+final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
     private var connectionStatusMenuItem: NSMenuItem!
@@ -40,9 +40,6 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             button.imagePosition = .imageOnly
             button.imageScaling = .scaleProportionallyDown
             button.setAccessibilityLabel("Cargo menu")
-            button.target = self
-            button.action = #selector(statusItemAction(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
             button.toolTip = "Cargo"
         }
 
@@ -75,6 +72,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q")
         )
         statusMenu.items.forEach { $0.target = self }
+        statusMenu.delegate = self
+        statusItem.menu = statusMenu
         updateStatusMenu()
 
         showDashboardWindow()
@@ -125,13 +124,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         dashboardViewController.showTransfers()
     }
 
-    @objc private func statusItemAction(_ sender: NSStatusBarButton) {
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === statusMenu else { return }
         updateStatusMenu()
-        statusMenu.popUp(
-            positioning: nil,
-            at: NSPoint(x: 0, y: sender.bounds.height),
-            in: sender
-        )
     }
 
     @objc private func showSettings(_ sender: Any?) {
