@@ -2,13 +2,18 @@ import AppKit
 
 final class DashboardViewController: NSViewController {
     private let coordinator: CargoCoordinator
-    private var settingsWindowController: SettingsWindowController?
+    private let settingsWindowController: SettingsWindowController
     private let contentStack = NSStackView()
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
 
-    init(coordinator: CargoCoordinator) {
+    init(
+        coordinator: CargoCoordinator,
+        settingsWindowController: SettingsWindowController? = nil
+    ) {
         self.coordinator = coordinator
+        self.settingsWindowController = settingsWindowController
+            ?? SettingsWindowController(coordinator: coordinator)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -245,16 +250,12 @@ final class DashboardViewController: NSViewController {
     }
 
     @objc func openSettings(_ sender: Any?) {
-        if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController(coordinator: coordinator)
-        }
-
-        guard let window = settingsWindowController?.window else { return }
+        guard let window = settingsWindowController.window else { return }
         window.center()
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
-        settingsWindowController?.showWindow(self)
+        settingsWindowController.showWindow(self)
         window.setIsVisible(true)
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)

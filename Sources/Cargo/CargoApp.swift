@@ -5,6 +5,7 @@ import AppKit
 final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private lazy var settingsWindowController = SettingsWindowController(coordinator: coordinator)
     private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: DashboardViewController!
     private var refreshTask: Task<Void, Never>?
@@ -97,7 +98,10 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeDashboardViewController() -> DashboardViewController {
-        DashboardViewController(coordinator: coordinator)
+        DashboardViewController(
+            coordinator: coordinator,
+            settingsWindowController: settingsWindowController
+        )
     }
 
     private func showDashboardWindow() {
