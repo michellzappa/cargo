@@ -104,17 +104,11 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func statusItemAction(_ sender: NSStatusBarButton) {
-        let event = NSApp.currentEvent
-        let shouldShowMenu = event?.type == .rightMouseUp || event?.modifierFlags.contains(.control) == true
-        if shouldShowMenu {
-            statusMenu.popUp(
-                positioning: nil,
-                at: NSPoint(x: 0, y: sender.bounds.height),
-                in: sender
-            )
-        } else {
-            showDashboardWindow()
-        }
+        statusMenu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: sender.bounds.height),
+            in: sender
+        )
     }
 
     @objc private func showSettings(_ sender: Any?) {
