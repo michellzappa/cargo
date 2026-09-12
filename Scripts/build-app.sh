@@ -9,14 +9,16 @@ source "$versionFile"
 buildNumber="$(git -C "$projectDirectory" rev-list --count HEAD)"
 swift build --package-path "$projectDirectory" -c release
 binaryDirectory="$(swift build --package-path "$projectDirectory" -c release --show-bin-path)"
-appDirectory="$projectDirectory/build/Cargo.app"
+stagingAppDirectory="$projectDirectory/build/Cargo.app"
+appDirectory="/Users/mz/Applications/Cargo.app"
 
-mkdir -p "$appDirectory/Contents/MacOS"
-cp "$binaryDirectory/Cargo" "$appDirectory/Contents/MacOS/Cargo"
-cp "$projectDirectory/Resources/Cargo-Info.plist" "$appDirectory/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CARGO_VERSION" "$appDirectory/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $buildNumber" "$appDirectory/Contents/Info.plist"
-chmod +x "$appDirectory/Contents/MacOS/Cargo"
+mkdir -p "$stagingAppDirectory/Contents/MacOS" "/Users/mz/Applications"
+cp "$binaryDirectory/Cargo" "$stagingAppDirectory/Contents/MacOS/Cargo"
+cp "$projectDirectory/Resources/Cargo-Info.plist" "$stagingAppDirectory/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CARGO_VERSION" "$stagingAppDirectory/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $buildNumber" "$stagingAppDirectory/Contents/Info.plist"
+chmod +x "$stagingAppDirectory/Contents/MacOS/Cargo"
+/usr/bin/ditto "$stagingAppDirectory" "$appDirectory"
 /usr/bin/xattr -cr "$appDirectory"
 /usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
 /usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
