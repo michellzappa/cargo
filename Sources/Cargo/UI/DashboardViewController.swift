@@ -322,7 +322,7 @@ final class DashboardViewController: NSViewController {
 
     private func fieldLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.alignment = .right
+        label.alignment = .left
         label.textColor = .secondaryLabelColor
         label.widthAnchor.constraint(equalToConstant: Layout.formLabelWidth).isActive = true
         return label
