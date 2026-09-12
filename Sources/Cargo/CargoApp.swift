@@ -6,6 +6,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var settingsWindowController: SettingsWindowController?
+    private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: DashboardViewController!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
@@ -13,7 +14,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: 84)
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = NSImage(
@@ -23,6 +24,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             button.image?.isTemplate = true
             button.title = "Cargo"
             button.imagePosition = .imageLeft
+            button.imageScaling = .scaleProportionallyUpOrDown
+            button.setAccessibilityLabel("Cargo menu")
             button.target = self
             button.action = #selector(togglePopover(_:))
             button.toolTip = "Cargo"
@@ -32,10 +35,10 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.contentSize = NSSize(width: 370, height: 420)
-        dashboardViewController = DashboardViewController(coordinator: coordinator) { [weak self] in
-            self?.openSettings()
-        }
+        dashboardViewController = makeDashboardViewController()
         popover.contentViewController = dashboardViewController
+
+        showDashboardWindow()
 
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -49,6 +52,16 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTask?.cancel()
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        if !flag {
+            showDashboardWindow()
+        }
+        return true
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -70,6 +83,29 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         popover.performClose(nil)
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+    }
+
+    private func makeDashboardViewController() -> DashboardViewController {
+        DashboardViewController(coordinator: coordinator) { [weak self] in
+            self?.openSettings()
+        }
+    }
+
+    private func showDashboardWindow() {
+        if let dashboardWindowController {
+            dashboardWindowController.showWindow(nil)
+            dashboardWindowController.window?.makeKeyAndOrderFront(nil)
+        } else {
+            let window = NSWindow(contentViewController: makeDashboardViewController())
+            window.title = "Cargo"
+            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
+            window.setContentSize(NSSize(width: 420, height: 560))
+            window.minSize = NSSize(width: 380, height: 480)
+            dashboardWindowController = NSWindowController(window: window)
+            dashboardWindowController?.showWindow(nil)
+        }
+
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 }
