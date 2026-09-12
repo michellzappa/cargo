@@ -445,21 +445,36 @@ final class DashboardViewController: NSViewController {
     private func watchlistRow(_ item: IMDbWatchlistItem, state: CargoState) -> NSView {
         let title = NSTextField(labelWithString: item.year.map { "\(item.title) (\($0))" } ?? item.title)
         title.font = .systemFont(ofSize: 13, weight: .medium)
-        clampedLabel(title)
+        clampedLabel(title, width: Self.listWidth - 90)
 
         let status = Self.watchlistStatus(for: item, state: state)
         let detail = NSTextField(labelWithString: "\(status) · \(item.id)")
         detail.textColor = Self.watchlistStatusColor(status)
         detail.font = .systemFont(ofSize: 11)
-        clampedLabel(detail)
+        clampedLabel(detail, width: Self.listWidth - 90)
 
-        let stack = NSStackView(views: [title, detail])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
-        return stack
+        let textStack = NSStackView(views: [title, detail])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let searchButton = NSButton(
+            title: "Search",
+            target: self,
+            action: #selector(searchWatchlistItem(_:))
+        )
+        searchButton.bezelStyle = .rounded
+        searchButton.controlSize = .small
+        searchButton.identifier = NSUserInterfaceItemIdentifier(item.title)
+
+        let row = NSStackView(views: [textStack, searchButton])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        return row
     }
 
     private static func watchlistStatus(for item: IMDbWatchlistItem, state: CargoState) -> String {
@@ -582,12 +597,13 @@ final class DashboardViewController: NSViewController {
     @discardableResult
     private func clampedLabel(
         _ label: NSTextField,
-        mode: NSLineBreakMode = .byTruncatingTail
+        mode: NSLineBreakMode = .byTruncatingTail,
+        width: CGFloat = 640
     ) -> NSTextField {
         label.lineBreakMode = mode
         label.maximumNumberOfLines = 1
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        label.widthAnchor.constraint(equalToConstant: width).isActive = true
         return label
     }
 
@@ -853,6 +869,18 @@ final class DashboardViewController: NSViewController {
             imdbWatchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
             render()
         }
+    }
+
+    @objc private func searchWatchlistItem(_ sender: NSButton) {
+        guard let query = sender.identifier?.rawValue,
+              !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              var components = URLComponents(string: "https://chill.institute/search") else {
+            return
+        }
+
+        components.queryItems = [URLQueryItem(name: "q", value: query)]
+        guard let url = components.url else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func connectWithPutIO(_ sender: Any?) {
