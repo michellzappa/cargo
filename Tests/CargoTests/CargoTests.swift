@@ -10,9 +10,58 @@ final class CargoTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let store = CargoStore(stateURL: stateURL)
-        XCTAssertEqual(store.snapshot().transfers.count, 2)
+        var state = store.snapshot()
+        state.transfers = [
+            RemoteTransfer(
+                id: 1001,
+                name: "Roundtrip Episode",
+                status: .downloading,
+                progress: 0.5,
+                sizeBytes: 1_000,
+                updatedAt: Date()
+            ),
+            RemoteTransfer(
+                id: 1002,
+                name: "Roundtrip Movie",
+                status: .completed,
+                progress: 1,
+                sizeBytes: 2_000,
+                updatedAt: Date()
+            )
+        ]
+        state.remoteFiles = [
+            RemoteFile(
+                id: 2001,
+                name: "Roundtrip Movie.mkv",
+                type: .video,
+                parentID: 0,
+                sizeBytes: 2_000,
+                createdAt: Date()
+            ),
+            RemoteFile(
+                id: 2002,
+                name: "Roundtrip Shows",
+                type: .folder,
+                parentID: 0,
+                sizeBytes: 0,
+                createdAt: Date()
+            )
+        ]
+        state.localJobs = [
+            LocalSyncJob(
+                id: UUID(),
+                remoteFileID: 1002,
+                name: "Roundtrip Movie",
+                status: .queued,
+                progress: 0,
+                destination: nil,
+                errorMessage: nil,
+                updatedAt: Date()
+            )
+        ]
+        try store.replace(with: state)
 
-        try store.save()
+        XCTAssertEqual(store.snapshot().transfers.count, 2)
 
         let reloaded = CargoStore(stateURL: stateURL)
         XCTAssertEqual(reloaded.snapshot().transfers.map(\.id), [1001, 1002])

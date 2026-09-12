@@ -23,7 +23,7 @@ final class CargoStore {
         self.encoder.dateEncodingStrategy = .iso8601
         self.decoder = JSONDecoder()
         self.decoder.dateDecodingStrategy = .iso8601
-        self.state = Self.loadState(from: self.stateURL, decoder: self.decoder) ?? .demo
+        self.state = Self.loadState(from: self.stateURL, decoder: self.decoder) ?? .empty
     }
 
     func snapshot() -> CargoState {

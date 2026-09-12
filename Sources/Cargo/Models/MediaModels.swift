@@ -166,55 +166,10 @@ struct CargoState: Codable, Sendable {
         case lastUpdated
     }
 
-    static let demo = CargoState(
-        transfers: [
-            RemoteTransfer(
-                id: 1001,
-                name: "The Example Show - S02E04",
-                status: .downloading,
-                progress: 0.68,
-                sizeBytes: 1_900_000_000,
-                updatedAt: Date()
-            ),
-            RemoteTransfer(
-                id: 1002,
-                name: "Example Movie (2026)",
-                status: .completed,
-                progress: 1,
-                sizeBytes: 7_400_000_000,
-                updatedAt: Date()
-            )
-        ],
-        remoteFiles: [
-            RemoteFile(
-                id: 2001,
-                name: "Example Movie (2026).mkv",
-                type: .video,
-                parentID: 0,
-                sizeBytes: 7_400_000_000,
-                createdAt: Date()
-            ),
-            RemoteFile(
-                id: 2002,
-                name: "Example Show",
-                type: .folder,
-                parentID: 0,
-                sizeBytes: 0,
-                createdAt: Date()
-            )
-        ],
-        localJobs: [
-            LocalSyncJob(
-                id: UUID(),
-                remoteFileID: 1002,
-                name: "Example Movie (2026)",
-                status: .queued,
-                progress: 0,
-                destination: "Movies/Example Movie (2026)",
-                errorMessage: nil,
-                updatedAt: Date()
-            )
-        ],
+    static let empty = CargoState(
+        transfers: [],
+        remoteFiles: [],
+        localJobs: [],
         lastUpdated: Date()
     )
 }

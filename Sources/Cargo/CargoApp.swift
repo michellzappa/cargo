@@ -113,6 +113,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
         window.collectionBehavior = [.moveToActiveSpace]
         settingsWindowController?.showWindow(self)
+        window.setIsVisible(true)
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)

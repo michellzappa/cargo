@@ -106,16 +106,16 @@ final class DashboardViewController: NSViewController {
         contentStack.addArrangedSubview(remoteHeader)
 
         if state.transfers.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("No remote transfers"))
+            contentStack.addArrangedSubview(emptyLabel("No active transfers"))
         } else {
             state.transfers.forEach { contentStack.addArrangedSubview(remoteRow($0)) }
         }
 
         contentStack.addArrangedSubview(remoteFilesHeader())
         if state.remoteFiles.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("No cached files at the Put.io root"))
+            contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
         } else {
-            state.remoteFiles.prefix(8).forEach { contentStack.addArrangedSubview(remoteFileRow($0)) }
+            state.remoteFiles.forEach { contentStack.addArrangedSubview(remoteFileRow($0)) }
         }
 
         contentStack.addArrangedSubview(sectionHeader("Local library queue"))
@@ -133,7 +133,7 @@ final class DashboardViewController: NSViewController {
     }
 
     private func remoteFilesHeader() -> NSView {
-        let title = sectionHeader("Ready in Put.io · \(coordinator.remoteFolderName)")
+        let title = sectionHeader("Files in Put.io · \(coordinator.remoteFolderName)")
         guard coordinator.canGoBackRemoteFolder else { return title }
 
         let backButton = NSButton(title: "Back", target: self, action: #selector(backRemoteFolder(_:)))
@@ -245,7 +245,7 @@ final class DashboardViewController: NSViewController {
         }
     }
 
-    @objc private func settings(_ sender: Any?) {
+    @objc func settings(_ sender: Any?) {
         onSettings()
     }
 

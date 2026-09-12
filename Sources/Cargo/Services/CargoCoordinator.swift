@@ -272,12 +272,4 @@ final class CargoCoordinator {
         return cleaned.isEmpty ? "untitled-download" : cleaned
     }
 
-    func persistDemoState() {
-        do {
-            try store.save()
-            refresh()
-        } catch {
-            // The dashboard remains useful with in-memory state if persistence fails.
-        }
-    }
 }
