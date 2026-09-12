@@ -374,7 +374,9 @@ final class SettingsWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 680, height: 620))
         window.minSize = NSSize(width: 600, height: 480)
+        window.collectionBehavior = [.moveToActiveSpace]
         window.isReleasedWhenClosed = false
+        window.center()
         super.init(window: window)
     }
 

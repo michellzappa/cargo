@@ -103,9 +103,18 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         popover.performClose(nil)
-        settingsWindowController?.showWindow(nil)
-        settingsWindowController?.window?.orderFrontRegardless()
-        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        guard let window = settingsWindowController?.window else { return }
+
+        if !window.isVisible {
+            window.center()
+        }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.collectionBehavior = [.moveToActiveSpace]
+        settingsWindowController?.showWindow(self)
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
