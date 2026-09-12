@@ -46,7 +46,7 @@ Cargo treats the folder selected in “Local library” as the existing root tha
 
 The Files view is a recursive inventory of video files in Put.io, not just the current root folder. Each row shows its Put.io path and whether Cargo has not downloaded it, has placed it in `_Inbox`, or has organized it into the library. Cargo ignores non-media sidecars and folders for syncing.
 
-The Watchlist view loads the configured public IMDb Watchlist through IMDb’s public list data endpoint, resolving both the shared `p.…` profile URL and the older `ur…` user URL without storing IMDb credentials. Cargo keeps the IMDb IDs and titles locally, follows pagination, refreshes automatically at most every 15 minutes, and labels each title as Wanted, Available in Put.io, Queued, Downloaded in Inbox, or Organized. The watchlist is a desired list only; ShowRSS and Put.io remain the availability pipeline.
+The Watchlist view loads the configured public IMDb Watchlist through IMDb’s public list data endpoint, resolving both the shared `p.…` profile URL and the older `ur…` user URL without storing IMDb credentials. Cargo keeps the IMDb IDs, titles, and added dates locally, follows pagination, shows newest-added titles first, refreshes automatically at most every 15 minutes, and labels each title as Wanted, Available in Put.io, Queued, Downloaded in Inbox, or Organized. The watchlist is a desired list only; ShowRSS and Put.io remain the availability pipeline.
 
 The intended handoff is:
 

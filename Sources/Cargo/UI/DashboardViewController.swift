@@ -465,7 +465,10 @@ final class DashboardViewController: NSViewController {
         clampedLabel(title, width: Self.listWidth - 90)
 
         let status = Self.watchlistStatus(for: item, state: state)
-        let detail = NSTextField(labelWithString: "\(status) · \(item.id)")
+        let addedLabel = item.addedAt.map {
+            "Added \(Self.watchlistDateFormatter.string(from: $0))"
+        } ?? item.id
+        let detail = NSTextField(labelWithString: "\(status) · \(addedLabel)")
         detail.textColor = Self.watchlistStatusColor(status)
         detail.font = .systemFont(ofSize: 11)
         clampedLabel(detail, width: Self.listWidth - 90)
@@ -1058,6 +1061,13 @@ final class DashboardViewController: NSViewController {
         let formatter = DateFormatter()
         formatter.dateStyle = .short
         formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let watchlistDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
         return formatter
     }()
 

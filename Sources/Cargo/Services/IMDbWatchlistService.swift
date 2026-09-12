@@ -69,6 +69,7 @@ final class IMDbWatchlistService {
 
     private struct Node: Decodable {
         let listItem: Title?
+        let createdDate: String?
     }
 
     private struct Title: Decodable {
@@ -116,6 +117,7 @@ final class IMDbWatchlistService {
         items(first: $first, after: $after) {
           edges {
             node {
+              createdDate
               listItem {
                 ... on Title {
                   id
@@ -190,7 +192,8 @@ final class IMDbWatchlistService {
                     id: title.id,
                     title: title.titleText.text,
                     year: title.releaseYear?.year,
-                    titleType: title.titleType?.id
+                    titleType: title.titleType?.id,
+                    addedAt: Self.date(from: edge.node?.createdDate)
                 )
             } ?? [])
 
@@ -262,5 +265,10 @@ final class IMDbWatchlistService {
             return nil
         }
         return identifier
+    }
+
+    private static func date(from value: String?) -> Date? {
+        guard let value else { return nil }
+        return ISO8601DateFormatter().date(from: value)
     }
 }

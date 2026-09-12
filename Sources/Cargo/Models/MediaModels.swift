@@ -100,6 +100,38 @@ struct IMDbWatchlistItem: Codable, Identifiable, Sendable, Equatable {
     var title: String
     var year: Int?
     var titleType: String?
+    var addedAt: Date? = nil
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case year
+        case titleType
+        case addedAt
+    }
+
+    init(
+        id: String,
+        title: String,
+        year: Int? = nil,
+        titleType: String? = nil,
+        addedAt: Date? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.year = year
+        self.titleType = titleType
+        self.addedAt = addedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        year = try container.decodeIfPresent(Int.self, forKey: .year)
+        titleType = try container.decodeIfPresent(String.self, forKey: .titleType)
+        addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt)
+    }
 }
 
 struct LocalSyncJob: Codable, Identifiable, Sendable {

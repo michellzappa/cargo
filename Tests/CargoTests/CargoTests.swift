@@ -70,8 +70,15 @@ final class CargoTests: XCTestCase {
         ]
         state.remoteMediaFiles = [state.remoteFiles[0]]
         state.remoteFolders = [state.remoteFiles[1]]
+        let watchlistAddedAt = Date(timeIntervalSince1970: 1_735_689_600)
         state.imdbWatchlistItems = [
-            IMDbWatchlistItem(id: "tt1234567", title: "Roundtrip Movie", year: 2026, titleType: "movie")
+            IMDbWatchlistItem(
+                id: "tt1234567",
+                title: "Roundtrip Movie",
+                year: 2026,
+                titleType: "movie",
+                addedAt: watchlistAddedAt
+            )
         ]
         state.imdbWatchlistLastUpdated = Date()
         state.deletedRemoteFileIDs = [2001]
@@ -95,6 +102,7 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(reloaded.snapshot().remoteMediaFiles.map(\.id), [2001])
         XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.map(\.id), ["tt1234567"])
         XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.first?.year, 2026)
+        XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.first?.addedAt, watchlistAddedAt)
         XCTAssertNotNil(reloaded.snapshot().imdbWatchlistLastUpdated)
         XCTAssertEqual(reloaded.snapshot().deletedRemoteFileIDs, [2001])
         XCTAssertEqual(reloaded.snapshot().remoteFolders.map(\.id), [2002])

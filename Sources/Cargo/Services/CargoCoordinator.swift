@@ -190,7 +190,13 @@ final class CargoCoordinator {
             let previousIDs = Set(state.imdbWatchlistItems.map(\.id))
             let items = try await imdbWatchlistService.fetchItems(from: state.settings.imdbWatchlistURL)
             state.imdbWatchlistItems = items.sorted {
-                $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                if let lhsDate = $0.addedAt, let rhsDate = $1.addedAt, lhsDate != rhsDate {
+                    return lhsDate > rhsDate
+                }
+                if ($0.addedAt != nil) != ($1.addedAt != nil) {
+                    return $0.addedAt != nil
+                }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
             state.imdbWatchlistLastUpdated = Date()
             state.lastUpdated = Date()
