@@ -45,7 +45,8 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [ ] Treat the selected SSD folder as the existing Infuse library root; do not reorganize existing content automatically.
 - [ ] Inspect the existing root and learn/confirm its current Movies and TV Shows folders.
 - [ ] Identify common movie and episode filename patterns, using Put.io folder context as a signal.
-- [ ] Create a proposed destination from the existing library layout and show it before moving anything.
+- [x] Show a proposed destination from the configured library layout before moving anything.
+- [ ] Confirm the final rename and reorganization rules with the existing Infuse folder layout.
 - [ ] Move verified files atomically from hidden staging into the chosen existing destination.
 - [ ] Quarantine ambiguous or unsupported files instead of guessing.
 - [ ] Detect duplicates and existing library files before import.
@@ -94,7 +95,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 Sorting is a workflow stage after download, not part of the Put.io transfer view. Cargo should use the selected SSD folder as the source of truth for the existing Infuse library:
 
-1. Download the completed Put.io file into hidden `.cargo-incoming` staging.
+1. Download the completed Put.io file into hidden `_Inbox` staging.
 2. Inspect the filename and Put.io folder context.
 3. Classify it as a movie, TV episode/season, or ambiguous item.
 4. Preview the exact destination using the existing Movies and TV Shows folders.

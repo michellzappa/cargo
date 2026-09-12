@@ -36,7 +36,7 @@ enum LocalSyncStatus: String, Codable, Sendable {
         case .downloading: "Downloading"
         case .importing: "Importing"
         case .completed: "Completed"
-        case .needsReview: "Needs review"
+        case .needsReview: "In inbox · awaiting organization"
         case .failed: "Failed"
         }
     }
@@ -107,7 +107,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
     init(
         libraryRootBookmark: Data? = nil,
         libraryRootPath: String? = nil,
-        stagingDirectoryName: String = ".cargo-incoming",
+        stagingDirectoryName: String = "_Inbox",
         moviesDirectoryName: String = "Movies",
         tvShowsDirectoryName: String = "TV Shows"
     ) {

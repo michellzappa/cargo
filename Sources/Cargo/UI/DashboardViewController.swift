@@ -275,6 +275,18 @@ final class DashboardViewController: NSViewController {
                 boundedList(state.localJobs.map(localRow), height: 120)
             )
         }
+
+        let inboxJobs = state.localJobs
+            .filter { $0.status == .needsReview }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        contentStack.addArrangedSubview(sectionHeader("Local inbox · \(inboxJobs.count) awaiting organization"))
+        if inboxJobs.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel("No downloaded files waiting for organization"))
+        } else {
+            contentStack.addArrangedSubview(
+                boundedList(inboxJobs.map { inboxRow($0, state: state) }, height: 190)
+            )
+        }
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {
@@ -386,6 +398,45 @@ final class DashboardViewController: NSViewController {
         return stack
     }
 
+    private func inboxRow(_ job: LocalSyncJob, state: CargoState) -> NSView {
+        let title = NSTextField(labelWithString: job.name)
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.lineBreakMode = .byTruncatingTail
+
+        let fileExists = job.destination.map { FileManager.default.fileExists(atPath: $0) } ?? false
+        let inboxStatus = fileExists ? "Downloaded · awaiting organization" : "Missing from staging"
+        let status = NSTextField(labelWithString: inboxStatus)
+        status.textColor = fileExists ? .systemOrange : .systemRed
+        status.font = .systemFont(ofSize: 11, weight: .medium)
+
+        let preview = LibraryOrganizer.preview(for: job.name, settings: state.settings)
+        let destination = preview.relativePath.map { relativePath in
+            if let rootPath = state.settings.libraryRootPath {
+                return URL(fileURLWithPath: rootPath, isDirectory: true)
+                    .appendingPathComponent(relativePath)
+                    .path
+            }
+            return relativePath
+        } ?? "Review manually"
+        let destinationLabel = NSTextField(labelWithString: "Proposed \(preview.kind.displayName.lowercased()) destination: \(destination)")
+        destinationLabel.textColor = .secondaryLabelColor
+        destinationLabel.font = .systemFont(ofSize: 11)
+        destinationLabel.lineBreakMode = .byTruncatingMiddle
+
+        let explanation = NSTextField(labelWithString: "Preview only · \(preview.explanation)")
+        explanation.textColor = .tertiaryLabelColor
+        explanation.font = .systemFont(ofSize: 10)
+        explanation.lineBreakMode = .byTruncatingTail
+
+        let stack = NSStackView(views: [title, status, destinationLabel, explanation])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        return stack
+    }
+
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
         let title = NSTextField(labelWithString: file.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
@@ -435,7 +486,7 @@ final class DashboardViewController: NSViewController {
     private static func downloadStatus(_ job: LocalSyncJob) -> String {
         switch job.status {
         case .needsReview:
-            "Downloaded · needs review"
+            "Downloaded · in inbox · awaiting organization"
         case .completed:
             "Downloaded"
         default:

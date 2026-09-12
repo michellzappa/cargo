@@ -71,7 +71,23 @@ final class CargoTests: XCTestCase {
 
     func testStatusesHaveHumanReadableNames() {
         XCTAssertEqual(RemoteTransferStatus.downloading.displayName, "Downloading")
-        XCTAssertEqual(LocalSyncStatus.needsReview.displayName, "Needs review")
+        XCTAssertEqual(LocalSyncStatus.needsReview.displayName, "In inbox · awaiting organization")
+    }
+
+    func testLibraryOrganizerPreviewsMovieAndTVDestinations() {
+        let settings = CargoSettings(
+            stagingDirectoryName: ".inbox",
+            moviesDirectoryName: "Films",
+            tvShowsDirectoryName: "Series"
+        )
+
+        let movie = LibraryOrganizer.preview(for: "Arrival.2016.1080p.mkv", settings: settings)
+        XCTAssertEqual(movie.kind, .movie)
+        XCTAssertEqual(movie.relativePath, "Films/Arrival.2016.1080p.mkv")
+
+        let episode = LibraryOrganizer.preview(for: "Severance.S02E03.1080p.mkv", settings: settings)
+        XCTAssertEqual(episode.kind, .tvEpisode)
+        XCTAssertEqual(episode.relativePath, "Series/Severance/Season 02/Severance.S02E03.1080p.mkv")
     }
 
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
@@ -167,7 +183,7 @@ final class CargoTests: XCTestCase {
         let job = try XCTUnwrap(coordinator.state.localJobs.first)
         XCTAssertEqual(job.status, .needsReview)
         XCTAssertEqual(job.progress, 1)
-        XCTAssertEqual(job.destination?.hasSuffix(".cargo-incoming/Movie-2026.mkv"), true)
+        XCTAssertEqual(job.destination?.hasSuffix("_Inbox/Movie-2026.mkv"), true)
         XCTAssertEqual(
             try String(contentsOfFile: job.destination!),
             "test file"

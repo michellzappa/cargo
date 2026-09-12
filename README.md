@@ -43,7 +43,7 @@ The intended handoff is:
 ```text
 Put.io completed file
         ↓
-hidden .cargo-incoming staging folder
+hidden _Inbox staging folder
         ↓
 identify movie / episode / ambiguous file
         ↓
@@ -52,7 +52,7 @@ preview destination using the existing Movies and TV Shows folders
 move into the library, then run EasySubs
 ```
 
-The current build implements the first two steps. The folder names shown in Settings are destination names inside the selected root, so the next organization slice should first inspect and respect the folders already present there. Ambiguous names, duplicates, and unsupported files should go to review instead of being guessed or moved automatically.
+The current build implements the first two steps and shows a read-only “Local inbox” preview. It keeps the downloaded filename for now and proposes a destination based on a conservative filename check: `S01E02`-style names become TV episodes under `TV Shows/<show>/Season 01/`, recognized standalone video files become movie candidates, and ambiguous files go to review. The folder names shown in Settings are destination names inside the selected root, so the next organization slice should first inspect and respect the folders already present there. Ambiguous names, duplicates, and unsupported files should go to review instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
 
 To build a launchable app bundle locally:
 

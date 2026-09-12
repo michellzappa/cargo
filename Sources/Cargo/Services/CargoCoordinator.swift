@@ -36,6 +36,10 @@ final class CargoCoordinator {
             self.putIOClient = UnconfiguredPutIOClient()
         }
         self.state = store.snapshot()
+        if self.state.settings.stagingDirectoryName == ".cargo-incoming" {
+            self.state.settings.stagingDirectoryName = "_Inbox"
+            try? store.replace(with: self.state)
+        }
     }
 
     func refresh() {
