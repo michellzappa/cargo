@@ -30,6 +30,10 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         popover.contentViewController = DashboardViewController(coordinator: coordinator) { [weak self] in
             self?.openSettings()
         }
+
+        Task { @MainActor in
+            await coordinator.refreshFromPutIO()
+        }
     }
 
     @objc private func togglePopover(_ sender: Any?) {
@@ -45,7 +49,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettings() {
         if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController()
+            settingsWindowController = SettingsWindowController(coordinator: coordinator)
         }
 
         popover.performClose(nil)

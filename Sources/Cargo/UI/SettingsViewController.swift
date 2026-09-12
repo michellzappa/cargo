@@ -10,6 +10,12 @@ final class SettingsViewController: NSViewController {
         let actionTitle: String
     }
 
+    private let coordinator: CargoCoordinator
+    private let tokenField = NSSecureTextField()
+    private let connectionStatusLabel = NSTextField(labelWithString: "")
+    private let connectButton = NSButton()
+    private let libraryRootLabel = NSTextField(labelWithString: "")
+
     private let workflowSteps = [
         WorkflowStep(
             number: 1,
@@ -60,6 +66,16 @@ final class SettingsViewController: NSViewController {
             actionTitle: "Configure"
         )
     ]
+
+    init(coordinator: CargoCoordinator) {
+        self.coordinator = coordinator
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func loadView() {
         view = NSView()
@@ -151,11 +167,19 @@ final class SettingsViewController: NSViewController {
         copy.alignment = .leading
         copy.spacing = 3
 
-        let action = NSButton(title: step.actionTitle, target: self, action: #selector(configureStep(_:)))
-        action.bezelStyle = .rounded
-        action.tag = step.number
+        var rowViews: [NSView] = [number, icon, copy]
+        if step.number == 1 {
+            rowViews.append(connectionControls())
+        } else if step.number == 3 {
+            rowViews.append(libraryControls())
+        } else {
+            let action = NSButton(title: step.actionTitle, target: self, action: #selector(configureStep(_:)))
+            action.bezelStyle = .rounded
+            action.tag = step.number
+            rowViews.append(action)
+        }
 
-        let row = NSStackView(views: [number, icon, copy, action])
+        let row = NSStackView(views: rowViews)
         row.orientation = .horizontal
         row.alignment = .top
         row.spacing = 10
@@ -166,12 +190,96 @@ final class SettingsViewController: NSViewController {
         return row
     }
 
+    private func connectionControls() -> NSView {
+        tokenField.placeholderString = "Paste Put.io access token"
+        tokenField.controlSize = .small
+        tokenField.translatesAutoresizingMaskIntoConstraints = false
+        tokenField.widthAnchor.constraint(equalToConstant: 230).isActive = true
+
+        connectButton.title = "Save & test"
+        connectButton.bezelStyle = .rounded
+        connectButton.target = self
+        connectButton.action = #selector(saveAndTestPutIO(_:))
+
+        connectionStatusLabel.stringValue = coordinator.putIOStatus
+        connectionStatusLabel.textColor = .tertiaryLabelColor
+        connectionStatusLabel.font = .systemFont(ofSize: 11)
+
+        let controls = NSStackView(views: [tokenField, connectButton, connectionStatusLabel])
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 5
+        controls.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return controls
+    }
+
+    private func libraryControls() -> NSView {
+        let chooseButton = NSButton(
+            title: coordinator.state.settings.hasLibraryRoot ? "Change folder…" : "Choose folder…",
+            target: self,
+            action: #selector(chooseLibraryRoot(_:))
+        )
+        chooseButton.bezelStyle = .rounded
+
+        libraryRootLabel.stringValue = coordinator.state.settings.libraryRootPath ?? "No SSD folder selected"
+        libraryRootLabel.textColor = coordinator.state.settings.hasLibraryRoot
+            ? .secondaryLabelColor
+            : .systemOrange
+        libraryRootLabel.font = .systemFont(ofSize: 11)
+        libraryRootLabel.lineBreakMode = .byTruncatingMiddle
+        libraryRootLabel.maximumNumberOfLines = 1
+
+        let controls = NSStackView(views: [chooseButton, libraryRootLabel])
+        controls.orientation = .vertical
+        controls.alignment = .leading
+        controls.spacing = 5
+        controls.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return controls
+    }
+
+    @objc private func saveAndTestPutIO(_ sender: Any?) {
+        let token = tokenField.stringValue
+        connectButton.isEnabled = false
+        connectionStatusLabel.stringValue = "Testing…"
+
+        Task { @MainActor in
+            defer { connectButton.isEnabled = true }
+            do {
+                try coordinator.savePutIOToken(token)
+                await coordinator.refreshFromPutIO()
+                connectionStatusLabel.stringValue = coordinator.putIOStatus
+            } catch {
+                connectionStatusLabel.stringValue = error.localizedDescription
+            }
+        }
+    }
+
     @objc private func configureStep(_ sender: NSButton) {
         let alert = NSAlert()
         alert.messageText = "Configuration coming next"
         alert.informativeText = "Step \(sender.tag) is represented in the workflow. The live Put.io and SSD settings will be wired in the next build slice."
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    @objc private func chooseLibraryRoot(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use as Library Root"
+        panel.message = "Choose the folder on the SSD that Infuse reads."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try coordinator.saveLibraryRoot(url)
+            libraryRootLabel.stringValue = url.path
+            libraryRootLabel.textColor = .secondaryLabelColor
+        } catch {
+            let alert = NSAlert(error: error)
+            alert.runModal()
+        }
     }
 
     private static func separator() -> NSBox {
@@ -182,8 +290,8 @@ final class SettingsViewController: NSViewController {
 }
 
 final class SettingsWindowController: NSWindowController {
-    init() {
-        let window = NSWindow(contentViewController: SettingsViewController())
+    init(coordinator: CargoCoordinator) {
+        let window = NSWindow(contentViewController: SettingsViewController(coordinator: coordinator))
         window.title = "Cargo Settings"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 680, height: 620))

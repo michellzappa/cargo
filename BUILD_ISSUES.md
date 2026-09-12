@@ -4,7 +4,7 @@ This is the implementation ledger for risks that can affect the native Mac build
 
 ## Put.io authentication
 
-The app needs a secure OAuth/token flow. Tokens must live in Keychain, never in the JSON state file or logs. We should build the client behind a protocol so the UI can be tested with fixtures without requiring a live account.
+Cargo currently supports pasting a Put.io access token into Settings and stores it in Keychain, never in the JSON state file or logs. A browser OAuth flow still needs to be added. The client is behind a protocol so the UI can be tested with fixtures without requiring a live account.
 
 ## Put.io API semantics
 
@@ -12,7 +12,7 @@ Put.io has separate concepts for transfers and files. A completed transfer may p
 
 ## Local SSD permissions
 
-The SSD may be removed, renamed, or mounted at a different path. A sandboxed app needs a security-scoped bookmark created from an `NSOpenPanel`. All file access should go through a small authorization/path layer.
+Cargo now stores the selected SSD folder as a security-scoped bookmark and uses it for the first staging download path. The authorization layer still needs stale-bookmark repair and explicit unmounted-volume handling. Progress and resumable downloads are also still pending.
 
 ## Resumable downloads
 

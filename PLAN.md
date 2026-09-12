@@ -19,19 +19,21 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 1. Put.io read-only integration
 
-- [ ] Add OAuth/token setup using the macOS Keychain.
-- [ ] Fetch account information and remote transfers.
-- [ ] Fetch remote files and folders.
-- [ ] Map Put.io statuses into Cargo statuses.
+- [x] Add manual token setup using the macOS Keychain.
+- [x] Fetch account information and remote transfers.
+- [ ] Add browser OAuth sign-in with state validation.
+- [x] Fetch remote files and folders at the Put.io root.
+- [x] Map Put.io statuses into Cargo statuses.
 - [ ] Add refresh, retry, cancel, and open-in-browser actions.
 - [ ] Keep the app useful when Put.io is unavailable by showing cached state and a stale indicator.
 
 ### 2. Local sync pipeline
 
-- [ ] Let the user choose and authorize the SSD library root.
-- [ ] Persist a security-scoped bookmark for the selected volume.
-- [ ] Add a local download queue with pause, resume, retry, and cancellation.
-- [ ] Download only completed remote files into a staging directory.
+- [x] Let the user choose and authorize the SSD library root.
+- [x] Persist a security-scoped bookmark for the selected volume.
+- [x] Add the first local download job execution path.
+- [x] Download selected remote files into a hidden staging directory.
+- [ ] Add progress, pause, resume, retry, and cancellation.
 - [ ] Verify size and/or checksum before import.
 - [ ] Resume safely after app restart, SSD removal, or network failure.
 

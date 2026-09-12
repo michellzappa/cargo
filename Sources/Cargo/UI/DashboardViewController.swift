@@ -4,6 +4,7 @@ final class DashboardViewController: NSViewController {
     private let coordinator: CargoCoordinator
     private let onSettings: () -> Void
     private let contentStack = NSStackView()
+    private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
 
     init(coordinator: CargoCoordinator, onSettings: @escaping () -> Void = {}) {
@@ -42,10 +43,14 @@ final class DashboardViewController: NSViewController {
         let subtitle = NSTextField(labelWithString: "Put.io → local library")
         subtitle.textColor = .secondaryLabelColor
 
+        connectionLabel.stringValue = coordinator.putIOStatus
+        connectionLabel.textColor = .tertiaryLabelColor
+        connectionLabel.font = .systemFont(ofSize: 11)
+
         refreshedLabel.textColor = .tertiaryLabelColor
         refreshedLabel.font = .systemFont(ofSize: 11)
 
-        let header = NSStackView(views: [title, subtitle, refreshedLabel])
+        let header = NSStackView(views: [title, subtitle, connectionLabel, refreshedLabel])
         header.orientation = .vertical
         header.alignment = .leading
         header.spacing = 3
@@ -89,7 +94,8 @@ final class DashboardViewController: NSViewController {
         let state = coordinator.state
 
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        refreshedLabel.stringValue = "Updated (Self.timeFormatter.string(from: state.lastUpdated))"
+        connectionLabel.stringValue = coordinator.putIOStatus
+        refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
 
         let remoteHeader = sectionHeader("Put.io transfers")
         contentStack.addArrangedSubview(remoteHeader)
@@ -98,6 +104,13 @@ final class DashboardViewController: NSViewController {
             contentStack.addArrangedSubview(emptyLabel("No remote transfers"))
         } else {
             state.transfers.forEach { contentStack.addArrangedSubview(remoteRow($0)) }
+        }
+
+        contentStack.addArrangedSubview(sectionHeader("Ready in Put.io"))
+        if state.remoteFiles.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel("No cached files at the Put.io root"))
+        } else {
+            state.remoteFiles.prefix(8).forEach { contentStack.addArrangedSubview(remoteFileRow($0)) }
         }
 
         contentStack.addArrangedSubview(sectionHeader("Local library queue"))
@@ -149,7 +162,16 @@ final class DashboardViewController: NSViewController {
         details.font = .systemFont(ofSize: 11)
         details.lineBreakMode = .byTruncatingTail
 
-        let stack = NSStackView(views: [title, details])
+        var labels: [NSView] = [title, details]
+        if let errorMessage = job.errorMessage {
+            let errorLabel = NSTextField(labelWithString: errorMessage)
+            errorLabel.textColor = .systemRed
+            errorLabel.font = .systemFont(ofSize: 11)
+            errorLabel.lineBreakMode = .byTruncatingTail
+            labels.append(errorLabel)
+        }
+
+        let stack = NSStackView(views: labels)
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
@@ -158,12 +180,63 @@ final class DashboardViewController: NSViewController {
         return stack
     }
 
+    private func remoteFileRow(_ file: RemoteFile) -> NSView {
+        let title = NSTextField(labelWithString: file.name)
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.lineBreakMode = .byTruncatingTail
+
+        let details = NSTextField(labelWithString: "\(file.type.displayName) · \(Self.bytes(file.sizeBytes))")
+        details.textColor = .secondaryLabelColor
+        details.font = .systemFont(ofSize: 11)
+
+        let copy = NSStackView(views: [title, details])
+        copy.orientation = .vertical
+        copy.alignment = .leading
+        copy.spacing = 2
+        copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        if file.isFolder {
+            let folderLabel = NSTextField(labelWithString: "Browse later")
+            folderLabel.textColor = .tertiaryLabelColor
+            folderLabel.font = .systemFont(ofSize: 11)
+            copy.addArrangedSubview(folderLabel)
+        } else {
+            let syncButton = NSButton(title: isQueued(file) ? "Queued" : "Sync", target: self, action: #selector(syncFile(_:)))
+            syncButton.bezelStyle = .rounded
+            syncButton.tag = file.id
+            syncButton.isEnabled = !isQueued(file)
+            copy.addArrangedSubview(syncButton)
+        }
+
+        copy.translatesAutoresizingMaskIntoConstraints = false
+        copy.widthAnchor.constraint(equalToConstant: 330).isActive = true
+        return copy
+    }
+
+    private func isQueued(_ file: RemoteFile) -> Bool {
+        coordinator.state.localJobs.contains(where: { $0.remoteFileID == file.id })
+    }
+
     @objc private func refresh(_ sender: Any?) {
-        render()
+        Task { @MainActor in
+            await coordinator.refreshFromPutIO()
+            render()
+        }
     }
 
     @objc private func settings(_ sender: Any?) {
         onSettings()
+    }
+
+    @objc private func syncFile(_ sender: NSButton) {
+        let remoteFileID = sender.tag
+        coordinator.enqueueLocalSync(remoteFileID: remoteFileID)
+        render()
+
+        Task { @MainActor in
+            await coordinator.processLocalSync(remoteFileID: remoteFileID)
+            render()
+        }
     }
 
     @objc private func quit(_ sender: Any?) {

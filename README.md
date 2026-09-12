@@ -18,10 +18,15 @@ The first vertical slice is in place:
 - popover dashboard
 - persisted local state store
 - remote transfer and local sync job models
+- Keychain-backed Put.io token storage
+- read-only Put.io account and transfer refresh
+- remote root file browsing with idempotent local-sync queueing
+- SSD library-root selection with a persisted security-scoped bookmark
+- first local handoff into a hidden SSD staging directory
 - build and test target
 - documented implementation plan and known risks
 
-Put.io authentication/API integration and real file syncing are the next implementation steps.
+OAuth browser sign-in, resumable downloads, and library organization are the next implementation steps.
 
 ## Build
 

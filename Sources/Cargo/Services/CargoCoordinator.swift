@@ -3,15 +3,207 @@ import Foundation
 @MainActor
 final class CargoCoordinator {
     private let store: CargoStore
+    private let keychain = KeychainStore()
+    private var putIOClient: PutIOClient
     private(set) var state: CargoState
+    private(set) var putIOStatus = "Not connected yet"
 
-    init(store: CargoStore = CargoStore()) {
+    init(store: CargoStore = CargoStore(), client: PutIOClient? = nil) {
         self.store = store
+        if let client {
+            self.putIOClient = client
+            self.putIOStatus = "Test client"
+        } else if let token = keychain.readToken(), !token.isEmpty {
+            self.putIOClient = PutIOAPIClient(token: token)
+            self.putIOStatus = "Token saved · not tested"
+        } else {
+            self.putIOClient = UnconfiguredPutIOClient()
+        }
         self.state = store.snapshot()
     }
 
     func refresh() {
         state = store.snapshot()
+    }
+
+    func savePutIOToken(_ token: String) throws {
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedToken.isEmpty else {
+            throw PutIOAPIClient.ClientError.missingToken
+        }
+
+        try keychain.saveToken(trimmedToken)
+        putIOClient = PutIOAPIClient(token: trimmedToken)
+        putIOStatus = "Token saved · testing…"
+    }
+
+    func removePutIOToken() throws {
+        try keychain.deleteToken()
+        putIOClient = UnconfiguredPutIOClient()
+        putIOStatus = "Not connected yet"
+    }
+
+    func saveLibraryRoot(_ url: URL) throws {
+        let bookmark = try url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        state.settings.libraryRootBookmark = bookmark
+        state.settings.libraryRootPath = url.path
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+    }
+
+    func clearLibraryRoot() throws {
+        state.settings.libraryRootBookmark = nil
+        state.settings.libraryRootPath = nil
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+    }
+
+    func libraryRootURL() -> URL? {
+        if let bookmark = state.settings.libraryRootBookmark {
+            var isStale = false
+            if let resolvedURL = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope, .withoutUI],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                return resolvedURL
+            }
+        }
+
+        guard let path = state.settings.libraryRootPath else { return nil }
+        return URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    func refreshFromPutIO() async {
+        do {
+            let account = try await putIOClient.fetchAccount()
+            let transfers = try await putIOClient.fetchTransfers()
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
+            state.transfers = transfers
+            state.remoteFiles = remoteFiles
+            state.lastUpdated = Date()
+            try store.replace(with: state)
+            putIOStatus = "Connected as \(account.username)"
+        } catch {
+            if putIOClient is UnconfiguredPutIOClient {
+                putIOStatus = "Not connected yet"
+            } else {
+                putIOStatus = "Put.io error · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func enqueueLocalSync(remoteFileID: Int) {
+        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
+              !remoteFile.isFolder,
+              !state.localJobs.contains(where: { $0.remoteFileID == remoteFileID }) else {
+            return
+        }
+
+        state.localJobs.append(
+            LocalSyncJob(
+                id: UUID(),
+                remoteFileID: remoteFile.id,
+                name: remoteFile.name,
+                status: .queued,
+                progress: 0,
+                destination: state.settings.libraryRootPath.map {
+                    URL(fileURLWithPath: $0, isDirectory: true)
+                        .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
+                        .path
+                },
+                errorMessage: nil,
+                updatedAt: Date()
+            )
+        )
+        try? store.replace(with: state)
+    }
+
+    func processLocalSync(remoteFileID: Int) async {
+        guard let jobIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFileID }),
+              let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID }),
+              !remoteFile.isFolder else {
+            return
+        }
+
+        guard let rootURL = libraryRootURL() else {
+            updateLocalJob(
+                at: jobIndex,
+                status: .failed,
+                progress: 0,
+                destination: nil,
+                errorMessage: "Choose the SSD library root in Settings first."
+            )
+            return
+        }
+
+        let stagingURL = rootURL.appendingPathComponent(
+            state.settings.stagingDirectoryName,
+            isDirectory: true
+        )
+        let destinationURL = stagingURL.appendingPathComponent(Self.safeFilename(remoteFile.name))
+
+        updateLocalJob(
+            at: jobIndex,
+            status: .downloading,
+            progress: 0,
+            destination: destinationURL.path,
+            errorMessage: nil
+        )
+
+        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessingScopedResource {
+                rootURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            try await putIOClient.downloadFile(fileID: remoteFile.id, to: destinationURL)
+            updateLocalJob(
+                at: jobIndex,
+                status: .needsReview,
+                progress: 1,
+                destination: destinationURL.path,
+                errorMessage: nil
+            )
+        } catch {
+            updateLocalJob(
+                at: jobIndex,
+                status: .failed,
+                progress: 0,
+                destination: destinationURL.path,
+                errorMessage: error.localizedDescription
+            )
+        }
+    }
+
+    private func updateLocalJob(
+        at index: Int,
+        status: LocalSyncStatus,
+        progress: Double,
+        destination: String?,
+        errorMessage: String?
+    ) {
+        guard state.localJobs.indices.contains(index) else { return }
+        state.localJobs[index].status = status
+        state.localJobs[index].progress = progress
+        state.localJobs[index].destination = destination
+        state.localJobs[index].errorMessage = errorMessage
+        state.localJobs[index].updatedAt = Date()
+        try? store.replace(with: state)
+    }
+
+    private static func safeFilename(_ name: String) -> String {
+        let cleaned = name.replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? "untitled-download" : cleaned
     }
 
     func persistDemoState() {
