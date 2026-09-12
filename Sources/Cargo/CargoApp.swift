@@ -5,7 +5,6 @@ import AppKit
 final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
-    private var settingsWindowController: SettingsWindowController?
     private var dashboardWindowController: NSWindowController?
     private var dashboardViewController: DashboardViewController!
     private var refreshTask: Task<Void, Never>?
@@ -97,32 +96,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func openSettings() {
-        if settingsWindowController == nil {
-            settingsWindowController = SettingsWindowController(coordinator: coordinator)
-        }
-
-        popover.performClose(nil)
-        guard let window = settingsWindowController?.window else { return }
-
-        if !window.isVisible {
-            window.center()
-        }
-        if window.isMiniaturized {
-            window.deminiaturize(nil)
-        }
-        window.collectionBehavior = [.moveToActiveSpace]
-        settingsWindowController?.showWindow(self)
-        window.setIsVisible(true)
-        window.orderFrontRegardless()
-        window.makeKeyAndOrderFront(nil)
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
-
     private func makeDashboardViewController() -> DashboardViewController {
-        DashboardViewController(coordinator: coordinator) { [weak self] in
-            self?.openSettings()
-        }
+        DashboardViewController(coordinator: coordinator)
     }
 
     private func showDashboardWindow() {

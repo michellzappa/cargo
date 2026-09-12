@@ -2,14 +2,13 @@ import AppKit
 
 final class DashboardViewController: NSViewController {
     private let coordinator: CargoCoordinator
-    private let onSettings: () -> Void
+    private var settingsWindowController: SettingsWindowController?
     private let contentStack = NSStackView()
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
 
-    init(coordinator: CargoCoordinator, onSettings: @escaping () -> Void = {}) {
+    init(coordinator: CargoCoordinator) {
         self.coordinator = coordinator
-        self.onSettings = onSettings
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -246,7 +245,21 @@ final class DashboardViewController: NSViewController {
     }
 
     @objc func settings(_ sender: Any?) {
-        onSettings()
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(coordinator: coordinator)
+        }
+
+        guard let window = settingsWindowController?.window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        settingsWindowController?.showWindow(self)
+        if !window.isVisible {
+            window.center()
+        }
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
     @objc private func syncFile(_ sender: NSButton) {
