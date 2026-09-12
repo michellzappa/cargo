@@ -42,7 +42,7 @@ final class CargoCoordinator {
         state = store.snapshot()
     }
 
-    func savePutIOToken(_ token: String) throws {
+    private func storePutIOAccessToken(_ token: String) throws {
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedToken.isEmpty else {
             throw PutIOAPIClient.ClientError.missingToken
@@ -53,11 +53,9 @@ final class CargoCoordinator {
         putIOStatus = "Token saved · testing…"
     }
 
-    func beginPutIOAuthorization(clientID: String) throws -> URL {
+    func beginPutIOAuthorization() throws -> URL {
         let oauthState = UUID().uuidString
-        let url = try PutIOOAuth.authorizationURL(clientID: clientID, state: oauthState)
-        let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        state.settings.putIOClientID = trimmedClientID
+        let url = try PutIOOAuth.authorizationURL(state: oauthState)
         pendingOAuthState = oauthState
         try store.replace(with: state)
         putIOStatus = "Waiting for Put.io authorization…"
@@ -70,7 +68,7 @@ final class CargoCoordinator {
         }
         let callback = try PutIOOAuth.parseCallback(callbackURL, expectedState: pendingOAuthState)
         self.pendingOAuthState = nil
-        try savePutIOToken(callback.accessToken)
+        try storePutIOAccessToken(callback.accessToken)
         await refreshFromPutIO()
     }
 

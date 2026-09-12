@@ -1,6 +1,9 @@
 import Foundation
 
 enum PutIOOAuth {
+    // Cargo uses one registered OAuth application. The user only needs to
+    // authorize their Put.io account in the browser.
+    static let clientID = "9732"
     static let redirectURI = URL(string: "cargo://oauth/callback")!
     static let authorizationEndpoint = URL(string: "https://api.put.io/v2/oauth2/authenticate")!
 
@@ -10,15 +13,12 @@ enum PutIOOAuth {
     }
 
     enum OAuthError: LocalizedError, Equatable {
-        case missingClientID
         case invalidCallback
         case provider(String)
         case stateMismatch
 
         var errorDescription: String? {
             switch self {
-            case .missingClientID:
-                "Enter the Put.io OAuth app ID first."
             case .invalidCallback:
                 "Cargo received an invalid Put.io authorization callback."
             case .provider(let message):
@@ -29,15 +29,12 @@ enum PutIOOAuth {
         }
     }
 
-    static func authorizationURL(clientID: String, state: String) throws -> URL {
-        let trimmedClientID = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedClientID.isEmpty else { throw OAuthError.missingClientID }
-
+    static func authorizationURL(state: String) throws -> URL {
         guard var components = URLComponents(url: authorizationEndpoint, resolvingAgainstBaseURL: false) else {
             throw OAuthError.invalidCallback
         }
         components.queryItems = [
-            URLQueryItem(name: "client_id", value: trimmedClientID),
+            URLQueryItem(name: "client_id", value: clientID),
             URLQueryItem(name: "response_type", value: "token"),
             URLQueryItem(name: "redirect_uri", value: redirectURI.absoluteString),
             URLQueryItem(name: "state", value: state)

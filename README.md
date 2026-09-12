@@ -15,10 +15,10 @@ The project is intentionally independent of Sonarr and Radarr. It is a focused P
 The first vertical slice is in place:
 
 - native `NSStatusItem` menu-bar app
-- popover dashboard
+- normal dashboard window opened from the menu bar
 - persisted local state store
 - remote transfer and local sync job models
-- Keychain-backed Put.io token storage
+- browser-only Put.io OAuth with the access token stored in macOS Keychain
 - read-only Put.io account and transfer refresh
 - remote root file browsing with idempotent local-sync queueing
 - remote-folder navigation from the menu-bar dashboard
@@ -28,17 +28,37 @@ The first vertical slice is in place:
 - build and test target
 - documented implementation plan and known risks
 
-OAuth browser sign-in, resumable downloads, and library organization are the next implementation steps.
+Library organization is the next implementation step after the staging handoff.
 
 ### Browser authentication setup
 
-Cargo uses a native `cargo://oauth/callback` URL scheme for the Put.io browser flow. Create a Put.io OAuth app, register that callback URI, copy its app ID into Settings, and then choose “Connect with Put.io”. The access token returned to Cargo is stored in macOS Keychain.
+Cargo uses one registered Put.io OAuth app (`9732`) and the native `cargo://oauth/callback` URL scheme. Choose “Connect with Put.io”; the browser authorization returns an access token that Cargo stores in macOS Keychain. There is intentionally no manual-token path in the UI.
+
+### Local library workflow
+
+Cargo treats the folder selected in “Local library” as the existing root that Infuse reads. It does not currently scan or rearrange that folder, and it never assumes that an empty new library should replace an existing one.
+
+The intended handoff is:
+
+```text
+Put.io completed file
+        ↓
+hidden .cargo-incoming staging folder
+        ↓
+identify movie / episode / ambiguous file
+        ↓
+preview destination using the existing Movies and TV Shows folders
+        ↓
+move into the library, then run EasySubs
+```
+
+The current build implements the first two steps. The folder names shown in Settings are destination names inside the selected root, so the next organization slice should first inspect and respect the folders already present there. Ambiguous names, duplicates, and unsupported files should go to review instead of being guessed or moved automatically.
 
 To build a launchable app bundle locally:
 
 ```sh
 ./Scripts/build-app.sh
-open build/Cargo.app
+open /Users/mz/Applications/Cargo.app
 ```
 
 Cargo currently uses version `0.1.0` for the alpha product line. The packaging script derives `CFBundleVersion` from the current git commit count, so each committed build receives a reproducible increasing build number.

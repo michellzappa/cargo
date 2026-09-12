@@ -7,10 +7,7 @@ final class DashboardViewController: NSViewController {
     private var selectedPutIOView = 0
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
-    private let clientIDField = NSTextField()
-    private let tokenField = NSSecureTextField()
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
-    private let saveTokenButton = NSButton()
     private let libraryRootLabel = NSTextField(labelWithString: "")
     private let stagingDirectoryField = NSTextField()
     private let moviesDirectoryField = NSTextField()
@@ -142,11 +139,6 @@ final class DashboardViewController: NSViewController {
         putIOTitle.font = .systemFont(ofSize: 13, weight: .semibold)
         section.addArrangedSubview(putIOTitle)
 
-        clientIDField.placeholderString = "Put.io OAuth app ID"
-        clientIDField.controlSize = .small
-        clientIDField.stringValue = coordinator.state.settings.putIOClientID ?? ""
-        clientIDField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-
         let connectButton = NSButton(
             title: "Connect with Put.io",
             target: self,
@@ -154,33 +146,15 @@ final class DashboardViewController: NSViewController {
         )
         connectButton.bezelStyle = .rounded
 
-        let createAppButton = NSButton(
-            title: "Create Put.io app…",
-            target: self,
-            action: #selector(createPutIOApp(_:))
-        )
-        createAppButton.bezelStyle = .inline
-        createAppButton.contentTintColor = .controlAccentColor
+        let appLabel = NSTextField(labelWithString: "Browser sign-in · OAuth app \(PutIOOAuth.clientID)")
+        appLabel.textColor = .secondaryLabelColor
+        appLabel.font = .systemFont(ofSize: 11)
 
-        let oauthRow = NSStackView(views: [fieldLabel("OAuth app ID"), clientIDField, connectButton, createAppButton])
+        let oauthRow = NSStackView(views: [connectButton, appLabel])
         oauthRow.orientation = .horizontal
         oauthRow.alignment = .centerY
         oauthRow.spacing = 8
         section.addArrangedSubview(oauthRow)
-
-        tokenField.placeholderString = "Paste Put.io access token"
-        tokenField.controlSize = .small
-        tokenField.widthAnchor.constraint(equalToConstant: 240).isActive = true
-        saveTokenButton.title = "Save & test token"
-        saveTokenButton.bezelStyle = .rounded
-        saveTokenButton.target = self
-        saveTokenButton.action = #selector(saveAndTestPutIO(_:))
-
-        let tokenRow = NSStackView(views: [fieldLabel("Manual token"), tokenField, saveTokenButton])
-        tokenRow.orientation = .horizontal
-        tokenRow.alignment = .centerY
-        tokenRow.spacing = 8
-        section.addArrangedSubview(tokenRow)
 
         putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
         putIOSettingsStatusLabel.textColor = .secondaryLabelColor
@@ -486,27 +460,9 @@ final class DashboardViewController: NSViewController {
         }
     }
 
-    @objc private func saveAndTestPutIO(_ sender: Any?) {
-        let token = tokenField.stringValue
-        saveTokenButton.isEnabled = false
-        putIOSettingsStatusLabel.stringValue = "Testing…"
-
-        Task { @MainActor in
-            defer { saveTokenButton.isEnabled = true }
-            do {
-                try coordinator.savePutIOToken(token)
-                await coordinator.refreshFromPutIO()
-                putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
-                connectionLabel.stringValue = coordinator.putIOStatus
-            } catch {
-                putIOSettingsStatusLabel.stringValue = error.localizedDescription
-            }
-        }
-    }
-
     @objc private func connectWithPutIO(_ sender: Any?) {
         do {
-            let url = try coordinator.beginPutIOAuthorization(clientID: clientIDField.stringValue)
+            let url = try coordinator.beginPutIOAuthorization()
             guard NSWorkspace.shared.open(url) else {
                 throw PutIOOAuth.OAuthError.invalidCallback
             }
@@ -514,11 +470,6 @@ final class DashboardViewController: NSViewController {
         } catch {
             putIOSettingsStatusLabel.stringValue = error.localizedDescription
         }
-    }
-
-    @objc private func createPutIOApp(_ sender: Any?) {
-        guard let url = URL(string: "https://app.put.io/oauth") else { return }
-        NSWorkspace.shared.open(url)
     }
 
     @objc private func chooseLibraryRoot(_ sender: Any?) {

@@ -107,10 +107,7 @@ final class CargoTests: XCTestCase {
     }
 
     func testPutIOOAuthBuildsAndParsesCallback() throws {
-        let authorizationURL = try PutIOOAuth.authorizationURL(
-            clientID: "12345",
-            state: "state-123"
-        )
+        let authorizationURL = try PutIOOAuth.authorizationURL(state: "state-123")
         let queryItems = try XCTUnwrap(URLComponents(url: authorizationURL, resolvingAgainstBaseURL: false)?.queryItems)
         let query = queryItems.reduce(into: [String: String]()) { values, item in
             if let value = item.value {
@@ -118,7 +115,7 @@ final class CargoTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(query["client_id"], "12345")
+        XCTAssertEqual(query["client_id"], "9732")
         XCTAssertEqual(query["response_type"], "token")
         XCTAssertEqual(query["redirect_uri"], "cargo://oauth/callback")
         XCTAssertEqual(query["state"], "state-123")

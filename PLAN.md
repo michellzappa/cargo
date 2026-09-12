@@ -12,7 +12,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 - [x] Create a macOS Swift Package executable.
 - [x] Add an AppKit status-item application.
-- [x] Add a popover dashboard with remote and local queues.
+- [x] Add a normal dashboard window opened from the menu bar with remote and local queues.
 - [x] Add a durable local state model.
 - [x] Add unit-test scaffolding.
 - [x] Make Settings mirror the media workflow step by step.
@@ -20,7 +20,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 1. Put.io read-only integration
 
-- [x] Add manual token setup using the macOS Keychain.
+- [x] Add browser-only OAuth sign-in using the registered Cargo app (`9732`).
 - [x] Fetch account information and remote transfers.
 - [x] Add browser OAuth sign-in with state validation.
 - [x] Fetch remote files and navigate Put.io folders.
@@ -41,13 +41,15 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 3. Library organization
 
-- [ ] Add configurable Movies and TV Shows destinations.
-- [ ] Identify common movie and episode filename patterns.
-- [ ] Preview the proposed destination before moving anything.
-- [ ] Move files atomically where possible.
+- [x] Store configurable staging, Movies, and TV Shows folder names.
+- [ ] Treat the selected SSD folder as the existing Infuse library root; do not reorganize existing content automatically.
+- [ ] Inspect the existing root and learn/confirm its current Movies and TV Shows folders.
+- [ ] Identify common movie and episode filename patterns, using Put.io folder context as a signal.
+- [ ] Create a proposed destination from the existing library layout and show it before moving anything.
+- [ ] Move verified files atomically from hidden staging into the chosen existing destination.
 - [ ] Quarantine ambiguous or unsupported files instead of guessing.
-- [ ] Detect duplicates and existing library files.
-- [ ] Add optional remote cleanup only after verified local import.
+- [ ] Detect duplicates and existing library files before import.
+- [ ] Add optional remote cleanup only after verified local import and explicit confirmation.
 
 ### 4. Background operation
 
@@ -88,13 +90,27 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 4. Conservative: ambiguous media is quarantined for review.
 5. Recoverable: never delete remote or local content without an explicit policy and a verified prior step.
 
+## Local library sorting decision
+
+Sorting is a workflow stage after download, not part of the Put.io transfer view. Cargo should use the selected SSD folder as the source of truth for the existing Infuse library:
+
+1. Download the completed Put.io file into hidden `.cargo-incoming` staging.
+2. Inspect the filename and Put.io folder context.
+3. Classify it as a movie, TV episode/season, or ambiguous item.
+4. Preview the exact destination using the existing Movies and TV Shows folders.
+5. Move only after the proposed destination is accepted or the rule is trusted.
+6. Run EasySubs after a successful import.
+7. Offer remote deletion only after local verification and explicit confirmation.
+
+Cargo should not create a second library layout or reorganize files that were already on the SSD. Existing folder names and structure are therefore inputs to the organizer, while the Settings folder names remain the initial explicit destination configuration.
+
 ## Settings information architecture
 
 Settings is deliberately a workflow, not a flat list of unrelated preferences:
 
-1. Connect Put.io.
+1. Connect Put.io in the browser.
 2. Observe remote transfers.
-3. Sync completed files to the SSD.
-4. Organize the local library.
+3. Sync completed files to hidden SSD staging.
+4. Classify, preview, and organize into the existing local library.
 5. Run post-import automation such as EasySubs.
 6. Notify on meaningful changes.
