@@ -69,6 +69,10 @@ final class CargoTests: XCTestCase {
             )
         ]
         state.remoteMediaFiles = [state.remoteFiles[0]]
+        state.imdbWatchlistItems = [
+            IMDbWatchlistItem(id: "tt1234567", title: "Roundtrip Movie", year: 2026, titleType: "movie")
+        ]
+        state.imdbWatchlistLastUpdated = Date()
         state.seenRemoteMediaFileIDs = [2001]
         state.remoteMediaBaselineEstablished = true
         state.settings = CargoSettings(
@@ -87,6 +91,9 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(reloaded.snapshot().localJobs.count, 1)
         XCTAssertEqual(reloaded.snapshot().history.count, 1)
         XCTAssertEqual(reloaded.snapshot().remoteMediaFiles.map(\.id), [2001])
+        XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.map(\.id), ["tt1234567"])
+        XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.first?.year, 2026)
+        XCTAssertNotNil(reloaded.snapshot().imdbWatchlistLastUpdated)
         XCTAssertEqual(reloaded.snapshot().seenRemoteMediaFileIDs, [2001])
         XCTAssertTrue(reloaded.snapshot().remoteMediaBaselineEstablished)
         XCTAssertFalse(reloaded.snapshot().settings.automaticSyncEnabled)

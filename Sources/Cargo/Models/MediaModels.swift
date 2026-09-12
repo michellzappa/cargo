@@ -95,6 +95,13 @@ struct RemoteFile: Codable, Identifiable, Sendable {
     }
 }
 
+struct IMDbWatchlistItem: Codable, Identifiable, Sendable, Equatable {
+    let id: String
+    var title: String
+    var year: Int?
+    var titleType: String?
+}
+
 struct LocalSyncJob: Codable, Identifiable, Sendable {
     let id: UUID
     var remoteFileID: Int
@@ -131,6 +138,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var automaticOrganizationEnabled: Bool
     var notificationsEnabled: Bool
     var launchAtLoginEnabled: Bool
+    var imdbWatchlistURL: String
 
     init(
         libraryRootBookmark: Data? = nil,
@@ -141,7 +149,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticSyncEnabled: Bool = true,
         automaticOrganizationEnabled: Bool = true,
         notificationsEnabled: Bool = true,
-        launchAtLoginEnabled: Bool = true
+        launchAtLoginEnabled: Bool = true,
+        imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
     ) {
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
@@ -152,6 +161,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.automaticOrganizationEnabled = automaticOrganizationEnabled
         self.notificationsEnabled = notificationsEnabled
         self.launchAtLoginEnabled = launchAtLoginEnabled
+        self.imdbWatchlistURL = imdbWatchlistURL
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -164,6 +174,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case automaticOrganizationEnabled
         case notificationsEnabled
         case launchAtLoginEnabled
+        case imdbWatchlistURL
     }
 
     init(from decoder: Decoder) throws {
@@ -177,6 +188,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticOrganizationEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticOrganizationEnabled) ?? true
         notificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? true
         launchAtLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginEnabled) ?? true
+        imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
+            ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
     }
 
     static let `default` = CargoSettings()
@@ -194,6 +207,8 @@ struct CargoState: Codable, Sendable {
     var history: [CargoHistoryEntry]
     var seenRemoteMediaFileIDs: [Int]
     var remoteMediaBaselineEstablished: Bool
+    var imdbWatchlistItems: [IMDbWatchlistItem]
+    var imdbWatchlistLastUpdated: Date?
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -205,6 +220,8 @@ struct CargoState: Codable, Sendable {
         history: [CargoHistoryEntry] = [],
         seenRemoteMediaFileIDs: [Int] = [],
         remoteMediaBaselineEstablished: Bool = false,
+        imdbWatchlistItems: [IMDbWatchlistItem] = [],
+        imdbWatchlistLastUpdated: Date? = nil,
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -215,6 +232,8 @@ struct CargoState: Codable, Sendable {
         self.history = history
         self.seenRemoteMediaFileIDs = seenRemoteMediaFileIDs
         self.remoteMediaBaselineEstablished = remoteMediaBaselineEstablished
+        self.imdbWatchlistItems = imdbWatchlistItems
+        self.imdbWatchlistLastUpdated = imdbWatchlistLastUpdated
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -231,6 +250,8 @@ struct CargoState: Codable, Sendable {
         let currentBaseline = try container.decodeIfPresent(Bool.self, forKey: .remoteMediaBaselineEstablished)
         let legacyBaseline = try legacyContainer.decodeIfPresent(Bool.self, forKey: .backgroundBaselineEstablished)
         remoteMediaBaselineEstablished = currentBaseline ?? legacyBaseline ?? false
+        imdbWatchlistItems = try container.decodeIfPresent([IMDbWatchlistItem].self, forKey: .imdbWatchlistItems) ?? []
+        imdbWatchlistLastUpdated = try container.decodeIfPresent(Date.self, forKey: .imdbWatchlistLastUpdated)
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -243,6 +264,8 @@ struct CargoState: Codable, Sendable {
         case history
         case seenRemoteMediaFileIDs
         case remoteMediaBaselineEstablished
+        case imdbWatchlistItems
+        case imdbWatchlistLastUpdated
         case settings
         case lastUpdated
     }

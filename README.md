@@ -22,6 +22,7 @@ The first vertical slice is in place:
 - read-only Put.io account and transfer refresh
 - recursive Put.io media inventory across all folders
 - remote media paths and idempotent local-sync queueing
+- dynamic public IMDb Watchlist sync with Put.io comparison
 - video-only tracking for Put.io files and local Inbox items
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
@@ -44,6 +45,8 @@ Cargo uses one registered Put.io OAuth app (`9732`) and the native `cargo://oaut
 Cargo treats the folder selected in “Local library” as the existing root that Infuse reads. It does not currently scan or rearrange that folder, and it never assumes that an empty new library should replace an existing one.
 
 The Files view is a recursive inventory of video files in Put.io, not just the current root folder. Each row shows its Put.io path and whether Cargo has not downloaded it, has placed it in `_Inbox`, or has organized it into the library. Cargo ignores non-media sidecars and folders for syncing.
+
+The Watchlist view loads the configured public IMDb Watchlist in an embedded browser context, so it can work through IMDb’s browser checks without storing IMDb credentials. Cargo keeps the IMDb IDs and titles locally, refreshes automatically at most every 15 minutes, and labels each title as Wanted, Available in Put.io, Queued, Downloaded in Inbox, or Organized. The watchlist is a desired list only; ShowRSS and Put.io remain the availability pipeline.
 
 The intended handoff is:
 
@@ -81,4 +84,4 @@ The executable can be run directly from the build directory, although a proper s
 
 ## Product boundary
 
-Cargo does not currently discover releases, parse ShowRSS feeds, or submit magnets. Those responsibilities stay upstream in ShowRSS and Put.io. Cargo observes the resulting Put.io state and manages the local library handoff.
+Cargo does not currently discover releases, parse ShowRSS feeds, or submit magnets. Those responsibilities stay upstream in ShowRSS and Put.io. Cargo can observe a public IMDb Watchlist as a desired list, then watches Put.io for matching media and manages the local library handoff.

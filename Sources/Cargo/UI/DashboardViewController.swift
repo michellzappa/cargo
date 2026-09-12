@@ -20,6 +20,8 @@ final class DashboardViewController: NSViewController {
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
+    private let imdbWatchlistURLField = NSTextField()
+    private let imdbWatchlistStatusLabel = NSTextField(labelWithString: "")
     private let connectButton = NSButton(
         title: "Connect with Put.io",
         target: nil,
@@ -80,7 +82,7 @@ final class DashboardViewController: NSViewController {
     }
 
     func showSettings() {
-        selectedPutIOView = 4
+        selectedPutIOView = 5
         if isViewLoaded {
             putIOViewPicker.selectedSegment = selectedPutIOView
             render()
@@ -132,12 +134,13 @@ final class DashboardViewController: NSViewController {
 
         root.addArrangedSubview(headerRow)
         root.addArrangedSubview(Self.separator())
-        putIOViewPicker.segmentCount = 5
+        putIOViewPicker.segmentCount = 6
         putIOViewPicker.setLabel("Transfers", forSegment: 0)
         putIOViewPicker.setLabel("Files", forSegment: 1)
         putIOViewPicker.setLabel("Inbox", forSegment: 2)
-        putIOViewPicker.setLabel("History", forSegment: 3)
-        putIOViewPicker.setLabel("Settings", forSegment: 4)
+        putIOViewPicker.setLabel("Watchlist", forSegment: 3)
+        putIOViewPicker.setLabel("History", forSegment: 4)
+        putIOViewPicker.setLabel("Settings", forSegment: 5)
         putIOViewPicker.trackingMode = .selectOne
         putIOViewPicker.selectedSegment = selectedPutIOView
         putIOViewPicker.target = self
@@ -209,6 +212,33 @@ final class DashboardViewController: NSViewController {
         putIOSettingsStatusLabel.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(putIOSettingsStatusLabel)
         section.addArrangedSubview(emptyLabel("OAuth callback: cargo://oauth/callback"))
+
+        let watchlistTitle = NSTextField(labelWithString: "IMDb Watchlist")
+        watchlistTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        section.addArrangedSubview(watchlistTitle)
+        section.addArrangedSubview(emptyLabel("Cargo watches this public list and compares it with Put.io media."))
+
+        imdbWatchlistURLField.stringValue = coordinator.state.settings.imdbWatchlistURL
+        imdbWatchlistURLField.controlSize = .small
+        imdbWatchlistURLField.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        imdbWatchlistURLField.lineBreakMode = .byTruncatingMiddle
+        let saveWatchlistButton = NSButton(
+            title: "Save & refresh",
+            target: self,
+            action: #selector(refreshIMDbWatchlist(_:))
+        )
+        saveWatchlistButton.bezelStyle = .rounded
+        saveWatchlistButton.controlSize = .small
+        let watchlistURLRow = NSStackView(views: [imdbWatchlistURLField, saveWatchlistButton])
+        watchlistURLRow.orientation = .horizontal
+        watchlistURLRow.alignment = .centerY
+        watchlistURLRow.spacing = 8
+        section.addArrangedSubview(watchlistURLRow)
+
+        imdbWatchlistStatusLabel.textColor = .secondaryLabelColor
+        imdbWatchlistStatusLabel.font = .systemFont(ofSize: 11)
+        imdbWatchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
+        section.addArrangedSubview(imdbWatchlistStatusLabel)
 
         let libraryTitle = NSTextField(labelWithString: "Local library")
         libraryTitle.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -321,12 +351,15 @@ final class DashboardViewController: NSViewController {
         contentStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         connectionLabel.stringValue = coordinator.putIOStatus
         putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
+        imdbWatchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
         let isConnected = coordinator.putIOStatus.hasPrefix("Connected as ")
         connectButton.isHidden = isConnected
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
         updateWorkflowControls(with: state.settings)
         let inboxCount = coordinator.inboxFileURLs().count
         putIOViewPicker.setLabel(inboxCount > 0 ? "Inbox \(inboxCount)" : "Inbox", forSegment: 2)
+        let watchlistCount = state.imdbWatchlistItems.count
+        putIOViewPicker.setLabel(watchlistCount > 0 ? "Watchlist \(watchlistCount)" : "Watchlist", forSegment: 3)
 
         switch selectedPutIOView {
         case 0:
@@ -353,8 +386,10 @@ final class DashboardViewController: NSViewController {
         case 2:
             renderInbox(state)
         case 3:
-            renderHistory(state)
+            renderWatchlist(state)
         case 4:
+            renderHistory(state)
+        case 5:
             if let settingsView {
                 contentStack.addArrangedSubview(settingsView)
             }
@@ -377,6 +412,94 @@ final class DashboardViewController: NSViewController {
                 rowHeight: 52
             )
         )
+    }
+
+    private func renderWatchlist(_ state: CargoState) {
+        contentStack.addArrangedSubview(sectionHeader("IMDb Watchlist · \(state.imdbWatchlistItems.count)"))
+        contentStack.addArrangedSubview(emptyLabel(coordinator.imdbWatchlistStatus))
+
+        if state.imdbWatchlistItems.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel("No Watchlist titles synced yet"))
+            return
+        }
+
+        let counts = state.imdbWatchlistItems.reduce(into: [String: Int]()) { counts, item in
+            let status = Self.watchlistStatus(for: item, state: state)
+            counts[status, default: 0] += 1
+        }
+        let summary = [
+            (counts["Organized"] ?? 0) > 0 ? "\(counts["Organized"]!) organized" : nil,
+            (counts["Downloaded · in Inbox"] ?? 0) > 0 ? "\(counts["Downloaded · in Inbox"]!) in Inbox" : nil,
+            (counts["Available in Put.io"] ?? 0) > 0 ? "\(counts["Available in Put.io"]!) available" : nil,
+            (counts["Wanted"] ?? 0) > 0 ? "\(counts["Wanted"]!) wanted" : nil
+        ].compactMap { $0 }.joined(separator: " · ")
+        if !summary.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel(summary))
+        }
+
+        contentStack.addArrangedSubview(
+            boundedList(state.imdbWatchlistItems.map { watchlistRow($0, state: state) }, maxHeight: 360, rowHeight: 56)
+        )
+    }
+
+    private func watchlistRow(_ item: IMDbWatchlistItem, state: CargoState) -> NSView {
+        let title = NSTextField(labelWithString: item.year.map { "\(item.title) (\($0))" } ?? item.title)
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        clampedLabel(title)
+
+        let status = Self.watchlistStatus(for: item, state: state)
+        let detail = NSTextField(labelWithString: "\(status) · \(item.id)")
+        detail.textColor = Self.watchlistStatusColor(status)
+        detail.font = .systemFont(ofSize: 11)
+        clampedLabel(detail)
+
+        let stack = NSStackView(views: [title, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: Self.listWidth).isActive = true
+        return stack
+    }
+
+    private static func watchlistStatus(for item: IMDbWatchlistItem, state: CargoState) -> String {
+        let matchingJobs = state.localJobs.filter { job in
+            watchlistNameMatches(item.title, filename: job.name)
+        }
+        if matchingJobs.contains(where: { $0.status == .completed }) {
+            return "Organized"
+        }
+        if matchingJobs.contains(where: { $0.status == .needsReview }) {
+            return "Downloaded · in Inbox"
+        }
+        if matchingJobs.contains(where: { $0.status == .queued || $0.status == .downloading || $0.status == .importing }) {
+            return "Queued"
+        }
+        if state.remoteMediaFiles.contains(where: { watchlistNameMatches(item.title, filename: $0.displayPath) }) {
+            return "Available in Put.io"
+        }
+        return "Wanted"
+    }
+
+    private static func watchlistNameMatches(_ title: String, filename: String) -> Bool {
+        let normalizedTitle = normalizeWatchlistText(title)
+        let normalizedFilename = normalizeWatchlistText(filename)
+        return !normalizedTitle.isEmpty && normalizedFilename.contains(normalizedTitle)
+    }
+
+    private static func normalizeWatchlistText(_ value: String) -> String {
+        value.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .joined(separator: " ")
+    }
+
+    private static func watchlistStatusColor(_ status: String) -> NSColor {
+        switch status {
+        case "Organized": .systemGreen
+        case "Available in Put.io", "Queued", "Downloaded · in Inbox": .systemOrange
+        default: .secondaryLabelColor
+        }
     }
 
     private func renderInbox(_ state: CargoState) {
@@ -712,6 +835,22 @@ final class DashboardViewController: NSViewController {
         Task { @MainActor in
             _ = await coordinator.runBackgroundCycle()
             putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
+            render()
+        }
+    }
+
+    @objc private func refreshIMDbWatchlist(_ sender: Any?) {
+        do {
+            try coordinator.saveIMDbWatchlistURL(imdbWatchlistURLField.stringValue)
+        } catch {
+            imdbWatchlistStatusLabel.stringValue = error.localizedDescription
+            return
+        }
+
+        imdbWatchlistStatusLabel.stringValue = "Loading IMDb Watchlist…"
+        Task { @MainActor in
+            _ = await coordinator.refreshIMDbWatchlist()
+            imdbWatchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
             render()
         }
     }

@@ -166,6 +166,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         if !summary.discovered.isEmpty {
             lines.append("Found \(summary.discovered.count) new media item\(summary.discovered.count == 1 ? "" : "s")")
         }
+        if !summary.watchlistAdded.isEmpty {
+            lines.append("Watchlist added \(summary.watchlistAdded.count) title\(summary.watchlistAdded.count == 1 ? "" : "s")")
+        }
         if !summary.organized.isEmpty {
             lines.append("Organized \(summary.organized.count) item\(summary.organized.count == 1 ? "" : "s")")
         } else if !summary.downloaded.isEmpty {

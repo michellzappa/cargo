@@ -75,7 +75,8 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 6. Optional metadata/watchlist features
 
-- [ ] Import IMDb Watchlist CSV as a read-only desired list.
+- [x] Sync a public IMDb Watchlist dynamically as a read-only desired list.
+- [x] Compare watchlist titles with recursive Put.io media and local Cargo jobs.
 - [ ] Show release/availability metadata without making it a downloader.
 - [ ] Add other list providers only if they solve a real workflow gap.
 

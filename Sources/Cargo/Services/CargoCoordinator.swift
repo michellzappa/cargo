@@ -2,12 +2,13 @@ import Foundation
 
 struct CargoBackgroundCycleSummary: Sendable {
     var discovered: [String] = []
+    var watchlistAdded: [String] = []
     var downloaded: [String] = []
     var organized: [String] = []
     var failures: [String] = []
 
     var hasMeaningfulChanges: Bool {
-        !discovered.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
+        !discovered.isEmpty || !watchlistAdded.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
     }
 }
 
@@ -15,6 +16,7 @@ struct CargoBackgroundCycleSummary: Sendable {
 final class CargoCoordinator {
     enum SettingsError: LocalizedError {
         case emptyDirectoryName
+        case invalidIMDbWatchlistURL
         case inboxFileMissing
         case ambiguousMedia
         case destinationAlreadyExists
@@ -25,6 +27,8 @@ final class CargoCoordinator {
             switch self {
             case .emptyDirectoryName:
                 "Library folder names cannot be empty."
+            case .invalidIMDbWatchlistURL:
+                "Enter a public IMDb Watchlist URL."
             case .inboxFileMissing:
                 "The downloaded file is no longer in the Cargo inbox."
             case .ambiguousMedia:
@@ -41,11 +45,13 @@ final class CargoCoordinator {
 
     private let store: CargoStore
     private let keychain = KeychainStore()
+    private let imdbWatchlistService = IMDbWatchlistService()
     private var putIOClient: PutIOClient
     private var remoteFolderStack: [(id: Int, name: String)] = []
     private var pendingOAuthState: String?
     private(set) var state: CargoState
     private(set) var putIOStatus = "Not connected yet"
+    private(set) var imdbWatchlistStatus = "Not synced yet"
     private(set) var remoteFolderID = 0
     private(set) var remoteFolderName = "Put.io root"
 
@@ -136,6 +142,66 @@ final class CargoCoordinator {
         state.settings.tvShowsDirectoryName = values[2]
         state.lastUpdated = Date()
         try store.replace(with: state)
+    }
+
+    func saveIMDbWatchlistURL(_ value: String) throws {
+        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmedValue),
+              url.scheme == "https",
+              url.host?.lowercased().hasSuffix("imdb.com") == true,
+              url.path.lowercased().contains("watchlist") else {
+            throw SettingsError.invalidIMDbWatchlistURL
+        }
+
+        if state.settings.imdbWatchlistURL != url.absoluteString {
+            state.settings.imdbWatchlistURL = url.absoluteString
+            state.imdbWatchlistItems = []
+            state.imdbWatchlistLastUpdated = nil
+        }
+        state.lastUpdated = Date()
+        imdbWatchlistStatus = "Ready to sync"
+        try store.replace(with: state)
+    }
+
+    func refreshIMDbWatchlist(force: Bool = true) async -> [String] {
+        guard !state.settings.imdbWatchlistURL.isEmpty else {
+            imdbWatchlistStatus = "No Watchlist URL"
+            return []
+        }
+
+        if !force,
+           let lastUpdated = state.imdbWatchlistLastUpdated,
+           Date().timeIntervalSince(lastUpdated) < 15 * 60 {
+            return []
+        }
+
+        do {
+            let previousIDs = Set(state.imdbWatchlistItems.map(\.id))
+            let items = try await imdbWatchlistService.fetchItems(from: state.settings.imdbWatchlistURL)
+            state.imdbWatchlistItems = items.sorted {
+                $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+            state.imdbWatchlistLastUpdated = Date()
+            state.lastUpdated = Date()
+            try store.replace(with: state)
+            imdbWatchlistStatus = "Updated (Self.timeFormatter.string(from: Date())) · \(items.count) titles"
+
+            let addedItems = items.filter { !previousIDs.contains($0.id) }
+            if !addedItems.isEmpty {
+                let detail = addedItems.map { item in
+                    item.year.map { "\(item.title) (\($0))" } ?? item.title
+                }.joined(separator: ", ")
+                recordHistory(
+                    kind: .info,
+                    title: "IMDb Watchlist updated",
+                    detail: "Added \(addedItems.count) title\(addedItems.count == 1 ? "" : "s"): \(detail)"
+                )
+            }
+            return addedItems.map(\.title)
+        } catch {
+            imdbWatchlistStatus = error.localizedDescription
+            return []
+        }
     }
 
     func saveWorkflowSettings(
@@ -237,6 +303,7 @@ final class CargoCoordinator {
     func runBackgroundCycle() async -> CargoBackgroundCycleSummary {
         var summary = CargoBackgroundCycleSummary()
         await refreshFromPutIO()
+        summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
 
         let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
         let isFirstObservation = !state.remoteMediaBaselineEstablished
