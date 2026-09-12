@@ -191,6 +191,42 @@ final class CargoTests: XCTestCase {
     }
 
     @MainActor
+    func testOrganizeLocalJobMovesInboxFileToMovies() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoOrganizeTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.remoteFiles = [
+            RemoteFile(
+                id: 56,
+                name: "Arrival.2016.1080p.mkv",
+                type: .video,
+                parentID: 0,
+                sizeBytes: 4,
+                createdAt: Date()
+            )
+        ]
+        state.settings = CargoSettings(libraryRootPath: libraryRoot.path)
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
+        coordinator.enqueueLocalSync(remoteFileID: 56)
+        await coordinator.processLocalSync(remoteFileID: 56)
+        let jobBeforeOrganize = try XCTUnwrap(coordinator.state.localJobs.first)
+
+        try coordinator.organizeLocalJob(jobID: jobBeforeOrganize.id)
+
+        let job = try XCTUnwrap(coordinator.state.localJobs.first)
+        XCTAssertEqual(job.status, .completed)
+        XCTAssertEqual(job.destination?.hasSuffix("Movies/Arrival.2016.1080p.mkv"), true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: job.destination!))
+    }
+
+    @MainActor
     func testRemoteFolderNavigationTracksParent() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CargoFolderTests-\(UUID().uuidString)", isDirectory: true)

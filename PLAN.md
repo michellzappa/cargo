@@ -47,7 +47,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [ ] Identify common movie and episode filename patterns, using Put.io folder context as a signal.
 - [x] Show a proposed destination from the configured library layout before moving anything.
 - [ ] Confirm the final rename and reorganization rules with the existing Infuse folder layout.
-- [ ] Move verified files atomically from hidden staging into the chosen existing destination.
+- [x] Move verified files from hidden `_Inbox` into the chosen existing destination after confirmation.
 - [ ] Quarantine ambiguous or unsupported files instead of guessing.
 - [ ] Detect duplicates and existing library files before import.
 - [ ] Add optional remote cleanup only after verified local import and explicit confirmation.

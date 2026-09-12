@@ -4,9 +4,27 @@ import Foundation
 final class CargoCoordinator {
     enum SettingsError: LocalizedError {
         case emptyDirectoryName
+        case inboxFileMissing
+        case ambiguousMedia
+        case destinationAlreadyExists
+        case unableToCreateDestination
+        case unableToMoveFile
 
         var errorDescription: String? {
-            "Library folder names cannot be empty."
+            switch self {
+            case .emptyDirectoryName:
+                "Library folder names cannot be empty."
+            case .inboxFileMissing:
+                "The downloaded file is no longer in the Cargo inbox."
+            case .ambiguousMedia:
+                "Cargo could not determine whether this is a movie or TV episode."
+            case .destinationAlreadyExists:
+                "A file already exists at the proposed library destination."
+            case .unableToCreateDestination:
+                "Cargo could not create the proposed library folder."
+            case .unableToMoveFile:
+                "Cargo could not move the file into the library."
+            }
         }
     }
 
@@ -272,6 +290,64 @@ final class CargoCoordinator {
                 errorMessage: error.localizedDescription
             )
         }
+    }
+
+    func organizeLocalJob(jobID: UUID) throws {
+        guard let jobIndex = state.localJobs.firstIndex(where: { $0.id == jobID }),
+              state.localJobs[jobIndex].status == .needsReview,
+              let sourcePath = state.localJobs[jobIndex].destination else {
+            throw SettingsError.inboxFileMissing
+        }
+
+        let job = state.localJobs[jobIndex]
+        let preview = LibraryOrganizer.preview(for: job.name, settings: state.settings)
+        guard let relativePath = preview.relativePath else {
+            throw SettingsError.ambiguousMedia
+        }
+        guard let rootURL = libraryRootURL() else {
+            throw SettingsError.inboxFileMissing
+        }
+
+        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessingScopedResource {
+                rootURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            throw SettingsError.inboxFileMissing
+        }
+
+        let destinationURL = rootURL.appendingPathComponent(relativePath)
+        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+            throw SettingsError.destinationAlreadyExists
+        }
+
+        let destinationDirectory = destinationURL.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(
+                at: destinationDirectory,
+                withIntermediateDirectories: true
+            )
+        } catch {
+            throw SettingsError.unableToCreateDestination
+        }
+
+        do {
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+        } catch {
+            throw SettingsError.unableToMoveFile
+        }
+
+        state.localJobs[jobIndex].status = .completed
+        state.localJobs[jobIndex].progress = 1
+        state.localJobs[jobIndex].destination = destinationURL.path
+        state.localJobs[jobIndex].errorMessage = nil
+        state.localJobs[jobIndex].updatedAt = Date()
+        state.lastUpdated = Date()
+        try store.replace(with: state)
     }
 
     private func updateLocalJob(

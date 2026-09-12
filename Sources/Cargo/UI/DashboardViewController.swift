@@ -5,6 +5,9 @@ final class DashboardViewController: NSViewController {
     private let contentStack = NSStackView()
     private let putIOViewPicker = NSSegmentedControl()
     private var selectedPutIOView = 0
+    private var settingsExpanded = false
+    private var settingsContentView: NSView?
+    private let settingsToggle = NSButton()
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
@@ -41,6 +44,8 @@ final class DashboardViewController: NSViewController {
     }
 
     private func buildInterface() {
+        settingsExpanded = !coordinator.state.settings.hasLibraryRoot || coordinator.putIOStatus == "Not connected yet"
+
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
@@ -127,12 +132,19 @@ final class DashboardViewController: NSViewController {
     }
 
     private func settingsSection() -> NSView {
+        settingsToggle.title = "Settings"
+        settingsToggle.bezelStyle = .inline
+        settingsToggle.alignment = .left
+        settingsToggle.contentTintColor = .secondaryLabelColor
+        settingsToggle.target = self
+        settingsToggle.action = #selector(toggleSettings(_:))
+        updateSettingsToggle()
+
         let section = NSStackView()
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 8
 
-        section.addArrangedSubview(sectionHeader("Settings"))
         section.addArrangedSubview(emptyLabel("Configure the live workflow."))
 
         let putIOTitle = NSTextField(labelWithString: "Put.io account")
@@ -219,7 +231,15 @@ final class DashboardViewController: NSViewController {
         about.textColor = .tertiaryLabelColor
         about.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(about)
-        return section
+
+        settingsContentView = section
+        section.isHidden = !settingsExpanded
+
+        let wrapper = NSStackView(views: [settingsToggle, section])
+        wrapper.orientation = .vertical
+        wrapper.alignment = .leading
+        wrapper.spacing = 8
+        return wrapper
     }
 
     private func fieldLabel(_ text: String) -> NSTextField {
@@ -253,7 +273,7 @@ final class DashboardViewController: NSViewController {
                 contentStack.addArrangedSubview(emptyLabel("No active transfers"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(state.transfers.map(remoteRow), height: 210)
+                    boundedList(state.transfers.map(remoteRow), maxHeight: 210, rowHeight: 45)
                 )
             }
         } else {
@@ -262,17 +282,18 @@ final class DashboardViewController: NSViewController {
                 contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
             } else {
                 contentStack.addArrangedSubview(
-                    boundedList(state.remoteFiles.map(remoteFileRow), height: 210)
+                    boundedList(state.remoteFiles.map(remoteFileRow), maxHeight: 210, rowHeight: 70)
                 )
             }
         }
 
-        contentStack.addArrangedSubview(sectionHeader("Local library queue · \(state.localJobs.count)"))
-        if state.localJobs.isEmpty {
+        let activeLocalJobs = state.localJobs.filter(Self.isActiveLocalJob)
+        contentStack.addArrangedSubview(sectionHeader("Local sync queue · \(activeLocalJobs.count)"))
+        if activeLocalJobs.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("Nothing waiting for the SSD"))
         } else {
             contentStack.addArrangedSubview(
-                boundedList(state.localJobs.map(localRow), height: 120)
+                boundedList(activeLocalJobs.map(localRow), maxHeight: 120, rowHeight: 52)
             )
         }
 
@@ -284,9 +305,26 @@ final class DashboardViewController: NSViewController {
             contentStack.addArrangedSubview(emptyLabel("No downloaded files waiting for organization"))
         } else {
             contentStack.addArrangedSubview(
-                boundedList(inboxJobs.map { inboxRow($0, state: state) }, height: 190)
+                boundedList(inboxJobs.map { inboxRow($0, state: state) }, maxHeight: 190, rowHeight: 82)
             )
         }
+    }
+
+    private static func isActiveLocalJob(_ job: LocalSyncJob) -> Bool {
+        switch job.status {
+        case .queued, .downloading, .importing, .failed:
+            true
+        case .completed, .needsReview:
+            false
+        }
+    }
+
+    private func updateSettingsToggle() {
+        settingsToggle.image = NSImage(
+            systemSymbolName: settingsExpanded ? "chevron.down" : "chevron.right",
+            accessibilityDescription: settingsExpanded ? "Hide settings" : "Show settings"
+        )
+        settingsToggle.image?.isTemplate = true
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {
@@ -315,13 +353,19 @@ final class DashboardViewController: NSViewController {
         render()
     }
 
+    @objc private func toggleSettings(_ sender: Any?) {
+        settingsExpanded.toggle()
+        settingsContentView?.isHidden = !settingsExpanded
+        updateSettingsToggle()
+    }
+
     private func emptyLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
         label.textColor = .secondaryLabelColor
         return label
     }
 
-    private func boundedList(_ rows: [NSView], height: CGFloat) -> NSScrollView {
+    private func boundedList(_ rows: [NSView], maxHeight: CGFloat, rowHeight: CGFloat) -> NSScrollView {
         let list = NSStackView(views: rows)
         list.orientation = .vertical
         list.alignment = .leading
@@ -339,7 +383,8 @@ final class DashboardViewController: NSViewController {
         scrollView.borderType = .bezelBorder
         scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.heightAnchor.constraint(equalToConstant: height).isActive = true
+        let contentHeight = min(maxHeight, max(38, CGFloat(rows.count) * rowHeight + 8))
+        scrollView.heightAnchor.constraint(equalToConstant: contentHeight).isActive = true
 
         NSLayoutConstraint.activate([
             document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
@@ -428,7 +473,17 @@ final class DashboardViewController: NSViewController {
         explanation.font = .systemFont(ofSize: 10)
         explanation.lineBreakMode = .byTruncatingTail
 
-        let stack = NSStackView(views: [title, status, destinationLabel, explanation])
+        let organizeButton = NSButton(
+            title: preview.relativePath == nil ? "Review manually" : "Organize",
+            target: self,
+            action: #selector(organizeInboxItem(_:))
+        )
+        organizeButton.bezelStyle = .rounded
+        organizeButton.controlSize = .small
+        organizeButton.identifier = NSUserInterfaceItemIdentifier(job.id.uuidString)
+        organizeButton.isEnabled = fileExists && preview.relativePath != nil
+
+        let stack = NSStackView(views: [title, status, destinationLabel, explanation, organizeButton])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
@@ -564,6 +619,37 @@ final class DashboardViewController: NSViewController {
         Task { @MainActor in
             await coordinator.processLocalSync(remoteFileID: remoteFileID)
             render()
+        }
+    }
+
+    @objc private func organizeInboxItem(_ sender: NSButton) {
+        guard let identifier = sender.identifier?.rawValue,
+              let jobID = UUID(uuidString: identifier),
+              let job = coordinator.state.localJobs.first(where: { $0.id == jobID }) else {
+            return
+        }
+
+        let preview = LibraryOrganizer.preview(for: job.name, settings: coordinator.state.settings)
+        guard let relativePath = preview.relativePath else { return }
+        let destination = coordinator.state.settings.libraryRootPath.map {
+            URL(fileURLWithPath: $0, isDirectory: true)
+                .appendingPathComponent(relativePath)
+                .path
+        } ?? relativePath
+
+        let alert = NSAlert()
+        alert.messageText = "Organize this file?"
+        alert.informativeText = "Cargo will move \(job.name) from \(coordinator.state.settings.stagingDirectoryName) to:\n\(destination)"
+        alert.addButton(withTitle: "Organize")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            try coordinator.organizeLocalJob(jobID: jobID)
+            render()
+        } catch {
+            let errorAlert = NSAlert(error: error)
+            errorAlert.runModal()
         }
     }
 
