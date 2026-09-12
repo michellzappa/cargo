@@ -21,7 +21,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
 
-        statusItem = NSStatusBar.system.statusItem(withLength: 84)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.isVisible = true
         if let button = statusItem.button {
             button.image = NSImage(
@@ -30,9 +30,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             )
             button.image?.isTemplate = true
             button.image?.size = NSSize(width: 16, height: 16)
-            button.title = "Cargo"
-            button.imagePosition = .imageLeft
-            button.imageScaling = .scaleProportionallyUpOrDown
+            button.title = ""
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleProportionallyDown
             button.setAccessibilityLabel("Cargo menu")
             button.target = self
             button.action = #selector(togglePopover(_:))
