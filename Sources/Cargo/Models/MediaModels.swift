@@ -173,6 +173,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var automaticRemoteCleanupEnabled: Bool
     var automaticInboxCleanupEnabled: Bool
     var imdbWatchlistURL: String
+    /// How often the background cycle polls Put.io and the watchlist.
+    var refreshIntervalMinutes: Int
+
+    static let refreshIntervalChoices = [1, 5, 10, 30]
 
     init(
         libraryRootBookmark: Data? = nil,
@@ -186,7 +190,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         launchAtLoginEnabled: Bool = true,
         automaticRemoteCleanupEnabled: Bool = true,
         automaticInboxCleanupEnabled: Bool = true,
-        imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
+        imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
+        refreshIntervalMinutes: Int = 1
     ) {
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
@@ -200,6 +205,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.automaticRemoteCleanupEnabled = automaticRemoteCleanupEnabled
         self.automaticInboxCleanupEnabled = automaticInboxCleanupEnabled
         self.imdbWatchlistURL = imdbWatchlistURL
+        self.refreshIntervalMinutes = refreshIntervalMinutes
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -215,6 +221,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case automaticRemoteCleanupEnabled
         case automaticInboxCleanupEnabled
         case imdbWatchlistURL
+        case refreshIntervalMinutes
     }
 
     init(from decoder: Decoder) throws {
@@ -232,6 +239,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticInboxCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticInboxCleanupEnabled) ?? true
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
+        refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1
     }
 
     static let `default` = CargoSettings()

@@ -1,6 +1,10 @@
 import AppKit
 import Foundation
 
+// House style shared with Tessellate: dark gradient rounded plate, hairline rim,
+// white geometric shapes at descending alpha. Cargo's mark is a stack of three
+// container slabs — the thing the app moves.
+
 guard CommandLine.arguments.count == 2 else {
     fputs("usage: generate-cargo-icon.swift <iconset-directory>\n", stderr)
     exit(1)
@@ -22,11 +26,11 @@ let iconSizes: [(name: String, pixels: Int)] = [
     ("icon_512x512@2x.png", 1024)
 ]
 
-for iconSize in iconSizes {
+func drawIcon(pixels: Int) -> NSBitmapImageRep {
     guard let bitmap = NSBitmapImageRep(
         bitmapDataPlanes: nil,
-        pixelsWide: iconSize.pixels,
-        pixelsHigh: iconSize.pixels,
+        pixelsWide: pixels,
+        pixelsHigh: pixels,
         bitsPerSample: 8,
         samplesPerPixel: 4,
         hasAlpha: true,
@@ -42,47 +46,56 @@ for iconSize in iconSizes {
 
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = graphicsContext
+    let ctx = graphicsContext.cgContext
+    let s = CGFloat(pixels) / 1024
+    ctx.scaleBy(x: s, y: s)
 
-    let canvas = CGFloat(iconSize.pixels)
-    let scale = canvas / 1024
-    let point = { (x: CGFloat, y: CGFloat) in CGPoint(x: x * scale, y: y * scale) }
-
-    NSColor.clear.setFill()
-    NSBezierPath(rect: NSRect(x: 0, y: 0, width: canvas, height: canvas)).fill()
-
-    let background = NSBezierPath(
-        roundedRect: NSRect(x: 76 * scale, y: 76 * scale, width: 872 * scale, height: 872 * scale),
-        xRadius: 190 * scale,
-        yRadius: 190 * scale
+    // Plate
+    let plate = CGRect(x: 100, y: 100, width: 824, height: 824)
+    let platePath = NSBezierPath(roundedRect: plate, xRadius: 185, yRadius: 185)
+    ctx.saveGState()
+    platePath.addClip()
+    let colors = [
+        NSColor(calibratedWhite: 0.28, alpha: 1).cgColor,
+        NSColor(calibratedWhite: 0.13, alpha: 1).cgColor
+    ] as CFArray
+    let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1])!
+    ctx.drawLinearGradient(
+        gradient,
+        start: CGPoint(x: plate.minX, y: plate.maxY),
+        end: CGPoint(x: plate.maxX, y: plate.minY),
+        options: []
     )
-    NSColor(calibratedRed: 0.12, green: 0.31, blue: 0.72, alpha: 1).setFill()
-    background.fill()
+    ctx.restoreGState()
 
-    let cubeStroke = NSBezierPath()
-    cubeStroke.lineWidth = 64 * scale
-    cubeStroke.lineJoinStyle = .round
-    cubeStroke.lineCapStyle = .round
+    NSColor(calibratedWhite: 1, alpha: 0.16).setStroke()
+    platePath.lineWidth = 4
+    platePath.stroke()
 
-    cubeStroke.move(to: point(512, 760))
-    cubeStroke.line(to: point(780, 610))
-    cubeStroke.line(to: point(512, 460))
-    cubeStroke.line(to: point(244, 610))
-    cubeStroke.close()
+    // Three container slabs, stacked; the top one slightly offset like a crane just set it down.
+    let field = CGRect(x: 250, y: 250, width: 524, height: 524)
+    let gap: CGFloat = 34
+    let radius: CGFloat = 26
+    let slabHeight = (field.height - gap * 2) / 3
 
-    cubeStroke.move(to: point(244, 610))
-    cubeStroke.line(to: point(244, 370))
-    cubeStroke.line(to: point(512, 220))
-    cubeStroke.line(to: point(780, 370))
-    cubeStroke.line(to: point(780, 610))
+    func slab(_ rect: CGRect, alpha: CGFloat) {
+        NSColor(calibratedWhite: 1, alpha: alpha).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius).fill()
+    }
+    slab(CGRect(x: field.minX, y: field.minY, width: field.width, height: slabHeight), alpha: 0.97)
+    slab(CGRect(x: field.minX, y: field.minY + slabHeight + gap, width: field.width, height: slabHeight), alpha: 0.72)
+    slab(
+        CGRect(x: field.minX + 62, y: field.minY + (slabHeight + gap) * 2, width: field.width - 124, height: slabHeight),
+        alpha: 0.52
+    )
 
-    cubeStroke.move(to: point(512, 460))
-    cubeStroke.line(to: point(512, 220))
-
-    NSColor.white.setStroke()
-    cubeStroke.stroke()
     NSGraphicsContext.restoreGraphicsState()
+    return bitmap
+}
 
-    guard let pngData = bitmap.representation(using: NSBitmapImageRep.FileType.png, properties: [:]) else {
+for iconSize in iconSizes {
+    let bitmap = drawIcon(pixels: iconSize.pixels)
+    guard let pngData = bitmap.representation(using: .png, properties: [:]) else {
         fputs("could not encode PNG\n", stderr)
         exit(1)
     }

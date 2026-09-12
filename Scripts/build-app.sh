@@ -25,9 +25,11 @@ chmod +x "$stagingAppDirectory/Contents/MacOS/Cargo"
 /usr/bin/xattr -cr "$appDirectory"
 /usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
 /usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
-codesign --force --deep --sign - --timestamp=none "$appDirectory"
+# Prefer a stable Apple Development identity so Keychain/TCC grants survive rebuilds.
+signingIdentity="${CARGO_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')}"
+codesign --force --deep --sign "${signingIdentity:--}" --timestamp=none "$appDirectory"
 /usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
 /usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
 codesign --verify --deep --strict "$appDirectory"
 
-printf '%s (version %s, build %s)\n' "$appDirectory" "$CARGO_VERSION" "$buildNumber"
+printf '%s (version %s, build %s, signed: %s)\n' "$appDirectory" "$CARGO_VERSION" "$buildNumber" "${signingIdentity:-ad-hoc}"

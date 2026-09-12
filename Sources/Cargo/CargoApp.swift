@@ -9,11 +9,11 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var transfersStatusMenuItem: NSMenuItem!
     private var inboxStatusMenuItem: NSMenuItem!
     private var updatedStatusMenuItem: NSMenuItem!
-    private var dashboardWindowController: NSWindowController?
-    private var dashboardViewController: CargoNavigationViewController!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
     private let notificationService = CargoNotificationService()
+    private lazy var mainWindowController = MainWindowController(coordinator: coordinator)
+    private lazy var settingsWindowController = SettingsWindowController(coordinator: coordinator)
 
     static func main() {
         let application = NSApplication.shared
@@ -24,20 +24,14 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.accessory)
+        NSApplication.shared.mainMenu = makeMainMenu()
         notificationService.requestAuthorization()
         try? LaunchAtLoginManager.shared.setEnabled(coordinator.state.settings.launchAtLoginEnabled)
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "shippingbox",
-                accessibilityDescription: "Cargo"
-            )
-            button.image?.isTemplate = true
-            button.image?.size = NSSize(width: 16, height: 16)
-            button.title = ""
+            button.image = Self.menuBarIcon
             button.imagePosition = .imageOnly
-            button.imageScaling = .scaleProportionallyDown
             button.setAccessibilityLabel("Cargo menu")
             button.toolTip = "Cargo"
         }
@@ -48,47 +42,33 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         transfersStatusMenuItem = NSMenuItem(title: "Transfers · 0", action: nil, keyEquivalent: "")
         inboxStatusMenuItem = NSMenuItem(title: "Inbox · 0 waiting", action: nil, keyEquivalent: "")
         updatedStatusMenuItem = NSMenuItem(title: "Updated · not yet", action: nil, keyEquivalent: "")
-        for item in [
-            connectionStatusMenuItem!,
-            transfersStatusMenuItem!,
-            inboxStatusMenuItem!,
-            updatedStatusMenuItem!
-        ] {
+        for item in [connectionStatusMenuItem!, transfersStatusMenuItem!, inboxStatusMenuItem!, updatedStatusMenuItem!] {
             item.isEnabled = false
             statusMenu.addItem(item)
         }
         statusMenu.addItem(.separator())
-        statusMenu.addItem(
-            NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "")
-        )
-        statusMenu.addItem(
-            NSMenuItem(title: "Settings", action: #selector(showSettings(_:)), keyEquivalent: ",")
-        )
-        statusMenu.addItem(
-            NSMenuItem(title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: "r")
-        )
+        statusMenu.addItem(NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: ""))
+        statusMenu.addItem(NSMenuItem(title: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: ""))
+        statusMenu.addItem(NSMenuItem(title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: ""))
         statusMenu.addItem(.separator())
-        statusMenu.addItem(
-            NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q")
-        )
+        statusMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ""))
+        statusMenu.addItem(.separator())
+        statusMenu.addItem(NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: ""))
         statusMenu.items.forEach { $0.target = self }
         statusMenu.delegate = self
         statusItem.menu = statusMenu
         statusItem.isVisible = true
+
+        mainWindowController.openSettings = { [weak self] in self?.settingsWindowController.show() }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(coordinatorDidChange),
+            name: CargoCoordinator.didChange,
+            object: coordinator
+        )
         updateStatusMenu()
-
-        showDashboardWindow()
-
-        refreshTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                let summary = await coordinator.runBackgroundCycle()
-                notify(summary)
-                dashboardViewController.refreshView()
-                updateStatusMenu()
-                try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
-            }
-        }
+        mainWindowController.show()
+        startBackgroundCycle()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -100,29 +80,93 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Task { @MainActor in
                 do {
                     try await coordinator.finishPutIOAuthorization(from: url)
-                    dashboardViewController.refreshView()
-                    updateStatusMenu()
                 } catch {
-                    let alert = NSAlert(error: error)
-                    alert.runModal()
+                    NSAlert(error: error).runModal()
                 }
             }
         }
     }
 
-    func applicationShouldHandleReopen(
-        _ sender: NSApplication,
-        hasVisibleWindows flag: Bool
-    ) -> Bool {
-        if !flag {
-            showDashboardWindow()
-        }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { mainWindowController.show() }
         return true
     }
 
-    @objc func showDashboard(_ sender: Any?) {
-        showDashboardWindow()
-        dashboardViewController.showTransfers()
+    // MARK: - Background cycle
+
+    private func startBackgroundCycle() {
+        refreshTask?.cancel()
+        refreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                let summary = await coordinator.runBackgroundCycle()
+                notify(summary)
+                let minutes = max(1, coordinator.state.settings.refreshIntervalMinutes)
+                try? await Task.sleep(for: .seconds(minutes * 60))
+            }
+        }
+    }
+
+    @objc private func coordinatorDidChange() {
+        updateStatusMenu()
+    }
+
+    // MARK: - Menus
+
+    private func makeMainMenu() -> NSMenu {
+        let mainMenu = NSMenu()
+
+        let appMenu = NSMenu(title: "Cargo")
+        appMenu.addItem(withTitle: "About Cargo", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ",").target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Hide Cargo", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q").target = self
+        mainMenu.addItem(withTitle: "Cargo", action: nil, keyEquivalent: "").submenu = appMenu
+
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: "n").target = self
+        fileMenu.addItem(withTitle: "Add Transfer from Clipboard", action: #selector(pasteTransfer(_:)), keyEquivalent: "V").target = self
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "Refresh", action: #selector(refreshNow(_:)), keyEquivalent: "r").target = self
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        mainMenu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
+
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        mainMenu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = editMenu
+
+        let viewMenu = NSMenu(title: "View")
+        for page in Page.allCases {
+            let item = viewMenu.addItem(
+                withTitle: page.title,
+                action: #selector(MainWindowController.selectPage(_:)),
+                keyEquivalent: String(page.rawValue + 1)
+            )
+            item.tag = page.rawValue
+            item.target = mainWindowController
+        }
+        viewMenu.addItem(.separator())
+        viewMenu.addItem(withTitle: "Toggle Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
+            .keyEquivalentModifierMask = [.command, .control]
+        mainMenu.addItem(withTitle: "View", action: nil, keyEquivalent: "").submenu = viewMenu
+
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        mainMenu.addItem(withTitle: "Window", action: nil, keyEquivalent: "").submenu = windowMenu
+        NSApplication.shared.windowsMenu = windowMenu
+
+        return mainMenu
     }
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -130,97 +174,77 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateStatusMenu()
     }
 
+    private func updateStatusMenu() {
+        guard statusMenu != nil else { return }
+        let state = coordinator.state
+        connectionStatusMenuItem.title = "Put.io · \(coordinator.putIOStatus)"
+        transfersStatusMenuItem.title = "Transfers · \(state.transfers.count) active"
+        let inboxCount = coordinator.inboxFileURLs().count
+        inboxStatusMenuItem.title = "Inbox · \(inboxCount) \(inboxCount == 1 ? "file waiting" : "files waiting")"
+        updatedStatusMenuItem.title = "Updated · \(Formatters.time.string(from: state.lastUpdated))"
+    }
+
+    // MARK: - Actions
+
+    @objc func showDashboard(_ sender: Any?) {
+        mainWindowController.show()
+    }
+
     @objc func showSettings(_ sender: Any?) {
-        showDashboardWindow()
-        dashboardViewController.showSettings()
+        settingsWindowController.show()
+    }
+
+    @objc func addTransfer(_ sender: Any?) {
+        mainWindowController.show()
+        mainWindowController.addTransfer(sender)
+    }
+
+    @objc func pasteTransfer(_ sender: Any?) {
+        mainWindowController.show()
+        mainWindowController.pasteTransfer(sender)
     }
 
     @objc func refreshNow(_ sender: Any?) {
-        Task { @MainActor in
-            let summary = await coordinator.runBackgroundCycle()
-            notify(summary)
-            dashboardViewController.refreshView()
-            updateStatusMenu()
-        }
+        mainWindowController.refreshNow(sender)
     }
 
     @objc func quitCargo(_ sender: Any?) {
         NSApp.terminate(nil)
     }
 
-    private func showDashboardWindow() {
-        if let dashboardWindowController {
-            dashboardWindowController.showWindow(nil)
-            dashboardWindowController.window?.orderFrontRegardless()
-            dashboardWindowController.window?.makeKeyAndOrderFront(nil)
-        } else {
-            dashboardViewController = CargoNavigationViewController(coordinator: coordinator)
-            let window = NSWindow(contentViewController: dashboardViewController)
-            window.title = "Cargo"
-            window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 980, height: 650))
-            window.minSize = NSSize(width: 820, height: 480)
-            window.center()
-            window.isReleasedWhenClosed = false
-            dashboardWindowController = NSWindowController(window: window)
-            dashboardWindowController?.showWindow(nil)
-            dashboardWindowController?.window?.orderFrontRegardless()
-        }
-
-        NSApplication.shared.activate(ignoringOtherApps: true)
-    }
+    // MARK: - Notifications
 
     private func notify(_ summary: CargoBackgroundCycleSummary) {
-        guard coordinator.state.settings.notificationsEnabled,
-              summary.hasMeaningfulChanges else {
-            return
-        }
+        guard coordinator.state.settings.notificationsEnabled, summary.hasMeaningfulChanges else { return }
 
+        func plural(_ count: Int, _ noun: String, _ pluralNoun: String? = nil) -> String {
+            "\(count) \(count == 1 ? noun : (pluralNoun ?? noun + "s"))"
+        }
         var lines: [String] = []
-        if !summary.discovered.isEmpty {
-            lines.append("Found \(summary.discovered.count) new media item\(summary.discovered.count == 1 ? "" : "s")")
-        }
-        if !summary.watchlistAdded.isEmpty {
-            lines.append("Watchlist added \(summary.watchlistAdded.count) title\(summary.watchlistAdded.count == 1 ? "" : "s")")
-        }
-        if !summary.deleted.isEmpty {
-            lines.append("Removed \(summary.deleted.count) remote file\(summary.deleted.count == 1 ? "" : "s")")
-        }
-        if !summary.deletedFolders.isEmpty {
-            lines.append("Removed \(summary.deletedFolders.count) empty folder\(summary.deletedFolders.count == 1 ? "" : "s")")
-        }
+        if !summary.discovered.isEmpty { lines.append("Found \(plural(summary.discovered.count, "new media item"))") }
+        if !summary.watchlistAdded.isEmpty { lines.append("Watchlist added \(plural(summary.watchlistAdded.count, "title"))") }
+        if !summary.deleted.isEmpty { lines.append("Removed \(plural(summary.deleted.count, "remote file"))") }
+        if !summary.deletedFolders.isEmpty { lines.append("Removed \(plural(summary.deletedFolders.count, "empty folder"))") }
         if !summary.organized.isEmpty {
-            lines.append("Organized \(summary.organized.count) item\(summary.organized.count == 1 ? "" : "s")")
+            lines.append("Organized \(plural(summary.organized.count, "item"))")
         } else if !summary.downloaded.isEmpty {
-            lines.append("Downloaded \(summary.downloaded.count) item\(summary.downloaded.count == 1 ? "" : "s") to Inbox")
+            lines.append("Downloaded \(plural(summary.downloaded.count, "item")) to Inbox")
         }
         if !summary.failures.isEmpty {
-            lines.append("\(summary.failures.count) item\(summary.failures.count == 1 ? " needs" : " items need") attention")
+            lines.append(summary.failures.count == 1 ? "1 item needs attention" : "\(summary.failures.count) items need attention")
         }
-
-        notificationService.post(
-            title: "Cargo workflow updated",
-            body: lines.joined(separator: " · ")
-        )
+        notificationService.post(title: "Cargo workflow updated", body: lines.joined(separator: " · "))
     }
 
-    private func updateStatusMenu() {
-        guard statusMenu != nil else { return }
-
-        let state = coordinator.state
-        connectionStatusMenuItem.title = "Put.io · \(coordinator.putIOStatus)"
-        transfersStatusMenuItem.title = "Transfers · \(state.transfers.count) active"
-
-        let inboxCount = coordinator.inboxFileURLs().count
-        let inboxLabel = inboxCount == 1 ? "file waiting" : "files waiting"
-        inboxStatusMenuItem.title = "Inbox · \(inboxCount) \(inboxLabel)"
-        updatedStatusMenuItem.title = "Updated · \(Self.menuTimeFormatter.string(from: state.lastUpdated))"
-    }
-
-    private static let menuTimeFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        return formatter
+    /// The app icon scaled for the menu bar, full color — house style shared with Tessellate.
+    private static let menuBarIcon: NSImage = {
+        let source = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 18, height: 18))
+        let size = NSSize(width: 18, height: 18)
+        let resized = NSImage(size: size)
+        resized.lockFocus()
+        source.draw(in: NSRect(origin: .zero, size: size), from: .zero, operation: .sourceOver, fraction: 1)
+        resized.unlockFocus()
+        resized.isTemplate = false
+        return resized
     }()
 }

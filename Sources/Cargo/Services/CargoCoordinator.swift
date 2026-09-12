@@ -27,9 +27,15 @@ final class CargoCoordinator {
         case destinationAlreadyExists
         case unableToCreateDestination
         case unableToMoveFile
+        case invalidTransferURL
+        case libraryRootMissing
 
         var errorDescription: String? {
             switch self {
+            case .invalidTransferURL:
+                "Paste a magnet link or a torrent/HTTP URL."
+            case .libraryRootMissing:
+                "Choose a library folder in Settings first."
             case .emptyDirectoryName:
                 "Library folder names cannot be empty."
             case .invalidIMDbWatchlistURL:
@@ -60,9 +66,22 @@ final class CargoCoordinator {
     private var putIOClient: PutIOClient
     private var remoteFolderStack: [(id: Int, name: String)] = []
     private var pendingOAuthState: String?
-    private(set) var state: CargoState
-    private(set) var putIOStatus = "Not connected yet"
-    private(set) var imdbWatchlistStatus = "Not synced yet"
+    /// Posted on the main queue, coalesced, whenever state or status text changes.
+    static let didChange = Notification.Name("CargoCoordinator.didChange")
+
+    private(set) var state: CargoState {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var putIOStatus = "Not connected yet" {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var imdbWatchlistStatus = "Not synced yet" {
+        didSet { scheduleChangeNotification() }
+    }
+    private var changeNotificationScheduled = false
+    private(set) var diskUsage: PutIODiskUsage? {
+        didSet { scheduleChangeNotification() }
+    }
     private(set) var remoteFolderID = 0
     private(set) var remoteFolderName = "Put.io root"
 
@@ -90,6 +109,25 @@ final class CargoCoordinator {
 
     func refresh() {
         state = store.snapshot()
+    }
+
+    var isConnected: Bool {
+        putIOStatus.hasPrefix("Connected as ")
+    }
+
+    private func persist() throws {
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+    }
+
+    private func scheduleChangeNotification() {
+        guard !changeNotificationScheduled else { return }
+        changeNotificationScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            changeNotificationScheduled = false
+            NotificationCenter.default.post(name: Self.didChange, object: self)
+        }
     }
 
     private func storePutIOAccessToken(_ token: String) throws {
@@ -136,8 +174,7 @@ final class CargoCoordinator {
         )
         state.settings.libraryRootBookmark = bookmark
         state.settings.libraryRootPath = url.path
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
     }
 
     func saveDirectorySettings(staging: String, movies: String, tvShows: String) throws {
@@ -151,8 +188,7 @@ final class CargoCoordinator {
         state.settings.stagingDirectoryName = values[0]
         state.settings.moviesDirectoryName = values[1]
         state.settings.tvShowsDirectoryName = values[2]
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
     }
 
     func saveIMDbWatchlistURL(_ value: String) throws {
@@ -199,8 +235,7 @@ final class CargoCoordinator {
                 return $0.title.localizedStandardCompare($1.title) == .orderedAscending
             }
             state.imdbWatchlistLastUpdated = Date()
-            state.lastUpdated = Date()
-            try store.replace(with: state)
+            try persist()
             imdbWatchlistStatus = "Updated \(Self.watchlistTimeFormatter.string(from: Date())) · \(items.count) titles"
 
             let addedItems = items.filter { !previousIDs.contains($0.id) }
@@ -236,15 +271,23 @@ final class CargoCoordinator {
         state.settings.launchAtLoginEnabled = launchAtLogin
         state.settings.automaticRemoteCleanupEnabled = automaticRemoteCleanup
         state.settings.automaticInboxCleanupEnabled = automaticInboxCleanup
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
+    }
+
+    func updateSettings(_ mutate: (inout CargoSettings) throws -> Void) throws {
+        var settings = state.settings
+        try mutate(&settings)
+        if settings.launchAtLoginEnabled != state.settings.launchAtLoginEnabled {
+            try LaunchAtLoginManager.shared.setEnabled(settings.launchAtLoginEnabled)
+        }
+        state.settings = settings
+        try persist()
     }
 
     func clearLibraryRoot() throws {
         state.settings.libraryRootBookmark = nil
         state.settings.libraryRootPath = nil
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
     }
 
     func libraryRootURL() -> URL? {
@@ -311,8 +354,8 @@ final class CargoCoordinator {
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
-            state.lastUpdated = Date()
-            try store.replace(with: state)
+            try persist()
+            diskUsage = account.disk
             putIOStatus = "Connected as \(account.username)"
         } catch {
             if putIOClient is UnconfiguredPutIOClient {
@@ -457,6 +500,77 @@ final class CargoCoordinator {
         return formatter
     }()
 
+    // MARK: - Transfers
+
+    func addTransfer(url: String) async throws {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw SettingsError.invalidTransferURL }
+        let transfer = try await putIOClient.addTransfer(url: trimmed)
+        if !state.transfers.contains(where: { $0.id == transfer.id }) {
+            state.transfers.insert(transfer, at: 0)
+        }
+        try persist()
+        recordHistory(kind: .info, title: "Added transfer", detail: transfer.name)
+    }
+
+    func cancelTransfer(id: Int) async throws {
+        let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
+        try await putIOClient.cancelTransfers(ids: [id])
+        state.transfers.removeAll { $0.id == id }
+        try persist()
+        recordHistory(kind: .warning, title: "Cancelled transfer", detail: name)
+    }
+
+    func retryTransfer(id: Int) async throws {
+        let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
+        try await putIOClient.retryTransfer(id: id)
+        recordHistory(kind: .info, title: "Retried transfer", detail: name)
+        await refreshFromPutIO()
+    }
+
+    func cleanFinishedTransfers() async throws {
+        try await putIOClient.cleanFinishedTransfers()
+        state.transfers.removeAll { $0.status == .completed || $0.status == .seeding }
+        try persist()
+        recordHistory(kind: .info, title: "Cleared finished transfers", detail: "Put.io transfer list cleaned")
+    }
+
+    // MARK: - File extras
+
+    func downloadURL(remoteFileID: Int) async throws -> URL {
+        try await putIOClient.downloadURL(fileID: remoteFileID)
+    }
+
+    func fetchSubtitles(remoteFileID: Int) async throws -> [PutIOSubtitle] {
+        try await putIOClient.fetchSubtitles(fileID: remoteFileID)
+    }
+
+    /// Saves a Put.io subtitle next to the local copy of the file (`Name.en.srt`).
+    /// Falls back to the staging folder when the file has not been downloaded yet.
+    func downloadSubtitle(_ subtitle: PutIOSubtitle, remoteFileID: Int) async throws -> URL {
+        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID }) else {
+            throw SettingsError.remoteFileMissing
+        }
+        let localPath = state.localJobs
+            .filter { $0.remoteFileID == remoteFileID }
+            .max { $0.updatedAt < $1.updatedAt }?
+            .destination
+        let base: URL
+        if let localPath, FileManager.default.fileExists(atPath: localPath) {
+            base = URL(fileURLWithPath: localPath)
+        } else {
+            guard let root = libraryRootURL() else { throw SettingsError.libraryRootMissing }
+            base = root
+                .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
+                .appendingPathComponent(remoteFile.name)
+        }
+        let language = subtitle.language.lowercased().prefix(3).replacingOccurrences(of: " ", with: "")
+        let destination = base.deletingPathExtension().appendingPathExtension("\(language).srt")
+        try await putIOClient.downloadSubtitle(fileID: remoteFileID, key: subtitle.key, to: destination)
+        recordHistory(kind: .success, title: "Saved subtitle", detail: destination.lastPathComponent)
+        return destination
+    }
+
     func openRemoteFolder(remoteFolderID: Int) async {
         guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
             return
@@ -468,8 +582,7 @@ final class CargoCoordinator {
             self.remoteFolderID = folder.id
             remoteFolderName = folder.name
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            state.lastUpdated = Date()
-            try store.replace(with: state)
+            try persist()
         } catch {
             putIOStatus = "Put.io error · \(error.localizedDescription)"
         }
@@ -483,8 +596,7 @@ final class CargoCoordinator {
             remoteFolderID = previousFolder.id
             remoteFolderName = previousFolder.name
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            state.lastUpdated = Date()
-            try store.replace(with: state)
+            try persist()
         } catch {
             remoteFolderStack.append(previousFolder)
             putIOStatus = "Put.io error · \(error.localizedDescription)"
@@ -633,7 +745,8 @@ final class CargoCoordinator {
 
     /// User-initiated deletion from the Files page. No local-copy verification —
     /// the UI is responsible for confirming with the user first.
-    func deleteRemoteFile(remoteFileID: Int) async throws {
+    @discardableResult
+    func deleteRemoteFile(remoteFileID: Int, reason: String? = nil) async throws -> RemoteFile {
         guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
             ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
             throw SettingsError.remoteFileMissing
@@ -646,13 +759,13 @@ final class CargoCoordinator {
         if !state.deletedRemoteFileIDs.contains(remoteFileID) {
             state.deletedRemoteFileIDs.append(remoteFileID)
         }
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
         recordHistory(
             kind: .success,
             title: remoteFile.isFolder ? "Deleted Put.io folder" : "Deleted from Put.io",
-            detail: "\(remoteFile.displayPath) · manual"
+            detail: reason ?? "\(remoteFile.displayPath) · manual"
         )
+        return remoteFile
     }
 
     private func deleteRemoteFileAfterVerifiedCopy(
@@ -661,21 +774,9 @@ final class CargoCoordinator {
         jobName: String
     ) async throws -> [Int] {
         try verifyLocalCopy(remoteFileID: remoteFileID, localURL: localURL)
-        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
-            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
-            throw SettingsError.remoteFileMissing
-        }
-
-        try await putIOClient.deleteFile(fileID: remoteFileID)
-        if !state.deletedRemoteFileIDs.contains(remoteFileID) {
-            state.deletedRemoteFileIDs.append(remoteFileID)
-        }
-        state.lastUpdated = Date()
-        try store.replace(with: state)
-        recordHistory(
-            kind: .success,
-            title: "Deleted from Put.io",
-            detail: "\(jobName) · local copy verified"
+        let remoteFile = try await deleteRemoteFile(
+            remoteFileID: remoteFileID,
+            reason: "\(jobName) · local copy verified"
         )
         do {
             return try await deleteEmptyRemoteFolders(startingAt: remoteFile.parentID)
@@ -703,8 +804,7 @@ final class CargoCoordinator {
                 state.deletedRemoteFolderIDs.append(folder.id)
             }
             deletedFolderIDs.append(folder.id)
-            state.lastUpdated = Date()
-            try store.replace(with: state)
+            try persist()
             recordHistory(
                 kind: .success,
                 title: "Deleted empty Put.io folder",
@@ -772,8 +872,7 @@ final class CargoCoordinator {
         state.localJobs[jobIndex].destination = destinationURL.path
         state.localJobs[jobIndex].errorMessage = nil
         state.localJobs[jobIndex].updatedAt = Date()
-        state.lastUpdated = Date()
-        try store.replace(with: state)
+        try persist()
         recordHistory(
             kind: .success,
             title: "Organized",
