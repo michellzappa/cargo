@@ -67,7 +67,7 @@ final class DashboardViewController: NSViewController {
         let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refresh(_:)))
         refreshButton.bezelStyle = .rounded
 
-        let settingsButton = NSButton(title: "Settings…", target: self, action: #selector(settings(_:)))
+        let settingsButton = NSButton(title: "Settings…", target: self, action: #selector(openSettings(_:)))
         settingsButton.bezelStyle = .rounded
 
         let quitButton = NSButton(title: "Quit Cargo", target: self, action: #selector(quit(_:)))
@@ -244,19 +244,18 @@ final class DashboardViewController: NSViewController {
         }
     }
 
-    @objc func settings(_ sender: Any?) {
+    @objc func openSettings(_ sender: Any?) {
         if settingsWindowController == nil {
             settingsWindowController = SettingsWindowController(coordinator: coordinator)
         }
 
         guard let window = settingsWindowController?.window else { return }
+        window.center()
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
         settingsWindowController?.showWindow(self)
-        if !window.isVisible {
-            window.center()
-        }
+        window.setIsVisible(true)
         window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
