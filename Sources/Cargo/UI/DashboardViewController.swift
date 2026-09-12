@@ -133,7 +133,6 @@ final class DashboardViewController: NSViewController {
         root.spacing = Layout.pageSpacing
         root.edgeInsets = Layout.pageInsets
         root.translatesAutoresizingMaskIntoConstraints = false
-        root.setContentHuggingPriority(.required, for: .vertical)
 
         pageTitleLabel.font = .systemFont(ofSize: 22, weight: .semibold)
 
@@ -152,7 +151,7 @@ final class DashboardViewController: NSViewController {
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = Layout.sectionSpacing
-        contentStack.setContentHuggingPriority(.required, for: .vertical)
+        contentStack.setContentHuggingPriority(.defaultLow, for: .vertical)
         contentStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refresh(_:)))
@@ -176,34 +175,40 @@ final class DashboardViewController: NSViewController {
             constant: -(Layout.pageInsets.left + Layout.pageInsets.right)
         ).isActive = true
 
-        settingsView = settingsSection()
+        settingsView = scrollingPage(settingsSection())
+
+        view.addSubview(root)
+        NSLayoutConstraint.activate([
+            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            root.topAnchor.constraint(equalTo: view.topAnchor),
+            root.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+
+    /// Wraps a tall page (Settings) in a scroll view that fills the remaining space.
+    private func scrollingPage(_ content: NSView) -> NSScrollView {
+        content.translatesAutoresizingMaskIntoConstraints = false
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(content)
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+        scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(root)
-        scrollView.documentView = container
-        view.addSubview(scrollView)
+        scrollView.setContentHuggingPriority(.init(1), for: .vertical)
 
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            container.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
-            container.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
-            container.bottomAnchor.constraint(equalTo: scrollView.contentView.bottomAnchor),
-            container.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
-            root.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            root.topAnchor.constraint(equalTo: container.topAnchor),
-            root.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+            document.widthAnchor.constraint(equalTo: scrollView.contentView.widthAnchor),
+            content.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            content.topAnchor.constraint(equalTo: document.topAnchor),
+            content.bottomAnchor.constraint(equalTo: document.bottomAnchor)
         ])
+        return scrollView
     }
 
     private func settingsSection() -> NSView {
@@ -661,6 +666,7 @@ final class DashboardViewController: NSViewController {
 
     private func sectionHeader(_ title: String) -> NSTextField {
         let label = NSTextField(labelWithString: title)
+        label.setContentHuggingPriority(.required, for: .vertical)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         label.textColor = .labelColor
         return label
@@ -668,6 +674,7 @@ final class DashboardViewController: NSViewController {
 
     private func emptyLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
+        label.setContentHuggingPriority(.required, for: .vertical)
         label.textColor = .secondaryLabelColor
         label.font = .systemFont(ofSize: 12)
         return label
@@ -726,7 +733,7 @@ final class DashboardViewController: NSViewController {
         list.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         list.translatesAutoresizingMaskIntoConstraints = false
 
-        let document = NSView()
+        let document = FlippedView()
         document.translatesAutoresizingMaskIntoConstraints = false
         document.addSubview(list)
 
@@ -741,11 +748,14 @@ final class DashboardViewController: NSViewController {
         scrollView.clipsToBounds = true
         scrollView.documentView = document
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        // Fill whatever vertical space the page has left; several lists on one
+        // page (Inbox) share it. Row/height parameters only bound the minimum.
         let rowPaddingHeight = CGFloat(rows.count) * Layout.listRowPadding * 2
         let separatorHeight = CGFloat(max(0, rows.count - 1)) * Layout.listSeparatorHeight
         let naturalHeight = CGFloat(rows.count) * rowHeight + rowPaddingHeight + separatorHeight
-        let contentHeight = min(maxHeight, max(44, naturalHeight))
-        scrollView.heightAnchor.constraint(equalToConstant: contentHeight).isActive = true
+        let minimumHeight = min(maxHeight, max(44, naturalHeight), 160)
+        scrollView.heightAnchor.constraint(greaterThanOrEqualToConstant: minimumHeight).isActive = true
+        scrollView.setContentHuggingPriority(.init(1), for: .vertical)
 
         NSLayoutConstraint.activate(
             listRows.map { $0.widthAnchor.constraint(equalTo: list.widthAnchor) }
@@ -1225,4 +1235,9 @@ final class DashboardViewController: NSViewController {
         box.boxType = .separator
         return box
     }
+}
+
+/// Document view whose origin is top-left so short content sits at the top of a scroll view.
+private final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }

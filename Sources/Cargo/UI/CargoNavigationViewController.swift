@@ -35,6 +35,7 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
 
     private let coordinator: CargoCoordinator
     private let dashboard: DashboardViewController
+    var dashboardForTesting: DashboardViewController { dashboard }
     private let sidebarTableView = NSTableView()
 
     init(coordinator: CargoCoordinator) {
