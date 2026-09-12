@@ -6,7 +6,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
     private var dashboardWindowController: NSWindowController?
-    private var dashboardViewController: DashboardViewController!
+    private var dashboardViewController: CargoNavigationViewController!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
     private let notificationService = CargoNotificationService()
@@ -140,12 +140,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             dashboardWindowController.window?.orderFrontRegardless()
             dashboardWindowController.window?.makeKeyAndOrderFront(nil)
         } else {
-            dashboardViewController = DashboardViewController(coordinator: coordinator)
+            dashboardViewController = CargoNavigationViewController(coordinator: coordinator)
             let window = NSWindow(contentViewController: dashboardViewController)
             window.title = "Cargo"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 760, height: 560))
-            window.minSize = NSSize(width: 680, height: 420)
+            window.setContentSize(NSSize(width: 980, height: 650))
+            window.minSize = NSSize(width: 820, height: 480)
             window.center()
             window.isReleasedWhenClosed = false
             dashboardWindowController = NSWindowController(window: window)

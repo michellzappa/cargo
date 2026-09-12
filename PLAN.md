@@ -17,6 +17,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add unit-test scaffolding.
 - [x] Make Settings mirror the media workflow step by step.
 - [x] Separate Transfers, Files, Inbox, History, and Settings into focused main-window views.
+- [x] Use a native macOS sidebar navigation shell with live queue badges.
 - [x] Add reproducible app version and build-number packaging.
 
 ### 1. Put.io read-only integration

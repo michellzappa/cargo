@@ -12,7 +12,6 @@ final class DashboardViewController: NSViewController {
 
     private let coordinator: CargoCoordinator
     private let contentStack = NSStackView()
-    private let putIOViewPicker = NSSegmentedControl()
     private var selectedPutIOView = 0
     private var lastOrganizationMessage: String?
     private var settingsView: NSView?
@@ -94,7 +93,14 @@ final class DashboardViewController: NSViewController {
     func showSettings() {
         selectedPutIOView = 5
         if isViewLoaded {
-            putIOViewPicker.selectedSegment = selectedPutIOView
+            render()
+        }
+    }
+
+    func selectView(_ index: Int) {
+        guard (0..<6).contains(index) else { return }
+        selectedPutIOView = index
+        if isViewLoaded {
             render()
         }
     }
@@ -144,18 +150,6 @@ final class DashboardViewController: NSViewController {
 
         root.addArrangedSubview(headerRow)
         root.addArrangedSubview(Self.separator())
-        putIOViewPicker.segmentCount = 6
-        putIOViewPicker.setLabel("Transfers", forSegment: 0)
-        putIOViewPicker.setLabel("Files", forSegment: 1)
-        putIOViewPicker.setLabel("Inbox", forSegment: 2)
-        putIOViewPicker.setLabel("Watchlist", forSegment: 3)
-        putIOViewPicker.setLabel("History", forSegment: 4)
-        putIOViewPicker.setLabel("Settings", forSegment: 5)
-        putIOViewPicker.trackingMode = .selectOne
-        putIOViewPicker.selectedSegment = selectedPutIOView
-        putIOViewPicker.target = self
-        putIOViewPicker.action = #selector(selectPutIOView(_:))
-        root.addArrangedSubview(putIOViewPicker)
         root.addArrangedSubview(contentStack)
 
         settingsView = settingsSection()
@@ -373,10 +367,6 @@ final class DashboardViewController: NSViewController {
         connectButton.isHidden = isConnected
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
         updateWorkflowControls(with: state.settings)
-        let inboxCount = coordinator.inboxFileURLs().count
-        putIOViewPicker.setLabel(inboxCount > 0 ? "Inbox \(inboxCount)" : "Inbox", forSegment: 2)
-        let watchlistCount = state.imdbWatchlistItems.count
-        putIOViewPicker.setLabel(watchlistCount > 0 ? "Watchlist \(watchlistCount)" : "Watchlist", forSegment: 3)
 
         switch selectedPutIOView {
         case 0:
@@ -601,11 +591,6 @@ final class DashboardViewController: NSViewController {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         return label
-    }
-
-    @objc private func selectPutIOView(_ sender: NSSegmentedControl) {
-        selectedPutIOView = sender.selectedSegment
-        render()
     }
 
     private func emptyLabel(_ text: String) -> NSTextField {

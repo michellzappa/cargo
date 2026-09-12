@@ -16,6 +16,7 @@ The first vertical slice is in place:
 
 - native `NSStatusItem` menu-bar app
 - normal dashboard window opened from the menu bar or its context menu
+- native macOS sidebar navigation for Transfers, Files, Inbox, Watchlist, History, and Settings
 - persisted local state store
 - remote transfer and local sync job models
 - browser-only Put.io OAuth with the access token stored in macOS Keychain
