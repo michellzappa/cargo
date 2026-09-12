@@ -1,13 +1,20 @@
 import AppKit
 
 final class DashboardViewController: NSViewController {
+    private struct InboxEntry {
+        let sourceURL: URL
+        let job: LocalSyncJob?
+
+        var name: String {
+            job?.name ?? sourceURL.lastPathComponent
+        }
+    }
+
     private let coordinator: CargoCoordinator
     private let contentStack = NSStackView()
     private let putIOViewPicker = NSSegmentedControl()
     private var selectedPutIOView = 0
-    private var settingsExpanded = false
-    private var settingsContentView: NSView?
-    private let settingsToggle = NSButton()
+    private var settingsView: NSView?
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
     private let putIOSettingsStatusLabel = NSTextField(labelWithString: "")
@@ -44,14 +51,13 @@ final class DashboardViewController: NSViewController {
     }
 
     private func buildInterface() {
-        settingsExpanded = !coordinator.state.settings.hasLibraryRoot || coordinator.putIOStatus == "Not connected yet"
-
         let root = NSStackView()
         root.orientation = .vertical
         root.alignment = .leading
-        root.spacing = 10
+        root.spacing = 12
         root.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         root.translatesAutoresizingMaskIntoConstraints = false
+        root.setContentHuggingPriority(.required, for: .vertical)
 
         let title = NSTextField(labelWithString: "Cargo")
         title.font = .systemFont(ofSize: 22, weight: .semibold)
@@ -74,34 +80,34 @@ final class DashboardViewController: NSViewController {
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 10
+        contentStack.setContentHuggingPriority(.required, for: .vertical)
         contentStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refresh(_:)))
         refreshButton.bezelStyle = .rounded
 
-        let quitButton = NSButton(title: "Quit Cargo", target: self, action: #selector(quit(_:)))
-        quitButton.bezelStyle = .rounded
+        let headerRow = NSStackView(views: [header, refreshButton])
+        headerRow.orientation = .horizontal
+        headerRow.alignment = .top
+        headerRow.spacing = 12
+        header.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        refreshButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let controls = NSStackView(views: [refreshButton, quitButton])
-        controls.orientation = .horizontal
-        controls.spacing = 8
-
-        root.addArrangedSubview(header)
+        root.addArrangedSubview(headerRow)
         root.addArrangedSubview(Self.separator())
-        putIOViewPicker.segmentCount = 2
+        putIOViewPicker.segmentCount = 4
         putIOViewPicker.setLabel("Transfers", forSegment: 0)
         putIOViewPicker.setLabel("Files", forSegment: 1)
+        putIOViewPicker.setLabel("Inbox", forSegment: 2)
+        putIOViewPicker.setLabel("Settings", forSegment: 3)
         putIOViewPicker.trackingMode = .selectOne
         putIOViewPicker.selectedSegment = selectedPutIOView
         putIOViewPicker.target = self
         putIOViewPicker.action = #selector(selectPutIOView(_:))
         root.addArrangedSubview(putIOViewPicker)
         root.addArrangedSubview(contentStack)
-        root.addArrangedSubview(Self.separator())
-        root.addArrangedSubview(controls)
 
-        root.addArrangedSubview(Self.separator())
-        root.addArrangedSubview(settingsSection())
+        settingsView = settingsSection()
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -132,19 +138,12 @@ final class DashboardViewController: NSViewController {
     }
 
     private func settingsSection() -> NSView {
-        settingsToggle.title = "Settings"
-        settingsToggle.bezelStyle = .inline
-        settingsToggle.alignment = .left
-        settingsToggle.contentTintColor = .secondaryLabelColor
-        settingsToggle.target = self
-        settingsToggle.action = #selector(toggleSettings(_:))
-        updateSettingsToggle()
-
         let section = NSStackView()
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 8
 
+        section.addArrangedSubview(sectionHeader("Settings"))
         section.addArrangedSubview(emptyLabel("Configure the live workflow."))
 
         let putIOTitle = NSTextField(labelWithString: "Put.io account")
@@ -232,14 +231,7 @@ final class DashboardViewController: NSViewController {
         about.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(about)
 
-        settingsContentView = section
-        section.isHidden = !settingsExpanded
-
-        let wrapper = NSStackView(views: [settingsToggle, section])
-        wrapper.orientation = .vertical
-        wrapper.alignment = .leading
-        wrapper.spacing = 8
-        return wrapper
+        return section
     }
 
     private func fieldLabel(_ text: String) -> NSTextField {
@@ -264,8 +256,11 @@ final class DashboardViewController: NSViewController {
         connectionLabel.stringValue = coordinator.putIOStatus
         putIOSettingsStatusLabel.stringValue = coordinator.putIOStatus
         refreshedLabel.stringValue = "Updated \(Self.timeFormatter.string(from: state.lastUpdated))"
+        let inboxCount = coordinator.inboxFileURLs().count
+        putIOViewPicker.setLabel(inboxCount > 0 ? "Inbox \(inboxCount)" : "Inbox", forSegment: 2)
 
-        if selectedPutIOView == 0 {
+        switch selectedPutIOView {
+        case 0:
             let remoteHeader = sectionHeader("Put.io transfers · \(state.transfers.count)")
             contentStack.addArrangedSubview(remoteHeader)
 
@@ -276,7 +271,7 @@ final class DashboardViewController: NSViewController {
                     boundedList(state.transfers.map(remoteRow), maxHeight: 210, rowHeight: 45)
                 )
             }
-        } else {
+        case 1:
             contentStack.addArrangedSubview(remoteFilesHeader())
             if state.remoteFiles.isEmpty {
                 contentStack.addArrangedSubview(emptyLabel("No files at this Put.io location"))
@@ -285,27 +280,47 @@ final class DashboardViewController: NSViewController {
                     boundedList(state.remoteFiles.map(remoteFileRow), maxHeight: 210, rowHeight: 70)
                 )
             }
+        case 2:
+            renderInbox(state)
+        case 3:
+            if let settingsView {
+                contentStack.addArrangedSubview(settingsView)
+            }
+        default:
+            break
         }
+    }
 
+    private func renderInbox(_ state: CargoState) {
         let activeLocalJobs = state.localJobs.filter(Self.isActiveLocalJob)
-        contentStack.addArrangedSubview(sectionHeader("Local sync queue · \(activeLocalJobs.count)"))
-        if activeLocalJobs.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("Nothing waiting for the SSD"))
-        } else {
+        if !activeLocalJobs.isEmpty {
+            contentStack.addArrangedSubview(
+                sectionHeader("Downloading to \(state.settings.stagingDirectoryName) · \(activeLocalJobs.count)")
+            )
             contentStack.addArrangedSubview(
                 boundedList(activeLocalJobs.map(localRow), maxHeight: 120, rowHeight: 52)
             )
         }
 
-        let inboxJobs = state.localJobs
+        let pendingJobs = state.localJobs
             .filter { $0.status == .needsReview }
             .sorted { $0.updatedAt > $1.updatedAt }
-        contentStack.addArrangedSubview(sectionHeader("Local inbox · \(inboxJobs.count) awaiting organization"))
-        if inboxJobs.isEmpty {
-            contentStack.addArrangedSubview(emptyLabel("No downloaded files waiting for organization"))
+        let jobsByDestination = pendingJobs.reduce(into: [String: LocalSyncJob]()) { jobs, job in
+            if let destination = job.destination {
+                jobs[destination] = job
+            }
+        }
+        let inboxEntries = coordinator.inboxFileURLs().map { url in
+            InboxEntry(sourceURL: url, job: jobsByDestination[url.path])
+        }
+
+        contentStack.addArrangedSubview(sectionHeader("Inbox · \(inboxEntries.count)"))
+        contentStack.addArrangedSubview(emptyLabel("Files physically in \(state.settings.stagingDirectoryName)"))
+        if inboxEntries.isEmpty {
+            contentStack.addArrangedSubview(emptyLabel("Nothing waiting for organization"))
         } else {
             contentStack.addArrangedSubview(
-                boundedList(inboxJobs.map { inboxRow($0, state: state) }, maxHeight: 190, rowHeight: 82)
+                boundedList(inboxEntries.map { inboxRow($0, state: state) }, maxHeight: 320, rowHeight: 88)
             )
         }
     }
@@ -317,14 +332,6 @@ final class DashboardViewController: NSViewController {
         case .completed, .needsReview:
             false
         }
-    }
-
-    private func updateSettingsToggle() {
-        settingsToggle.image = NSImage(
-            systemSymbolName: settingsExpanded ? "chevron.down" : "chevron.right",
-            accessibilityDescription: settingsExpanded ? "Hide settings" : "Show settings"
-        )
-        settingsToggle.image?.isTemplate = true
     }
 
     private func sectionHeader(_ title: String) -> NSTextField {
@@ -351,12 +358,6 @@ final class DashboardViewController: NSViewController {
     @objc private func selectPutIOView(_ sender: NSSegmentedControl) {
         selectedPutIOView = sender.selectedSegment
         render()
-    }
-
-    @objc private func toggleSettings(_ sender: Any?) {
-        settingsExpanded.toggle()
-        settingsContentView?.isHidden = !settingsExpanded
-        updateSettingsToggle()
     }
 
     private func emptyLabel(_ text: String) -> NSTextField {
@@ -443,18 +444,20 @@ final class DashboardViewController: NSViewController {
         return stack
     }
 
-    private func inboxRow(_ job: LocalSyncJob, state: CargoState) -> NSView {
-        let title = NSTextField(labelWithString: job.name)
+    private func inboxRow(_ entry: InboxEntry, state: CargoState) -> NSView {
+        let title = NSTextField(labelWithString: entry.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
         title.lineBreakMode = .byTruncatingTail
 
-        let fileExists = job.destination.map { FileManager.default.fileExists(atPath: $0) } ?? false
-        let inboxStatus = fileExists ? "Downloaded · awaiting organization" : "Missing from staging"
+        let fileExists = FileManager.default.fileExists(atPath: entry.sourceURL.path)
+        let inboxStatus = entry.job == nil
+            ? "In inbox · not tracked by Cargo"
+            : (fileExists ? "Downloaded · awaiting organization" : "Missing from staging")
         let status = NSTextField(labelWithString: inboxStatus)
         status.textColor = fileExists ? .systemOrange : .systemRed
         status.font = .systemFont(ofSize: 11, weight: .medium)
 
-        let preview = LibraryOrganizer.preview(for: job.name, settings: state.settings)
+        let preview = LibraryOrganizer.preview(for: entry.name, settings: state.settings)
         let destination = preview.relativePath.map { relativePath in
             if let rootPath = state.settings.libraryRootPath {
                 return URL(fileURLWithPath: rootPath, isDirectory: true)
@@ -480,7 +483,7 @@ final class DashboardViewController: NSViewController {
         )
         organizeButton.bezelStyle = .rounded
         organizeButton.controlSize = .small
-        organizeButton.identifier = NSUserInterfaceItemIdentifier(job.id.uuidString)
+        organizeButton.identifier = NSUserInterfaceItemIdentifier(entry.sourceURL.path)
         organizeButton.isEnabled = fileExists && preview.relativePath != nil
 
         let stack = NSStackView(views: [title, status, destinationLabel, explanation, organizeButton])
@@ -624,12 +627,17 @@ final class DashboardViewController: NSViewController {
 
     @objc private func organizeInboxItem(_ sender: NSButton) {
         guard let identifier = sender.identifier?.rawValue,
-              let jobID = UUID(uuidString: identifier),
-              let job = coordinator.state.localJobs.first(where: { $0.id == jobID }) else {
+              !identifier.isEmpty else {
             return
         }
 
-        let preview = LibraryOrganizer.preview(for: job.name, settings: coordinator.state.settings)
+        let sourceURL = URL(fileURLWithPath: identifier)
+        let job = coordinator.state.localJobs.first {
+            $0.status == .needsReview && $0.destination == sourceURL.path
+        }
+        let itemName = job?.name ?? sourceURL.lastPathComponent
+
+        let preview = LibraryOrganizer.preview(for: itemName, settings: coordinator.state.settings)
         guard let relativePath = preview.relativePath else { return }
         let destination = coordinator.state.settings.libraryRootPath.map {
             URL(fileURLWithPath: $0, isDirectory: true)
@@ -639,13 +647,17 @@ final class DashboardViewController: NSViewController {
 
         let alert = NSAlert()
         alert.messageText = "Organize this file?"
-        alert.informativeText = "Cargo will move \(job.name) from \(coordinator.state.settings.stagingDirectoryName) to:\n\(destination)"
+        alert.informativeText = "Cargo will move \(itemName) from \(coordinator.state.settings.stagingDirectoryName) to:\n\(destination)"
         alert.addButton(withTitle: "Organize")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
-            try coordinator.organizeLocalJob(jobID: jobID)
+            if let job {
+                try coordinator.organizeLocalJob(jobID: job.id)
+            } else {
+                try coordinator.organizeInboxFile(at: sourceURL)
+            }
             render()
         } catch {
             let errorAlert = NSAlert(error: error)
@@ -666,10 +678,6 @@ final class DashboardViewController: NSViewController {
             await coordinator.goBackRemoteFolder()
             render()
         }
-    }
-
-    @objc private func quit(_ sender: Any?) {
-        NSApplication.shared.terminate(nil)
     }
 
     private static let timeFormatter: DateFormatter = {

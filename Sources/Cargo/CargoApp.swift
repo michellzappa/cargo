@@ -91,8 +91,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
             let window = NSWindow(contentViewController: dashboardViewController)
             window.title = "Cargo"
             window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-            window.setContentSize(NSSize(width: 760, height: 700))
-            window.minSize = NSSize(width: 680, height: 520)
+            window.setContentSize(NSSize(width: 760, height: 560))
+            window.minSize = NSSize(width: 680, height: 420)
             window.center()
             window.isReleasedWhenClosed = false
             dashboardWindowController = NSWindowController(window: window)

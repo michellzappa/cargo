@@ -16,6 +16,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add a durable local state model.
 - [x] Add unit-test scaffolding.
 - [x] Make Settings mirror the media workflow step by step.
+- [x] Separate Transfers, Files, Inbox, and Settings into focused main-window views.
 - [x] Add reproducible app version and build-number packaging.
 
 ### 1. Put.io read-only integration
@@ -46,6 +47,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [ ] Inspect the existing root and learn/confirm its current Movies and TV Shows folders.
 - [ ] Identify common movie and episode filename patterns, using Put.io folder context as a signal.
 - [x] Show a proposed destination from the configured library layout before moving anything.
+- [x] Scan the physical `_Inbox` folder so manually placed or previously untracked files are visible.
 - [ ] Confirm the final rename and reorganization rules with the existing Infuse folder layout.
 - [x] Move verified files from hidden `_Inbox` into the chosen existing destination after confirmation.
 - [ ] Quarantine ambiguous or unsupported files instead of guessing.

@@ -151,6 +151,32 @@ final class CargoCoordinator {
         return URL(fileURLWithPath: path, isDirectory: true)
     }
 
+    func inboxFileURLs() -> [URL] {
+        guard let rootURL = libraryRootURL() else { return [] }
+        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessingScopedResource {
+                rootURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let inboxURL = rootURL.appendingPathComponent(
+            state.settings.stagingDirectoryName,
+            isDirectory: true
+        )
+        let keys: [URLResourceKey] = [.isDirectoryKey]
+        return (try? FileManager.default.contentsOfDirectory(
+            at: inboxURL,
+            includingPropertiesForKeys: keys,
+            options: []
+        ))?
+            .filter { url in
+                (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+            }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            ?? []
+    }
+
     func refreshFromPutIO() async {
         do {
             let account = try await putIOClient.fetchAccount()
@@ -348,6 +374,51 @@ final class CargoCoordinator {
         state.localJobs[jobIndex].updatedAt = Date()
         state.lastUpdated = Date()
         try store.replace(with: state)
+    }
+
+    func organizeInboxFile(at sourceURL: URL) throws {
+        guard let rootURL = libraryRootURL() else {
+            throw SettingsError.inboxFileMissing
+        }
+
+        let inboxURL = rootURL.appendingPathComponent(
+            state.settings.stagingDirectoryName,
+            isDirectory: true
+        ).standardizedFileURL
+        let normalizedSourceURL = sourceURL.standardizedFileURL
+        guard normalizedSourceURL.deletingLastPathComponent() == inboxURL,
+              FileManager.default.fileExists(atPath: normalizedSourceURL.path) else {
+            throw SettingsError.inboxFileMissing
+        }
+
+        let preview = LibraryOrganizer.preview(
+            for: normalizedSourceURL.lastPathComponent,
+            settings: state.settings
+        )
+        guard let relativePath = preview.relativePath else {
+            throw SettingsError.ambiguousMedia
+        }
+
+        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
+        defer {
+            if isAccessingScopedResource {
+                rootURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        let destinationURL = rootURL.appendingPathComponent(relativePath)
+        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+            throw SettingsError.destinationAlreadyExists
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.moveItem(at: normalizedSourceURL, to: destinationURL)
+        } catch {
+            throw SettingsError.unableToMoveFile
+        }
     }
 
     private func updateLocalJob(

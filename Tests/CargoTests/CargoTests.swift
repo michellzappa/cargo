@@ -227,6 +227,34 @@ final class CargoTests: XCTestCase {
     }
 
     @MainActor
+    func testInboxScanFindsAndOrganizesUntrackedFile() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoInboxTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
+        let inboxURL = libraryRoot.appendingPathComponent("_Inbox", isDirectory: true)
+        let sourceURL = inboxURL.appendingPathComponent("Untracked.Movie.2026.mp4")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
+        try Data("test file".utf8).write(to: sourceURL)
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.settings = CargoSettings(libraryRootPath: libraryRoot.path)
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
+        XCTAssertEqual(coordinator.inboxFileURLs().map(\.lastPathComponent), ["Untracked.Movie.2026.mp4"])
+
+        try coordinator.organizeInboxFile(at: sourceURL)
+
+        let destination = libraryRoot.appendingPathComponent("Movies/Untracked.Movie.2026.mp4")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+    }
+
+    @MainActor
     func testRemoteFolderNavigationTracksParent() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CargoFolderTests-\(UUID().uuidString)", isDirectory: true)
