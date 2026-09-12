@@ -17,6 +17,7 @@ cp "$projectDirectory/Resources/Cargo-Info.plist" "$appDirectory/Contents/Info.p
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CARGO_VERSION" "$appDirectory/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $buildNumber" "$appDirectory/Contents/Info.plist"
 chmod +x "$appDirectory/Contents/MacOS/Cargo"
+/usr/bin/xattr -cr "$appDirectory"
 codesign --force --deep --sign - --timestamp=none "$appDirectory"
 
 printf '%s (version %s, build %s)\n' "$appDirectory" "$CARGO_VERSION" "$buildNumber"
