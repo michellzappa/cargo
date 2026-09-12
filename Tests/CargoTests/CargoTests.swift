@@ -94,6 +94,39 @@ final class CargoTests: XCTestCase {
             "test file"
         )
     }
+
+    @MainActor
+    func testRemoteFolderNavigationTracksParent() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoFolderTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.remoteFiles = [
+            RemoteFile(
+                id: 42,
+                name: "Shows",
+                type: .folder,
+                parentID: 0,
+                sizeBytes: 0,
+                createdAt: Date()
+            )
+        ]
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
+        await coordinator.openRemoteFolder(remoteFolderID: 42)
+
+        XCTAssertEqual(coordinator.remoteFolderName, "Shows")
+        XCTAssertTrue(coordinator.canGoBackRemoteFolder)
+        XCTAssertEqual(coordinator.state.remoteFiles.map(\.id), [56])
+
+        await coordinator.goBackRemoteFolder()
+        XCTAssertEqual(coordinator.remoteFolderName, "Put.io root")
+        XCTAssertFalse(coordinator.canGoBackRemoteFolder)
+    }
 }
 
 private struct StubPutIOClient: PutIOClient {
@@ -103,7 +136,19 @@ private struct StubPutIOClient: PutIOClient {
 
     func fetchTransfers() async throws -> [RemoteTransfer] { [] }
 
-    func fetchFiles(parentID: Int) async throws -> [RemoteFile] { [] }
+    func fetchFiles(parentID: Int) async throws -> [RemoteFile] {
+        guard parentID == 42 else { return [] }
+        return [
+            RemoteFile(
+                id: 56,
+                name: "Episode.mkv",
+                type: .video,
+                parentID: 42,
+                sizeBytes: 4,
+                createdAt: Date()
+            )
+        ]
+    }
 
     func downloadFile(fileID: Int, to destinationURL: URL) async throws {
         try FileManager.default.createDirectory(

@@ -106,7 +106,7 @@ final class DashboardViewController: NSViewController {
             state.transfers.forEach { contentStack.addArrangedSubview(remoteRow($0)) }
         }
 
-        contentStack.addArrangedSubview(sectionHeader("Ready in Put.io"))
+        contentStack.addArrangedSubview(remoteFilesHeader())
         if state.remoteFiles.isEmpty {
             contentStack.addArrangedSubview(emptyLabel("No cached files at the Put.io root"))
         } else {
@@ -125,6 +125,21 @@ final class DashboardViewController: NSViewController {
         let label = NSTextField(labelWithString: title)
         label.font = .systemFont(ofSize: 13, weight: .semibold)
         return label
+    }
+
+    private func remoteFilesHeader() -> NSView {
+        let title = sectionHeader("Ready in Put.io · \(coordinator.remoteFolderName)")
+        guard coordinator.canGoBackRemoteFolder else { return title }
+
+        let backButton = NSButton(title: "Back", target: self, action: #selector(backRemoteFolder(_:)))
+        backButton.bezelStyle = .rounded
+        backButton.controlSize = .small
+
+        let row = NSStackView(views: [title, backButton])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        return row
     }
 
     private func emptyLabel(_ text: String) -> NSTextField {
@@ -196,10 +211,11 @@ final class DashboardViewController: NSViewController {
         copy.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         if file.isFolder {
-            let folderLabel = NSTextField(labelWithString: "Browse later")
-            folderLabel.textColor = .tertiaryLabelColor
-            folderLabel.font = .systemFont(ofSize: 11)
-            copy.addArrangedSubview(folderLabel)
+            let openButton = NSButton(title: "Open", target: self, action: #selector(openRemoteFolder(_:)))
+            openButton.bezelStyle = .rounded
+            openButton.controlSize = .small
+            openButton.tag = file.id
+            copy.addArrangedSubview(openButton)
         } else {
             let syncButton = NSButton(title: isQueued(file) ? "Queued" : "Sync", target: self, action: #selector(syncFile(_:)))
             syncButton.bezelStyle = .rounded
@@ -235,6 +251,21 @@ final class DashboardViewController: NSViewController {
 
         Task { @MainActor in
             await coordinator.processLocalSync(remoteFileID: remoteFileID)
+            render()
+        }
+    }
+
+    @objc private func openRemoteFolder(_ sender: NSButton) {
+        let remoteFolderID = sender.tag
+        Task { @MainActor in
+            await coordinator.openRemoteFolder(remoteFolderID: remoteFolderID)
+            render()
+        }
+    }
+
+    @objc private func backRemoteFolder(_ sender: NSButton) {
+        Task { @MainActor in
+            await coordinator.goBackRemoteFolder()
             render()
         }
     }

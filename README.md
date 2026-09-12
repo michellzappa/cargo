@@ -21,6 +21,7 @@ The first vertical slice is in place:
 - Keychain-backed Put.io token storage
 - read-only Put.io account and transfer refresh
 - remote root file browsing with idempotent local-sync queueing
+- remote-folder navigation from the menu-bar dashboard
 - SSD library-root selection with a persisted security-scoped bookmark
 - first local handoff into a hidden SSD staging directory
 - build and test target

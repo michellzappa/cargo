@@ -5,8 +5,15 @@ final class CargoCoordinator {
     private let store: CargoStore
     private let keychain = KeychainStore()
     private var putIOClient: PutIOClient
+    private var remoteFolderStack: [(id: Int, name: String)] = []
     private(set) var state: CargoState
     private(set) var putIOStatus = "Not connected yet"
+    private(set) var remoteFolderID = 0
+    private(set) var remoteFolderName = "Put.io root"
+
+    var canGoBackRemoteFolder: Bool {
+        !remoteFolderStack.isEmpty
+    }
 
     init(store: CargoStore = CargoStore(), client: PutIOClient? = nil) {
         self.store = store
@@ -86,6 +93,9 @@ final class CargoCoordinator {
             let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
             state.transfers = transfers
             state.remoteFiles = remoteFiles
+            remoteFolderStack.removeAll()
+            remoteFolderID = 0
+            remoteFolderName = "Put.io root"
             state.lastUpdated = Date()
             try store.replace(with: state)
             putIOStatus = "Connected as \(account.username)"
@@ -95,6 +105,40 @@ final class CargoCoordinator {
             } else {
                 putIOStatus = "Put.io error · \(error.localizedDescription)"
             }
+        }
+    }
+
+    func openRemoteFolder(remoteFolderID: Int) async {
+        guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
+            return
+        }
+
+        do {
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: folder.id)
+            remoteFolderStack.append((id: self.remoteFolderID, name: remoteFolderName))
+            self.remoteFolderID = folder.id
+            remoteFolderName = folder.name
+            state.remoteFiles = remoteFiles
+            state.lastUpdated = Date()
+            try store.replace(with: state)
+        } catch {
+            putIOStatus = "Put.io error · \(error.localizedDescription)"
+        }
+    }
+
+    func goBackRemoteFolder() async {
+        guard let previousFolder = remoteFolderStack.popLast() else { return }
+
+        do {
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: previousFolder.id)
+            remoteFolderID = previousFolder.id
+            remoteFolderName = previousFolder.name
+            state.remoteFiles = remoteFiles
+            state.lastUpdated = Date()
+            try store.replace(with: state)
+        } catch {
+            remoteFolderStack.append(previousFolder)
+            putIOStatus = "Put.io error · \(error.localizedDescription)"
         }
     }
 
