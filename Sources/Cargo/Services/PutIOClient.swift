@@ -5,6 +5,7 @@ protocol PutIOClient: Sendable {
     func fetchTransfers() async throws -> [RemoteTransfer]
     func fetchFiles(parentID: Int) async throws -> [RemoteFile]
     func downloadFile(fileID: Int, to destinationURL: URL) async throws
+    func deleteFile(fileID: Int) async throws
 }
 
 struct UnconfiguredPutIOClient: PutIOClient {
@@ -29,6 +30,10 @@ struct UnconfiguredPutIOClient: PutIOClient {
     }
 
     func downloadFile(fileID: Int, to destinationURL: URL) async throws {
+        throw ClientError.notConfigured
+    }
+
+    func deleteFile(fileID: Int) async throws {
         throw ClientError.notConfigured
     }
 }
@@ -142,6 +147,35 @@ struct PutIOAPIClient: PutIOClient {
         } catch {
             try? fileManager.removeItem(at: temporaryURL)
             throw ClientError.requestFailed("Could not place the downloaded file on the SSD.")
+        }
+    }
+
+    func deleteFile(fileID: Int) async throws {
+        guard !token.isEmpty else { throw ClientError.missingToken }
+
+        let url = baseURL.appendingPathComponent("files/delete")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.httpBody = Data("file_ids=\(fileID)".utf8)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw ClientError.requestFailed(error.localizedDescription)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ClientError.invalidResponse
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let message = Self.apiErrorMessage(from: data) ?? "Delete failed."
+            throw ClientError.api(statusCode: httpResponse.statusCode, message: message)
         }
     }
 

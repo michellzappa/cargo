@@ -138,6 +138,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var automaticOrganizationEnabled: Bool
     var notificationsEnabled: Bool
     var launchAtLoginEnabled: Bool
+    var automaticRemoteCleanupEnabled: Bool
+    var automaticInboxCleanupEnabled: Bool
     var imdbWatchlistURL: String
 
     init(
@@ -150,6 +152,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticOrganizationEnabled: Bool = true,
         notificationsEnabled: Bool = true,
         launchAtLoginEnabled: Bool = true,
+        automaticRemoteCleanupEnabled: Bool = true,
+        automaticInboxCleanupEnabled: Bool = true,
         imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
     ) {
         self.libraryRootBookmark = libraryRootBookmark
@@ -161,6 +165,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.automaticOrganizationEnabled = automaticOrganizationEnabled
         self.notificationsEnabled = notificationsEnabled
         self.launchAtLoginEnabled = launchAtLoginEnabled
+        self.automaticRemoteCleanupEnabled = automaticRemoteCleanupEnabled
+        self.automaticInboxCleanupEnabled = automaticInboxCleanupEnabled
         self.imdbWatchlistURL = imdbWatchlistURL
     }
 
@@ -174,6 +180,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case automaticOrganizationEnabled
         case notificationsEnabled
         case launchAtLoginEnabled
+        case automaticRemoteCleanupEnabled
+        case automaticInboxCleanupEnabled
         case imdbWatchlistURL
     }
 
@@ -188,6 +196,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticOrganizationEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticOrganizationEnabled) ?? true
         notificationsEnabled = try container.decodeIfPresent(Bool.self, forKey: .notificationsEnabled) ?? true
         launchAtLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginEnabled) ?? true
+        automaticRemoteCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticRemoteCleanupEnabled) ?? true
+        automaticInboxCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticInboxCleanupEnabled) ?? true
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
     }
@@ -203,12 +213,15 @@ struct CargoState: Codable, Sendable {
     var transfers: [RemoteTransfer]
     var remoteFiles: [RemoteFile]
     var remoteMediaFiles: [RemoteFile]
+    var remoteFolders: [RemoteFile]
     var localJobs: [LocalSyncJob]
     var history: [CargoHistoryEntry]
     var seenRemoteMediaFileIDs: [Int]
     var remoteMediaBaselineEstablished: Bool
     var imdbWatchlistItems: [IMDbWatchlistItem]
     var imdbWatchlistLastUpdated: Date?
+    var deletedRemoteFileIDs: [Int]
+    var deletedRemoteFolderIDs: [Int]
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -216,24 +229,30 @@ struct CargoState: Codable, Sendable {
         transfers: [RemoteTransfer],
         remoteFiles: [RemoteFile] = [],
         remoteMediaFiles: [RemoteFile] = [],
+        remoteFolders: [RemoteFile] = [],
         localJobs: [LocalSyncJob],
         history: [CargoHistoryEntry] = [],
         seenRemoteMediaFileIDs: [Int] = [],
         remoteMediaBaselineEstablished: Bool = false,
         imdbWatchlistItems: [IMDbWatchlistItem] = [],
         imdbWatchlistLastUpdated: Date? = nil,
+        deletedRemoteFileIDs: [Int] = [],
+        deletedRemoteFolderIDs: [Int] = [],
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
         self.transfers = transfers
         self.remoteFiles = remoteFiles
         self.remoteMediaFiles = remoteMediaFiles
+        self.remoteFolders = remoteFolders
         self.localJobs = localJobs
         self.history = history
         self.seenRemoteMediaFileIDs = seenRemoteMediaFileIDs
         self.remoteMediaBaselineEstablished = remoteMediaBaselineEstablished
         self.imdbWatchlistItems = imdbWatchlistItems
         self.imdbWatchlistLastUpdated = imdbWatchlistLastUpdated
+        self.deletedRemoteFileIDs = deletedRemoteFileIDs
+        self.deletedRemoteFolderIDs = deletedRemoteFolderIDs
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -244,6 +263,7 @@ struct CargoState: Codable, Sendable {
         transfers = try container.decode([RemoteTransfer].self, forKey: .transfers)
         remoteFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteFiles) ?? []
         remoteMediaFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteMediaFiles) ?? []
+        remoteFolders = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteFolders) ?? []
         localJobs = try container.decode([LocalSyncJob].self, forKey: .localJobs)
         history = try container.decodeIfPresent([CargoHistoryEntry].self, forKey: .history) ?? []
         seenRemoteMediaFileIDs = try container.decodeIfPresent([Int].self, forKey: .seenRemoteMediaFileIDs) ?? []
@@ -252,6 +272,8 @@ struct CargoState: Codable, Sendable {
         remoteMediaBaselineEstablished = currentBaseline ?? legacyBaseline ?? false
         imdbWatchlistItems = try container.decodeIfPresent([IMDbWatchlistItem].self, forKey: .imdbWatchlistItems) ?? []
         imdbWatchlistLastUpdated = try container.decodeIfPresent(Date.self, forKey: .imdbWatchlistLastUpdated)
+        deletedRemoteFileIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFileIDs) ?? []
+        deletedRemoteFolderIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFolderIDs) ?? []
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -260,12 +282,15 @@ struct CargoState: Codable, Sendable {
         case transfers
         case remoteFiles
         case remoteMediaFiles
+        case remoteFolders
         case localJobs
         case history
         case seenRemoteMediaFileIDs
         case remoteMediaBaselineEstablished
         case imdbWatchlistItems
         case imdbWatchlistLastUpdated
+        case deletedRemoteFileIDs
+        case deletedRemoteFolderIDs
         case settings
         case lastUpdated
     }

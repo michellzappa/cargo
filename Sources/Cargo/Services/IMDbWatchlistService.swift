@@ -1,136 +1,266 @@
 import Foundation
-import WebKit
 
 @MainActor
-final class IMDbWatchlistService: NSObject, WKNavigationDelegate {
+final class IMDbWatchlistService {
     enum ServiceError: LocalizedError {
         case invalidURL
-        case timedOut
-        case pageUnavailable
+        case requestFailed(String)
+        case profileUnavailable
+        case watchlistUnavailable
         case noItemsFound
 
         var errorDescription: String? {
             switch self {
             case .invalidURL:
                 "The IMDb Watchlist URL is invalid."
-            case .timedOut:
-                "IMDb did not finish loading the Watchlist."
-            case .pageUnavailable:
-                "IMDb did not expose the public Watchlist to Cargo."
+            case .requestFailed(let message):
+                "IMDb Watchlist request failed: \(message)"
+            case .profileUnavailable:
+                "IMDb did not expose this public profile to Cargo."
+            case .watchlistUnavailable:
+                "IMDb did not expose a public Watchlist for this profile."
             case .noItemsFound:
-                "IMDb loaded, but Cargo could not find any Watchlist titles."
+                "IMDb exposed the Watchlist, but it contains no titles."
             }
         }
     }
 
-    private var webView: WKWebView?
-    private var continuation: CheckedContinuation<[IMDbWatchlistItem], Error>?
-    private var timeoutTask: Task<Void, Never>?
+    private struct GraphQLError: Decodable {
+        let message: String
+    }
+
+    private struct GraphQLResponse<Payload: Decodable>: Decodable {
+        let data: Payload?
+        let errors: [GraphQLError]?
+    }
+
+    private struct ProfilePayload: Decodable {
+        let userProfile: Profile?
+    }
+
+    private struct Profile: Decodable {
+        let userId: String?
+    }
+
+    private struct WatchlistPayload: Decodable {
+        let predefinedList: Watchlist?
+    }
+
+    private struct Watchlist: Decodable {
+        let id: String?
+    }
+
+    private struct ItemsPayload: Decodable {
+        let list: IMDbList?
+    }
+
+    private struct IMDbList: Decodable {
+        let items: Items
+    }
+
+    private struct Items: Decodable {
+        let edges: [Edge]
+        let pageInfo: PageInfo
+    }
+
+    private struct Edge: Decodable {
+        let node: Node?
+    }
+
+    private struct Node: Decodable {
+        let listItem: Title?
+    }
+
+    private struct Title: Decodable {
+        let id: String
+        let titleText: TextValue
+        let releaseYear: YearValue?
+        let titleType: TitleType?
+    }
+
+    private struct TextValue: Decodable {
+        let text: String
+    }
+
+    private struct YearValue: Decodable {
+        let year: Int?
+    }
+
+    private struct TitleType: Decodable {
+        let id: String?
+    }
+
+    private struct PageInfo: Decodable {
+        let endCursor: String?
+        let hasNextPage: Bool
+    }
+
+    private static let endpoint = URL(string: "https://api.graphql.imdb.com/")!
+    private static let profileQuery = """
+    query ResolveProfile($profileID: ID) {
+      userProfile(input: { profileId: $profileID }) {
+        userId
+      }
+    }
+    """
+    private static let watchlistQuery = """
+    query ResolveWatchlist($userID: ID!) {
+      predefinedList(classType: WATCH_LIST, userId: $userID) {
+        id
+      }
+    }
+    """
+    private static let itemsQuery = """
+    query WatchlistItems($listID: ID!, $first: Int!, $after: ID) {
+      list(id: $listID) {
+        items(first: $first, after: $after) {
+          edges {
+            node {
+              listItem {
+                ... on Title {
+                  id
+                  titleText { text }
+                  releaseYear { year }
+                  titleType { id }
+                }
+              }
+            }
+          }
+          pageInfo {
+            endCursor
+            hasNextPage
+          }
+        }
+      }
+    }
+    """
 
     func fetchItems(from urlString: String) async throws -> [IMDbWatchlistItem] {
         guard let url = URL(string: urlString),
               url.scheme == "https",
-              url.host?.lowercased().hasSuffix("imdb.com") == true else {
+              url.host?.lowercased().hasSuffix("imdb.com") == true,
+              url.path.lowercased().contains("watchlist"),
+              let identifier = Self.userIdentifier(from: url) else {
             throw ServiceError.invalidURL
         }
 
-        if continuation != nil {
-            throw ServiceError.pageUnavailable
-        }
-
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        let browser = WKWebView(frame: .zero, configuration: configuration)
-        browser.navigationDelegate = self
-        webView = browser
-
-        return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            timeoutTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(30))
-                guard !Task.isCancelled else { return }
-                self?.finish(.failure(ServiceError.timedOut))
+        let userID: String
+        if identifier.hasPrefix("ur") {
+            userID = identifier
+        } else {
+            let profile: ProfilePayload = try await request(
+                query: Self.profileQuery,
+                variables: ["profileID": identifier]
+            )
+            guard let resolvedUserID = profile.userProfile?.userId,
+                  resolvedUserID.hasPrefix("ur") else {
+                throw ServiceError.profileUnavailable
             }
-            browser.load(URLRequest(url: url))
+            userID = resolvedUserID
         }
-    }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        webView.evaluateJavaScript(Self.extractionScript) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self else { return }
-                if error != nil {
-                    self.finish(.failure(ServiceError.pageUnavailable))
-                    return
-                }
+        let watchlist: WatchlistPayload = try await request(
+            query: Self.watchlistQuery,
+            variables: ["userID": userID]
+        )
+        guard let listID = watchlist.predefinedList?.id, !listID.isEmpty else {
+            throw ServiceError.watchlistUnavailable
+        }
 
-                guard let json = result as? String,
-                      let data = json.data(using: .utf8),
-                      let items = try? JSONDecoder().decode([IMDbWatchlistItem].self, from: data),
-                      !items.isEmpty else {
-                    self.finish(.failure(ServiceError.noItemsFound))
-                    return
-                }
-                self.finish(.success(items))
+        var results: [IMDbWatchlistItem] = []
+        var after: String?
+
+        while true {
+            var variables: [String: Any] = [
+                "listID": listID,
+                "first": 250
+            ]
+            if let after {
+                variables["after"] = after
             }
+
+            let page: ItemsPayload = try await request(
+                query: Self.itemsQuery,
+                variables: variables
+            )
+            let items = page.list?.items
+            results.append(contentsOf: items?.edges.compactMap { edge in
+                guard let title = edge.node?.listItem else { return nil }
+                return IMDbWatchlistItem(
+                    id: title.id,
+                    title: title.titleText.text,
+                    year: title.releaseYear?.year,
+                    titleType: title.titleType?.id
+                )
+            } ?? [])
+
+            guard let items,
+                  items.pageInfo.hasNextPage,
+                  let nextCursor = items.pageInfo.endCursor,
+                  nextCursor != after else {
+                break
+            }
+            after = nextCursor
+        }
+
+        guard !results.isEmpty else {
+            throw ServiceError.noItemsFound
+        }
+        return results
+    }
+
+    private func request<Payload: Decodable>(
+        query: String,
+        variables: [String: Any]
+    ) async throws -> Payload {
+        var request = URLRequest(url: Self.endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("Cargo/0.3", forHTTPHeaderField: "User-Agent")
+        request.setValue("imdb-web-next", forHTTPHeaderField: "x-imdb-client-name")
+        request.setValue("https://www.imdb.com/", forHTTPHeaderField: "Origin")
+        request.httpBody = try JSONSerialization.data(
+            withJSONObject: [
+                "query": query,
+                "variables": variables
+            ],
+            options: []
+        )
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode) else {
+                throw ServiceError.requestFailed("HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+            }
+
+            let decoded = try JSONDecoder().decode(GraphQLResponse<Payload>.self, from: data)
+            if let message = decoded.errors?.first?.message {
+                throw ServiceError.requestFailed(message)
+            }
+            guard let payload = decoded.data else {
+                throw ServiceError.requestFailed("IMDb returned no data")
+            }
+            return payload
+        } catch let error as ServiceError {
+            throw error
+        } catch {
+            throw ServiceError.requestFailed(error.localizedDescription)
         }
     }
 
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        finish(.failure(ServiceError.pageUnavailable))
+    private static func userIdentifier(from url: URL) -> String? {
+        let components = url.pathComponents
+        guard let userIndex = components.firstIndex(of: "user"),
+              components.index(after: userIndex) < components.endIndex else {
+            return nil
+        }
+
+        let identifier = components[components.index(after: userIndex)]
+        guard identifier.hasPrefix("p.") || identifier.hasPrefix("ur") else {
+            return nil
+        }
+        return identifier
     }
-
-    func webView(
-        _ webView: WKWebView,
-        didFailProvisionalNavigation navigation: WKNavigation!,
-        withError error: Error
-    ) {
-        finish(.failure(ServiceError.pageUnavailable))
-    }
-
-    private func finish(_ result: Result<[IMDbWatchlistItem], Error>) {
-        timeoutTask?.cancel()
-        timeoutTask = nil
-        webView?.stopLoading()
-        webView = nil
-        let continuation = continuation
-        self.continuation = nil
-        continuation?.resume(with: result)
-    }
-
-    private static let extractionScript = """
-    (() => {
-      const nextDataElement = document.getElementById('__NEXT_DATA__');
-      if (!nextDataElement) return JSON.stringify([]);
-      let data;
-      try { data = JSON.parse(nextDataElement.textContent || '{}'); } catch (_) { return JSON.stringify([]); }
-
-      const results = [];
-      const seen = new Set();
-      const textValue = value => typeof value === 'string' ? value : value?.text;
-      const add = value => {
-        if (!value || typeof value !== 'object') return;
-        const title = value.title && typeof value.title === 'object' ? value.title : value;
-        const id = title.id || value.id;
-        const name = textValue(title.titleText) || textValue(value.titleText) || title.title;
-        if (!/^tt\\d+$/.test(id || '') || !name || seen.has(id)) return;
-        const rawYear = title.releaseYear?.year || title.releaseDate?.year || value.releaseYear?.year;
-        const year = Number.isFinite(Number(rawYear)) ? Number(rawYear) : null;
-        results.push({ id, title: name, year, titleType: title.titleType?.id || null });
-        seen.add(id);
-      };
-
-      const edges = data?.props?.pageProps?.mainColumnData?.predefinedList?.titleListItemSearch?.edges;
-      if (Array.isArray(edges)) edges.forEach(edge => add(edge?.node));
-
-      const walk = value => {
-        if (!value || typeof value !== 'object') return;
-        add(value);
-        if (Array.isArray(value)) value.forEach(walk);
-        else Object.values(value).forEach(walk);
-      };
-      if (!results.length) walk(data);
-      return JSON.stringify(results);
-    })()
-    """
 }

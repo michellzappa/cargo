@@ -69,10 +69,12 @@ final class CargoTests: XCTestCase {
             )
         ]
         state.remoteMediaFiles = [state.remoteFiles[0]]
+        state.remoteFolders = [state.remoteFiles[1]]
         state.imdbWatchlistItems = [
             IMDbWatchlistItem(id: "tt1234567", title: "Roundtrip Movie", year: 2026, titleType: "movie")
         ]
         state.imdbWatchlistLastUpdated = Date()
+        state.deletedRemoteFileIDs = [2001]
         state.seenRemoteMediaFileIDs = [2001]
         state.remoteMediaBaselineEstablished = true
         state.settings = CargoSettings(
@@ -94,12 +96,16 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.map(\.id), ["tt1234567"])
         XCTAssertEqual(reloaded.snapshot().imdbWatchlistItems.first?.year, 2026)
         XCTAssertNotNil(reloaded.snapshot().imdbWatchlistLastUpdated)
+        XCTAssertEqual(reloaded.snapshot().deletedRemoteFileIDs, [2001])
+        XCTAssertEqual(reloaded.snapshot().remoteFolders.map(\.id), [2002])
         XCTAssertEqual(reloaded.snapshot().seenRemoteMediaFileIDs, [2001])
         XCTAssertTrue(reloaded.snapshot().remoteMediaBaselineEstablished)
         XCTAssertFalse(reloaded.snapshot().settings.automaticSyncEnabled)
         XCTAssertTrue(reloaded.snapshot().settings.automaticOrganizationEnabled)
         XCTAssertFalse(reloaded.snapshot().settings.notificationsEnabled)
         XCTAssertFalse(reloaded.snapshot().settings.launchAtLoginEnabled)
+        XCTAssertTrue(reloaded.snapshot().settings.automaticRemoteCleanupEnabled)
+        XCTAssertTrue(reloaded.snapshot().settings.automaticInboxCleanupEnabled)
     }
 
     func testStatusesHaveHumanReadableNames() {
@@ -211,7 +217,7 @@ final class CargoTests: XCTestCase {
             name: "New.Movie.2026.1080p.mkv",
             type: .video,
             parentID: 0,
-            sizeBytes: 4,
+            sizeBytes: 9,
             createdAt: Date()
         )
         let showsFolder = RemoteFile(
@@ -241,7 +247,7 @@ final class CargoTests: XCTestCase {
 
         let store = CargoStore(stateURL: stateURL)
         var state = store.snapshot()
-        state.settings = CargoSettings(libraryRootPath: libraryRoot.path)
+        state.settings = CargoSettings(libraryRootPath: libraryRoot.path, imdbWatchlistURL: "")
         state.seenRemoteMediaFileIDs = [previousTransfer.id]
         state.remoteMediaBaselineEstablished = true
         try store.replace(with: state)
@@ -262,10 +268,11 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(summary.discovered, ["Shows/New.Movie.2026.1080p.mkv"])
         XCTAssertEqual(summary.downloaded, [newFile.name])
         XCTAssertEqual(summary.organized, [newFile.name])
+        XCTAssertEqual(summary.deleted, [newFile.name])
         XCTAssertTrue(summary.failures.isEmpty)
         XCTAssertEqual(
             coordinator.state.history.map(\.title),
-            ["Organized", "Downloaded", "New Put.io media found"]
+            ["Organized", "Deleted from Put.io", "Downloaded", "New Put.io media found"]
         )
     }
 
@@ -347,7 +354,7 @@ final class CargoTests: XCTestCase {
                 name: "Movie/2026.mkv",
                 type: .video,
                 parentID: 0,
-                sizeBytes: 4,
+                sizeBytes: 9,
                 createdAt: Date()
             )
         ]
@@ -370,6 +377,58 @@ final class CargoTests: XCTestCase {
     }
 
     @MainActor
+    func testVerifiedLocalCopyDeletesRemoteFileAndEmptyParentFolder() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoCleanupTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let folder = RemoteFile(
+            id: 80,
+            name: "Movies",
+            type: .folder,
+            parentID: 0,
+            sizeBytes: 0,
+            createdAt: Date()
+        )
+        let file = RemoteFile(
+            id: 81,
+            name: "Movie.2026.mkv",
+            path: "Movies/Movie.2026.mkv",
+            type: .video,
+            parentID: folder.id,
+            sizeBytes: 9,
+            createdAt: Date()
+        )
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.remoteFiles = [file]
+        state.remoteMediaFiles = [file]
+        state.remoteFolders = [folder]
+        state.settings = CargoSettings(
+            libraryRootPath: libraryRoot.path,
+            automaticOrganizationEnabled: false,
+            automaticRemoteCleanupEnabled: true
+        )
+        try store.replace(with: state)
+
+        let recorder = StubDeleteRecorder()
+        let coordinator = CargoCoordinator(
+            store: store,
+            client: StubPutIOClient(deleteRecorder: recorder)
+        )
+        coordinator.enqueueLocalSync(remoteFileID: file.id)
+        await coordinator.processLocalSync(remoteFileID: file.id)
+
+        XCTAssertEqual(recorder.ids, [file.id, folder.id])
+        XCTAssertEqual(coordinator.state.deletedRemoteFileIDs, [file.id])
+        XCTAssertEqual(coordinator.state.deletedRemoteFolderIDs, [folder.id])
+        XCTAssertEqual(coordinator.state.localJobs.first?.status, .needsReview)
+    }
+
+    @MainActor
     func testOrganizeLocalJobMovesInboxFileToMovies() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CargoOrganizeTests-\(UUID().uuidString)", isDirectory: true)
@@ -385,7 +444,7 @@ final class CargoTests: XCTestCase {
                 name: "Arrival.2016.1080p.mkv",
                 type: .video,
                 parentID: 0,
-                sizeBytes: 4,
+                sizeBytes: 9,
                 createdAt: Date()
             )
         ]
@@ -436,8 +495,8 @@ final class CargoTests: XCTestCase {
         let destination = libraryRoot.appendingPathComponent("Movies/Untracked Movie (2026).mp4")
         XCTAssertFalse(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: nestedInboxURL.path))
-        XCTAssertTrue(
+        XCTAssertFalse(FileManager.default.fileExists(atPath: nestedInboxURL.path))
+        XCTAssertFalse(
             FileManager.default.fileExists(
                 atPath: nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.srt").path
             )
@@ -478,16 +537,23 @@ final class CargoTests: XCTestCase {
     }
 }
 
+private final class StubDeleteRecorder: @unchecked Sendable {
+    var ids: [Int] = []
+}
+
 private struct StubPutIOClient: PutIOClient {
     let transfers: [RemoteTransfer]
     let filesByParent: [Int: [RemoteFile]]
+    let deleteRecorder: StubDeleteRecorder
 
     init(
         transfers: [RemoteTransfer] = [],
-        filesByParent: [Int: [RemoteFile]] = [:]
+        filesByParent: [Int: [RemoteFile]] = [:],
+        deleteRecorder: StubDeleteRecorder = StubDeleteRecorder()
     ) {
         self.transfers = transfers
         self.filesByParent = filesByParent
+        self.deleteRecorder = deleteRecorder
     }
 
     func fetchAccount() async throws -> PutIOAccountSummary {
@@ -519,5 +585,9 @@ private struct StubPutIOClient: PutIOClient {
             withIntermediateDirectories: true
         )
         try Data("test file".utf8).write(to: destinationURL)
+    }
+
+    func deleteFile(fileID: Int) async throws {
+        deleteRecorder.ids.append(fileID)
     }
 }

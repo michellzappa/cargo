@@ -3,12 +3,14 @@ import Foundation
 struct CargoBackgroundCycleSummary: Sendable {
     var discovered: [String] = []
     var watchlistAdded: [String] = []
+    var deleted: [String] = []
+    var deletedFolders: [String] = []
     var downloaded: [String] = []
     var organized: [String] = []
     var failures: [String] = []
 
     var hasMeaningfulChanges: Bool {
-        !discovered.isEmpty || !watchlistAdded.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
+        !discovered.isEmpty || !watchlistAdded.isEmpty || !deleted.isEmpty || !deletedFolders.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
     }
 }
 
@@ -17,6 +19,9 @@ final class CargoCoordinator {
     enum SettingsError: LocalizedError {
         case emptyDirectoryName
         case invalidIMDbWatchlistURL
+        case remoteFileMissing
+        case localCopyMissing
+        case localCopySizeMismatch
         case inboxFileMissing
         case ambiguousMedia
         case destinationAlreadyExists
@@ -29,6 +34,12 @@ final class CargoCoordinator {
                 "Library folder names cannot be empty."
             case .invalidIMDbWatchlistURL:
                 "Enter a public IMDb Watchlist URL."
+            case .remoteFileMissing:
+                "Cargo no longer has this Put.io file in its current inventory."
+            case .localCopyMissing:
+                "Cargo could not verify the local copy because it is missing."
+            case .localCopySizeMismatch:
+                "Cargo did not delete the Put.io file because the local copy size does not match."
             case .inboxFileMissing:
                 "The downloaded file is no longer in the Cargo inbox."
             case .ambiguousMedia:
@@ -184,7 +195,7 @@ final class CargoCoordinator {
             state.imdbWatchlistLastUpdated = Date()
             state.lastUpdated = Date()
             try store.replace(with: state)
-            imdbWatchlistStatus = "Updated (Self.timeFormatter.string(from: Date())) · \(items.count) titles"
+            imdbWatchlistStatus = "Updated \(Self.watchlistTimeFormatter.string(from: Date())) · \(items.count) titles"
 
             let addedItems = items.filter { !previousIDs.contains($0.id) }
             if !addedItems.isEmpty {
@@ -208,13 +219,17 @@ final class CargoCoordinator {
         automaticSync: Bool,
         automaticOrganization: Bool,
         notifications: Bool,
-        launchAtLogin: Bool
+        launchAtLogin: Bool,
+        automaticRemoteCleanup: Bool,
+        automaticInboxCleanup: Bool
     ) throws {
         try LaunchAtLoginManager.shared.setEnabled(launchAtLogin)
         state.settings.automaticSyncEnabled = automaticSync
         state.settings.automaticOrganizationEnabled = automaticOrganization
         state.settings.notificationsEnabled = notifications
         state.settings.launchAtLoginEnabled = launchAtLogin
+        state.settings.automaticRemoteCleanupEnabled = automaticRemoteCleanup
+        state.settings.automaticInboxCleanupEnabled = automaticInboxCleanup
         state.lastUpdated = Date()
         try store.replace(with: state)
     }
@@ -284,7 +299,9 @@ final class CargoCoordinator {
             let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
             state.transfers = transfers
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            state.remoteMediaFiles = try await fetchAllRemoteMediaFiles()
+            let inventory = try await fetchRemoteInventory()
+            state.remoteMediaFiles = inventory.mediaFiles
+            state.remoteFolders = inventory.folders
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
@@ -335,7 +352,20 @@ final class CargoCoordinator {
             .map(\.id)
         for jobID in queuedJobIDs {
             guard let jobBeforeDownload = state.localJobs.first(where: { $0.id == jobID }) else { continue }
+            let deletedFileIDsBefore = Set(state.deletedRemoteFileIDs)
+            let deletedFolderIDsBefore = Set(state.deletedRemoteFolderIDs)
             await processLocalSync(remoteFileID: jobBeforeDownload.remoteFileID)
+
+            if !deletedFileIDsBefore.contains(jobBeforeDownload.remoteFileID),
+               state.deletedRemoteFileIDs.contains(jobBeforeDownload.remoteFileID) {
+                summary.deleted.append(jobBeforeDownload.name)
+            }
+            let newlyDeletedFolderIDs = state.deletedRemoteFolderIDs.filter {
+                !deletedFolderIDsBefore.contains($0)
+            }
+            summary.deletedFolders.append(contentsOf: newlyDeletedFolderIDs.compactMap { folderID in
+                state.remoteFolders.first(where: { $0.id == folderID })?.displayPath
+            })
 
             guard let jobAfterDownload = state.localJobs.first(where: { $0.id == jobID }) else { continue }
             switch jobAfterDownload.status {
@@ -362,12 +392,16 @@ final class CargoCoordinator {
         return summary
     }
 
-    private func fetchAllRemoteMediaFiles() async throws -> [RemoteFile] {
+    private func fetchRemoteInventory() async throws -> (mediaFiles: [RemoteFile], folders: [RemoteFile]) {
         var mediaFilesByID = [Int: RemoteFile]()
+        var foldersByID = [Int: RemoteFile]()
         var folderQueue: [(id: Int, path: String)] = []
 
         for file in state.remoteFiles {
             if file.isFolder {
+                var folder = file
+                folder.path = file.name
+                foldersByID[file.id] = folder
                 folderQueue.append((id: file.id, path: file.name))
             } else if file.isMediaFile {
                 var mediaFile = file
@@ -383,6 +417,9 @@ final class CargoCoordinator {
             let files = try await putIOClient.fetchFiles(parentID: folder.id)
             for file in files {
                 if file.isFolder {
+                    var folderFile = file
+                    folderFile.path = Self.joinRemotePath(folder.path, file.name)
+                    foldersByID[file.id] = folderFile
                     folderQueue.append(
                         (id: file.id, path: Self.joinRemotePath(folder.path, file.name))
                     )
@@ -394,14 +431,25 @@ final class CargoCoordinator {
             }
         }
 
-        return mediaFilesByID.values.sorted {
+        let mediaFiles = mediaFilesByID.values.sorted {
             $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending
         }
+        let folders = foldersByID.values.sorted {
+            $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending
+        }
+        return (mediaFiles, folders)
     }
 
     private static func joinRemotePath(_ parent: String, _ child: String) -> String {
         parent.isEmpty ? child : "\(parent)/\(child)"
     }
+
+    private static let watchlistTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .none
+        return formatter
+    }()
 
     func openRemoteFolder(remoteFolderID: Int) async {
         guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
@@ -513,6 +561,7 @@ final class CargoCoordinator {
 
         do {
             try await putIOClient.downloadFile(fileID: remoteFileID, to: destinationURL)
+            try verifyLocalCopy(remoteFileID: remoteFileID, localURL: destinationURL)
             updateLocalJob(
                 at: jobIndex,
                 status: .needsReview,
@@ -525,6 +574,22 @@ final class CargoCoordinator {
                 title: "Downloaded",
                 detail: "\(jobName) → \(destinationURL.path)"
             )
+
+            if state.settings.automaticRemoteCleanupEnabled {
+                do {
+                    _ = try await deleteRemoteFileAfterVerifiedCopy(
+                        remoteFileID: remoteFileID,
+                        localURL: destinationURL,
+                        jobName: jobName
+                    )
+                } catch {
+                    recordHistory(
+                        kind: .failure,
+                        title: "Remote cleanup failed",
+                        detail: "\(jobName): \(error.localizedDescription)"
+                    )
+                }
+            }
         } catch {
             updateLocalJob(
                 at: jobIndex,
@@ -539,6 +604,86 @@ final class CargoCoordinator {
                 detail: "\(jobName): \(error.localizedDescription)"
             )
         }
+    }
+
+    private func verifyLocalCopy(remoteFileID: Int, localURL: URL) throws {
+        guard FileManager.default.fileExists(atPath: localURL.path) else {
+            throw SettingsError.localCopyMissing
+        }
+
+        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
+            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+            throw SettingsError.remoteFileMissing
+        }
+
+        guard remoteFile.sizeBytes <= 0 else {
+            let localSize = try FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? NSNumber
+            guard localSize?.int64Value == remoteFile.sizeBytes else {
+                throw SettingsError.localCopySizeMismatch
+            }
+            return
+        }
+    }
+
+    private func deleteRemoteFileAfterVerifiedCopy(
+        remoteFileID: Int,
+        localURL: URL,
+        jobName: String
+    ) async throws -> [Int] {
+        try verifyLocalCopy(remoteFileID: remoteFileID, localURL: localURL)
+        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
+            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+            throw SettingsError.remoteFileMissing
+        }
+
+        try await putIOClient.deleteFile(fileID: remoteFileID)
+        if !state.deletedRemoteFileIDs.contains(remoteFileID) {
+            state.deletedRemoteFileIDs.append(remoteFileID)
+        }
+        state.lastUpdated = Date()
+        try store.replace(with: state)
+        recordHistory(
+            kind: .success,
+            title: "Deleted from Put.io",
+            detail: "\(jobName) · local copy verified"
+        )
+        do {
+            return try await deleteEmptyRemoteFolders(startingAt: remoteFile.parentID)
+        } catch {
+            recordHistory(
+                kind: .warning,
+                title: "Put.io folder cleanup deferred",
+                detail: "\(jobName): \(error.localizedDescription)"
+            )
+            return []
+        }
+    }
+
+    private func deleteEmptyRemoteFolders(startingAt parentID: Int) async throws -> [Int] {
+        var folderID = parentID
+        var deletedFolderIDs: [Int] = []
+
+        while folderID != 0,
+              let folder = state.remoteFolders.first(where: { $0.id == folderID }) {
+            let children = try await putIOClient.fetchFiles(parentID: folder.id)
+            guard children.isEmpty else { break }
+
+            try await putIOClient.deleteFile(fileID: folder.id)
+            if !state.deletedRemoteFolderIDs.contains(folder.id) {
+                state.deletedRemoteFolderIDs.append(folder.id)
+            }
+            deletedFolderIDs.append(folder.id)
+            state.lastUpdated = Date()
+            try store.replace(with: state)
+            recordHistory(
+                kind: .success,
+                title: "Deleted empty Put.io folder",
+                detail: folder.displayPath
+            )
+            folderID = folder.parentID
+        }
+
+        return deletedFolderIDs
     }
 
     @discardableResult
@@ -679,10 +824,29 @@ final class CargoCoordinator {
                 break
             }
 
-            let metadata = children.filter { $0.lastPathComponent == ".DS_Store" }
-            let meaningfulChildren = children.filter { $0.lastPathComponent != ".DS_Store" }
-            guard meaningfulChildren.isEmpty else { break }
-            metadata.forEach { try? fileManager.removeItem(at: $0) }
+            let directoryPaths = Set(children.compactMap { child -> String? in
+                guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                    return nil
+                }
+                return child.path
+            })
+            let mediaFiles = children.filter {
+                !directoryPaths.contains($0.path) && LibraryOrganizer.isMediaFile(named: $0.lastPathComponent)
+            }
+
+            if state.settings.automaticInboxCleanupEnabled {
+                // Once a processed folder has no media or subfolders left, all other
+                // files in it are sidecars/cruft and can be removed with the folder.
+                guard directoryPaths.isEmpty, mediaFiles.isEmpty else { break }
+                children
+                    .filter { !directoryPaths.contains($0.path) }
+                    .forEach { try? fileManager.removeItem(at: $0) }
+            } else {
+                let metadata = children.filter { $0.lastPathComponent == ".DS_Store" }
+                let meaningfulChildren = children.filter { $0.lastPathComponent != ".DS_Store" }
+                guard meaningfulChildren.isEmpty else { break }
+                metadata.forEach { try? fileManager.removeItem(at: $0) }
+            }
 
             guard let remaining = try? fileManager.contentsOfDirectory(
                 at: folderURL,

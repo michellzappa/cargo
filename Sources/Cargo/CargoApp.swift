@@ -169,6 +169,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate {
         if !summary.watchlistAdded.isEmpty {
             lines.append("Watchlist added \(summary.watchlistAdded.count) title\(summary.watchlistAdded.count == 1 ? "" : "s")")
         }
+        if !summary.deleted.isEmpty {
+            lines.append("Removed \(summary.deleted.count) remote file\(summary.deleted.count == 1 ? "" : "s")")
+        }
+        if !summary.deletedFolders.isEmpty {
+            lines.append("Removed \(summary.deletedFolders.count) empty folder\(summary.deletedFolders.count == 1 ? "" : "s")")
+        }
         if !summary.organized.isEmpty {
             lines.append("Organized \(summary.organized.count) item\(summary.organized.count == 1 ? "" : "s")")
         } else if !summary.downloaded.isEmpty {

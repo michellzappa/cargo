@@ -38,7 +38,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add the first local download job execution path.
 - [x] Download selected remote files into a hidden staging directory.
 - [ ] Add progress, pause, resume, retry, and cancellation.
-- [ ] Verify size and/or checksum before import.
+- [x] Verify the local byte size before remote cleanup/import.
 - [ ] Resume safely after app restart, SSD removal, or network failure.
 
 ### 3. Library organization
@@ -50,13 +50,13 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Show a proposed destination from the configured library layout before moving anything.
 - [x] Recursively scan the physical `_Inbox` folder so nested, manually placed, or previously untracked files are visible.
 - [x] Ignore non-video Inbox files and sidecars such as subtitles, artwork, metadata, and archives.
-- [x] Remove empty nested Inbox folders after their final file is organized, while preserving `_Inbox` itself.
+- [x] Remove ignored Inbox sidecars and empty nested folders after their final media is organized, while preserving `_Inbox` itself.
 - [x] Apply conservative movie and TV episode rename rules during explicit Inbox organization.
 - [ ] Confirm finer rename and reorganization rules with the existing Infuse folder layout.
 - [x] Move verified files from hidden `_Inbox` into the chosen existing destination after an explicit Organize action.
 - [ ] Quarantine ambiguous or unsupported files instead of guessing.
 - [ ] Detect duplicates and existing library files before import.
-- [ ] Add optional remote cleanup only after verified local import and explicit confirmation.
+- [x] Delete a copied Put.io media file only after local verification, then remove only empty parent folders.
 
 ### 4. Background operation
 

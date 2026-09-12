@@ -53,6 +53,16 @@ final class DashboardViewController: NSViewController {
         target: nil,
         action: nil
     )
+    private let automaticRemoteCleanupToggle = NSButton(
+        checkboxWithTitle: "Delete Put.io file after verified local copy",
+        target: nil,
+        action: nil
+    )
+    private let automaticInboxCleanupToggle = NSButton(
+        checkboxWithTitle: "Remove Inbox sidecars and empty folders after organizing",
+        target: nil,
+        action: nil
+    )
     private let workflowSettingsStatusLabel = NSTextField(labelWithString: "")
 
     init(coordinator: CargoCoordinator) {
@@ -296,10 +306,15 @@ final class DashboardViewController: NSViewController {
         configureWorkflowToggle(automaticOrganizationToggle, tag: 1)
         configureWorkflowToggle(notificationsToggle, tag: 2)
         configureWorkflowToggle(launchAtLoginToggle, tag: 3)
+        configureWorkflowToggle(automaticRemoteCleanupToggle, tag: 4)
+        configureWorkflowToggle(automaticInboxCleanupToggle, tag: 5)
         section.addArrangedSubview(automaticSyncToggle)
         section.addArrangedSubview(automaticOrganizationToggle)
         section.addArrangedSubview(notificationsToggle)
         section.addArrangedSubview(launchAtLoginToggle)
+        section.addArrangedSubview(automaticRemoteCleanupToggle)
+        section.addArrangedSubview(automaticInboxCleanupToggle)
+        section.addArrangedSubview(emptyLabel("Put.io deletion happens only after a verified local copy. Inbox cleanup removes non-media sidecars only when a nested folder has no media or subfolders left."))
         workflowSettingsStatusLabel.textColor = .secondaryLabelColor
         workflowSettingsStatusLabel.font = .systemFont(ofSize: 11)
         section.addArrangedSubview(workflowSettingsStatusLabel)
@@ -342,6 +357,8 @@ final class DashboardViewController: NSViewController {
         automaticOrganizationToggle.state = settings.automaticOrganizationEnabled ? .on : .off
         notificationsToggle.state = settings.notificationsEnabled ? .on : .off
         launchAtLoginToggle.state = settings.launchAtLoginEnabled ? .on : .off
+        automaticRemoteCleanupToggle.state = settings.automaticRemoteCleanupEnabled ? .on : .off
+        automaticInboxCleanupToggle.state = settings.automaticInboxCleanupEnabled ? .on : .off
     }
 
     private func render() {
@@ -785,7 +802,12 @@ final class DashboardViewController: NSViewController {
         title.font = .systemFont(ofSize: 13, weight: .medium)
         clampedLabel(title)
 
-        let downloadStatus = localJob(for: file).map(Self.downloadStatus) ?? "Not downloaded"
+        let downloadStatus: String
+        if coordinator.state.deletedRemoteFileIDs.contains(file.id) {
+            downloadStatus = "Downloaded · Put.io copy deleted"
+        } else {
+            downloadStatus = localJob(for: file).map(Self.downloadStatus) ?? "Not downloaded"
+        }
         let details = NSTextField(labelWithString: "\(file.type.displayName) · \(Self.bytes(file.sizeBytes)) · \(downloadStatus)")
         details.textColor = .secondaryLabelColor
         details.font = .systemFont(ofSize: 11)
@@ -940,6 +962,10 @@ final class DashboardViewController: NSViewController {
             settings.notificationsEnabled = enabled
         case 3:
             settings.launchAtLoginEnabled = enabled
+        case 4:
+            settings.automaticRemoteCleanupEnabled = enabled
+        case 5:
+            settings.automaticInboxCleanupEnabled = enabled
         default:
             return
         }
@@ -949,7 +975,9 @@ final class DashboardViewController: NSViewController {
                 automaticSync: settings.automaticSyncEnabled,
                 automaticOrganization: settings.automaticOrganizationEnabled,
                 notifications: settings.notificationsEnabled,
-                launchAtLogin: settings.launchAtLoginEnabled
+                launchAtLogin: settings.launchAtLoginEnabled,
+                automaticRemoteCleanup: settings.automaticRemoteCleanupEnabled,
+                automaticInboxCleanup: settings.automaticInboxCleanupEnabled
             )
             workflowSettingsStatusLabel.stringValue = "Saved"
         } catch {
