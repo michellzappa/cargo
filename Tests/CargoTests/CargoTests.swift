@@ -233,12 +233,13 @@ final class CargoTests: XCTestCase {
         let stateURL = directory.appendingPathComponent("state.json")
         let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
         let inboxURL = libraryRoot.appendingPathComponent("_Inbox", isDirectory: true)
-        let sourceURL = inboxURL.appendingPathComponent("Untracked.Movie.2026.mp4")
+        let nestedInboxURL = inboxURL.appendingPathComponent("Legacy", isDirectory: true)
+        let sourceURL = nestedInboxURL.appendingPathComponent("Untracked.Movie.2026.mp4")
         defer { try? FileManager.default.removeItem(at: directory) }
 
-        try FileManager.default.createDirectory(at: inboxURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: nestedInboxURL, withIntermediateDirectories: true)
         try Data("test file".utf8).write(to: sourceURL)
-        try Data().write(to: inboxURL.appendingPathComponent(".DS_Store"))
+        try Data().write(to: nestedInboxURL.appendingPathComponent(".DS_Store"))
 
         let store = CargoStore(stateURL: stateURL)
         var state = store.snapshot()

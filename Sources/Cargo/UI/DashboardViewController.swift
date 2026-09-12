@@ -14,6 +14,7 @@ final class DashboardViewController: NSViewController {
     private let contentStack = NSStackView()
     private let putIOViewPicker = NSSegmentedControl()
     private var selectedPutIOView = 0
+    private var lastOrganizationMessage: String?
     private var settingsView: NSView?
     private let connectionLabel = NSTextField(labelWithString: "")
     private let refreshedLabel = NSTextField(labelWithString: "")
@@ -292,6 +293,12 @@ final class DashboardViewController: NSViewController {
     }
 
     private func renderInbox(_ state: CargoState) {
+        if let lastOrganizationMessage {
+            let notice = emptyLabel(lastOrganizationMessage)
+            notice.textColor = .systemGreen
+            contentStack.addArrangedSubview(notice)
+        }
+
         let activeLocalJobs = state.localJobs.filter(Self.isActiveLocalJob)
         if !activeLocalJobs.isEmpty {
             contentStack.addArrangedSubview(
@@ -321,6 +328,17 @@ final class DashboardViewController: NSViewController {
         } else {
             contentStack.addArrangedSubview(
                 boundedList(inboxEntries.map { inboxRow($0, state: state) }, maxHeight: 320, rowHeight: 88)
+            )
+        }
+
+        let recentlyOrganized = state.localJobs
+            .filter { $0.status == .completed }
+            .sorted { $0.updatedAt > $1.updatedAt }
+            .prefix(5)
+        if !recentlyOrganized.isEmpty {
+            contentStack.addArrangedSubview(sectionHeader("Recently organized"))
+            contentStack.addArrangedSubview(
+                boundedList(recentlyOrganized.map(organizedRow), maxHeight: 170, rowHeight: 44)
             )
         }
     }
@@ -495,6 +513,25 @@ final class DashboardViewController: NSViewController {
         return stack
     }
 
+    private func organizedRow(_ job: LocalSyncJob) -> NSView {
+        let title = NSTextField(labelWithString: job.name)
+        title.font = .systemFont(ofSize: 13, weight: .medium)
+        title.lineBreakMode = .byTruncatingTail
+
+        let destination = NSTextField(labelWithString: "Organized → \(job.destination ?? "Destination unavailable")")
+        destination.textColor = .systemGreen
+        destination.font = .systemFont(ofSize: 11)
+        destination.lineBreakMode = .byTruncatingMiddle
+
+        let stack = NSStackView(views: [title, destination])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 2
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.widthAnchor.constraint(equalToConstant: 660).isActive = true
+        return stack
+    }
+
     private func remoteFileRow(_ file: RemoteFile) -> NSView {
         let title = NSTextField(labelWithString: file.name)
         title.font = .systemFont(ofSize: 13, weight: .medium)
@@ -645,19 +682,13 @@ final class DashboardViewController: NSViewController {
                 .path
         } ?? relativePath
 
-        let alert = NSAlert()
-        alert.messageText = "Organize this file?"
-        alert.informativeText = "Cargo will move \(itemName) from \(coordinator.state.settings.stagingDirectoryName) to:\n\(destination)"
-        alert.addButton(withTitle: "Organize")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
         do {
             if let job {
                 try coordinator.organizeLocalJob(jobID: job.id)
             } else {
                 try coordinator.organizeInboxFile(at: sourceURL)
             }
+            lastOrganizationMessage = "Organized \(itemName) → \(destination)"
             render()
         } catch {
             let errorAlert = NSAlert(error: error)

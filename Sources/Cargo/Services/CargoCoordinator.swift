@@ -165,17 +165,23 @@ final class CargoCoordinator {
             isDirectory: true
         )
         let keys: [URLResourceKey] = [.isDirectoryKey]
-        return (try? FileManager.default.contentsOfDirectory(
+        guard let enumerator = FileManager.default.enumerator(
             at: inboxURL,
             includingPropertiesForKeys: keys,
-            options: []
-        ))?
-            .filter { url in
-                url.lastPathComponent != ".DS_Store" &&
-                (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return enumerator.compactMap { item in
+            guard let url = item as? URL,
+                  url.lastPathComponent != ".DS_Store",
+                  (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) != true else {
+                return nil
             }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
-            ?? []
+            return url
+        }
+        .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
     func refreshFromPutIO() async {
@@ -387,7 +393,8 @@ final class CargoCoordinator {
             isDirectory: true
         ).standardizedFileURL
         let normalizedSourceURL = sourceURL.standardizedFileURL
-        guard normalizedSourceURL.deletingLastPathComponent() == inboxURL,
+        let inboxPrefix = inboxURL.path.hasSuffix("/") ? inboxURL.path : inboxURL.path + "/"
+        guard normalizedSourceURL.path.hasPrefix(inboxPrefix),
               FileManager.default.fileExists(atPath: normalizedSourceURL.path) else {
             throw SettingsError.inboxFileMissing
         }
