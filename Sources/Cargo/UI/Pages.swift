@@ -79,10 +79,25 @@ class PageViewController: NSViewController {
         addChild(list)
         list.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(list.view)
+        var top = view.topAnchor
+        if let accessory = accessoryView() {
+            // Thin control strip above the list (sort menus and the like).
+            let bar = NSStackView(views: [NSView(), accessory])
+            bar.orientation = .horizontal
+            bar.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 4, right: 20)
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                bar.topAnchor.constraint(equalTo: view.topAnchor)
+            ])
+            top = bar.bottomAnchor
+        }
         NSLayoutConstraint.activate([
             list.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             list.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            list.view.topAnchor.constraint(equalTo: view.topAnchor),
+            list.view.topAnchor.constraint(equalTo: top),
             list.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
     }
@@ -112,6 +127,8 @@ class PageViewController: NSViewController {
     var emptyState: EmptyState { EmptyState(symbol: page.symbolName, title: "Nothing here") }
     func sections() -> [ListSection] { [] }
     func listActions() -> [RowAction] { [refreshAction()] }
+    /// Optional control shown right-aligned above the list.
+    func accessoryView() -> NSView? { nil }
 
     // MARK: - Shared helpers
 
@@ -486,6 +503,67 @@ final class InboxPageViewController: PageViewController {
 // MARK: - Watchlist
 
 final class WatchlistPageViewController: PageViewController {
+    enum Sort: String, CaseIterable {
+        case added, year, title, status
+        var label: String {
+            switch self {
+            case .added: "Recently Added"
+            case .year: "Year"
+            case .title: "Title"
+            case .status: "Status"
+            }
+        }
+        static let defaultsKey = "cargo.watchlist.sort"
+    }
+
+    private var sort: Sort = Sort(rawValue: UserDefaults.standard.string(forKey: Sort.defaultsKey) ?? "") ?? .added {
+        didSet {
+            UserDefaults.standard.set(sort.rawValue, forKey: Sort.defaultsKey)
+            reload()
+        }
+    }
+
+    override func accessoryView() -> NSView? {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        for option in Sort.allCases {
+            popup.addItem(withTitle: "Sort by \(option.label)")
+            popup.lastItem?.representedObject = option.rawValue
+        }
+        popup.selectItem(at: Sort.allCases.firstIndex(of: sort) ?? 0)
+        popup.target = self
+        popup.action = #selector(sortChanged(_:))
+        return popup
+    }
+
+    @objc private func sortChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String, let next = Sort(rawValue: raw) else { return }
+        sort = next
+    }
+
+    private func sorted(_ items: [IMDbWatchlistItem], state: CargoState) -> [IMDbWatchlistItem] {
+        let byTitle: (IMDbWatchlistItem, IMDbWatchlistItem) -> Bool = {
+            $0.title.localizedStandardCompare($1.title) == .orderedAscending
+        }
+        switch sort {
+        case .added:
+            // Newest first, as IMDb shows it; undated items last.
+            return items.sorted { ($0.addedAt ?? .distantPast) > ($1.addedAt ?? .distantPast) }
+        case .year:
+            return items.sorted { ($0.year ?? 0, $1.title) > ($1.year ?? 0, $0.title) }
+        case .title:
+            return items.sorted(by: byTitle)
+        case .status:
+            let rank = ["Wanted": 0, "Available": 1, "Queued": 2, "In Inbox": 3, "Organized": 4]
+            return items.sorted {
+                let a = rank[Self.status(for: $0, state: state).text] ?? 9
+                let b = rank[Self.status(for: $1, state: state).text] ?? 9
+                return a == b ? byTitle($0, $1) : a < b
+            }
+        }
+    }
+
     override var subtitle: String {
         let state = coordinator.state
         guard !state.imdbWatchlistItems.isEmpty else { return coordinator.imdbWatchlistStatus }
@@ -518,7 +596,7 @@ final class WatchlistPageViewController: PageViewController {
 
     override func sections() -> [ListSection] {
         let state = coordinator.state
-        let rows = state.imdbWatchlistItems.map { item -> ListRow in
+        let rows = sorted(state.imdbWatchlistItems, state: state).map { item -> ListRow in
             let search = RowAction(title: "Search") {
                 var components = URLComponents(string: "https://chill.institute/search")
                 components?.queryItems = [URLQueryItem(name: "q", value: item.title)]
