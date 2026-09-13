@@ -126,8 +126,8 @@ final class PutIOPage: CargoPage {
 
 // MARK: - Library
 
-final class LibraryPage: CargoPage, NSTextFieldDelegate {
-    private let libraryPathLabel = SettingsForm.label("")
+final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
+    private let libraryPath = NSPathControl()
     private let stagingField = SettingsForm.textField(width: 220)
     private let moviesField = SettingsForm.textField(width: 220)
     private let tvShowsField = SettingsForm.textField(width: 220)
@@ -136,9 +136,16 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate {
 
     override func build() {
         section("Local library")
-        libraryPathLabel.lineBreakMode = .byTruncatingMiddle
-        let choose = SettingsForm.button("Choose…", target: self, action: #selector(chooseLibraryRoot))
-        row("Library folder", [libraryPathLabel, choose])
+        // Pop-up path control: shows the chosen folder, click to choose, drop a folder to set.
+        libraryPath.pathStyle = .popUp
+        libraryPath.controlSize = .small
+        libraryPath.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        libraryPath.placeholderString = "Choose the folder Infuse reads…"
+        libraryPath.delegate = self
+        libraryPath.target = self
+        libraryPath.action = #selector(libraryPathChanged)
+        libraryPath.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        row("Library folder", libraryPath)
         note("The folder Infuse reads. Cargo never rearranges it; it only adds into the folders below.")
         for (title, field) in [("Staging folder", stagingField), ("Movies folder", moviesField), ("TV Shows folder", tvShowsField)] {
             field.delegate = self
@@ -156,8 +163,7 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate {
 
     override func refresh() {
         let settings = coordinator.state.settings
-        libraryPathLabel.stringValue = settings.libraryRootPath ?? "No folder selected"
-        libraryPathLabel.textColor = settings.hasLibraryRoot ? .labelColor : .systemOrange
+        libraryPath.url = settings.libraryRootPath.map { URL(fileURLWithPath: $0) }
         for (field, value) in [(stagingField, settings.stagingDirectoryName), (moviesField, settings.moviesDirectoryName), (tvShowsField, settings.tvShowsDirectoryName)]
         where !isEditing(field) {
             field.stringValue = value
@@ -166,18 +172,30 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate {
         watchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
     }
 
-    @objc private func chooseLibraryRoot() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Use as Library Root"
-        panel.message = "Choose the folder on the SSD that Infuse reads."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+    func pathControl(_ pathControl: NSPathControl, willDisplay openPanel: NSOpenPanel) {
+        openPanel.canChooseFiles = false
+        openPanel.canChooseDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.prompt = "Use as Library Root"
+        openPanel.message = "Choose the folder on the SSD that Infuse reads."
+    }
+
+    func pathControl(_ pathControl: NSPathControl, acceptDrop info: any NSDraggingInfo) -> Bool {
+        guard let url = NSURL(from: info.draggingPasteboard) as URL?,
+              (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        else { return false }
+        pathControl.url = url
+        libraryPathChanged()
+        return true
+    }
+
+    @objc private func libraryPathChanged() {
+        guard let url = libraryPath.url, url.path != coordinator.state.settings.libraryRootPath else { return }
         do {
             try coordinator.saveLibraryRoot(url)
         } catch {
             NSAlert(error: error).runModal()
+            refresh()
         }
     }
 
