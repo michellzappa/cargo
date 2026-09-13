@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 final class KeychainStore {
-    private let service = "com.cargo.media"
+    private let service = "app.cargo.Cargo"
     private let account = "putio-access-token"
 
     enum KeychainError: LocalizedError {

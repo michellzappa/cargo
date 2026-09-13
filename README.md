@@ -1,88 +1,100 @@
 # Cargo
 
-Cargo is a native macOS menu-bar app for managing a personal media pipeline built around Put.io and a local SSD library.
+A native macOS menu-bar app that brings completed Put.io media home to a local
+SSD library that Infuse reads. Quiet, local-first, no Sonarr/Radarr.
 
-ShowRSS remains responsible for discovery and adding transfers to Put.io. Cargo is responsible for the handoff:
-
-```text
-Put.io transfers → completed Put.io files → local SSD staging → organized Infuse library
-```
-
-The project is intentionally independent of Sonarr and Radarr. It is a focused Put.io control plane with a local, durable job history.
-
-## Current status
-
-The first vertical slice is in place:
-
-- native `NSStatusItem` menu-bar app
-- normal dashboard window opened from the menu bar or its context menu
-- native macOS sidebar navigation for Transfers, Files, Inbox, Watchlist, History, and Settings
-- persisted local state store
-- remote transfer and local sync job models
-- browser-only Put.io OAuth with the access token stored in macOS Keychain
-- read-only Put.io account and transfer refresh
-- recursive Put.io media inventory across all folders
-- remote media paths and idempotent local-sync queueing
-- dynamic public IMDb Watchlist sync with Put.io comparison
-- video-only tracking for Put.io files and local Inbox items
-- SSD library-root selection with a persisted security-scoped bookmark
-- first local handoff into a hidden SSD staging directory
-- background workflow cycles for newly completed Put.io media
-- durable workflow history and meaningful macOS notifications
-- native launch-at-login support
-- build and test target
-- documented implementation plan and known risks
-
-Cargo now has an explicit Inbox organization step: it classifies media, previews the destination, removes common release metadata from the filename, and moves the file into the configured Movies or TV Shows layout.
-
-The Automation section controls each background step independently. Cargo establishes a baseline on its first background pass, then scans every Put.io folder and can sync only newly discovered video media, organize and rename the resulting Inbox media, send notifications, and launch at login. A failed or conflicting organization remains in `_Inbox` and is recorded in History.
-
-### Browser authentication setup
-
-Cargo uses one registered Put.io OAuth app (`9732`) and the native `cargo://oauth/callback` URL scheme. Choose “Connect with Put.io”; the browser authorization returns an access token that Cargo stores in macOS Keychain. There is intentionally no manual-token path in the UI.
-
-### Local library workflow
-
-Cargo treats the folder selected in “Local library” as the existing root that Infuse reads. It does not currently scan or rearrange that folder, and it never assumes that an empty new library should replace an existing one.
-
-The Files view is a recursive inventory of video files in Put.io, not just the current root folder. Each row shows its Put.io path and whether Cargo has not downloaded it, has placed it in `_Inbox`, or has organized it into the library. Cargo ignores non-media sidecars and folders for syncing.
-
-The Watchlist view loads the configured public IMDb Watchlist through IMDb’s public list data endpoint, resolving both the shared `p.…` profile URL and the older `ur…` user URL without storing IMDb credentials. Cargo keeps the IMDb IDs, titles, and added dates locally, follows pagination, shows newest-added titles first, refreshes automatically at most every 15 minutes, and labels each title as Wanted, Available in Put.io, Queued, Downloaded in Inbox, or Organized. The watchlist is a desired list only; ShowRSS and Put.io remain the availability pipeline.
-
-The intended handoff is:
+ShowRSS discovers and adds transfers to Put.io. Cargo owns the handoff:
 
 ```text
-Put.io completed file
+Put.io transfers → completed Put.io files → hidden _Inbox on the SSD
         ↓
-hidden _Inbox staging folder
+identify movie / episode / ambiguous
         ↓
-identify movie / episode / ambiguous file
-        ↓
-preview destination using the existing Movies and TV Shows folders
-        ↓
-move into the library, then run EasySubs
+Movies/Title (Year).mkv  ·  TV Shows/Show (Year)/Season 02/Show (Year) - S02E01.mkv
 ```
 
-The current build has a focused Inbox view that recursively scans the physical `_Inbox` folder and can immediately move a confidently classified item. Cargo tracks video media only: non-video files such as subtitles, artwork, metadata, archives, and hidden macOS files are ignored for media tracking. Put.io folders remain visible for navigation, but only video files can be queued. After a nested Inbox folder has no media or subfolders left, the enabled cleanup step removes its remaining sidecars/cruft and the folder, while never removing `_Inbox` itself. On organize, Cargo cleans common release metadata: movies become names such as `Jodorowsky's Dune (2013).mkv`, while TV episodes become names such as `Adults (2025) - S02E01.mkv` inside `TV Shows/Adults (2025)/Season 02/`. The original downloaded filename remains visible in Inbox and the final path is shown after the move. A verified local copy can also trigger removal of the matching Put.io file and any now-empty parent folders. Ambiguous names, duplicates, and unsupported video files should be reviewed instead of being guessed or moved automatically. “In inbox · awaiting organization” means the download succeeded and the file is still safely sitting in `_Inbox`; it is not an error.
+The product principle: **make it obvious what is happening in Put.io, and make
+bringing media home safe and repeatable.** Nothing is deleted remotely until a
+local copy is verified, and ambiguous files wait in `_Inbox` for a human.
 
-To build a launchable app bundle locally:
+## How it works
+
+The menu bar item shows live status (account, transfers, Inbox count) and the
+actions: Open Cargo ⌘O, Add Transfer… ⌘N, Refresh ⌘R. The dashboard window has
+a sidebar — Transfers, Files, Inbox, Watchlist, History — each a native table.
+
+Every `refreshIntervalMinutes` the background cycle:
+
+1. refreshes Put.io transfers and the recursive video inventory,
+2. downloads newly completed video media into `_Inbox` (staging, resumable),
+3. classifies and renames Inbox media into the Movies / TV Shows layout,
+4. optionally deletes the Put.io original after the local copy verifies,
+5. removes sidecars and empty folders, and posts one notification.
+
+Each step is a switch in Settings → Automation. The Watchlist page follows a
+public IMDb Watchlist as a *desired* list (Wanted → Available → Queued →
+Downloaded → Organized); availability stays with ShowRSS and Put.io.
+
+## Requirements
+
+- macOS 14 (Sonoma) or later
+- A Put.io account. Cargo authorizes in the browser through its registered OAuth
+  app and the `cargo://oauth/callback` scheme; the token lives in Keychain.
+- A folder for the library. Cargo keeps a security-scoped bookmark to it and
+  never rearranges what is already there.
+
+## Install
+
+No notarized release yet. Build it yourself:
 
 ```sh
-./Scripts/build-app.sh
-open /Users/mz/Applications/Cargo.app
+./Scripts/build-app.sh      # → /Applications/Cargo.app, signed, icon regenerated
 ```
 
-Cargo currently uses version `0.3.6` for the alpha product line. The packaging script derives `CFBundleVersion` from the current git commit count, so each committed build receives a reproducible increasing build number. The native pages share the same spacing, full-width list containers, separator rows, truncation, form, and control styling. Clicking the menu bar icon opens Cargo’s native status-item menu, including live status, Open Cargo, Settings, Refresh Now, and Quit Cargo.
-
-## Build
+Needs `xcodegen` and the sibling [`../housekit`](../housekit) package, which
+supplies the menu bar plate, the app icon, the settings window chrome and
+launch-at-login — the pieces Cargo shares with Tessellate and Strata. To work
+in Xcode instead: `xcodegen generate && open Cargo.xcodeproj`. Tests:
 
 ```sh
-swift build
-swift test
+xcodebuild test -project Cargo.xcodeproj -scheme Cargo CODE_SIGNING_ALLOWED=NO
 ```
 
-The executable can be run directly from the build directory, although a proper signed `.app` bundle is the supported launch path.
+### A note on signing
 
-## Product boundary
+`project.yml` signs with a stable Apple Development identity, not ad-hoc.
+Keychain and TCC key their grants to the code signature, so an ad-hoc build
+would lose the Put.io token and the folder bookmark on every rebuild. Set your
+own `DEVELOPMENT_TEAM` in `project.yml`.
 
-Cargo does not currently discover releases, parse ShowRSS feeds, or submit magnets. Those responsibilities stay upstream in ShowRSS and Put.io. Cargo can observe a public IMDb Watchlist as a desired list, then watches Put.io for matching media and manages the local library handoff.
+## Configuration
+
+Settings lives in the menu bar item (⌘,): **Put.io** (account, polling
+interval) · **Library** (library folder, folder names, IMDb watchlist) ·
+**Automation** (each background step, notifications) · **General** (launch at
+login) · **About**.
+
+## Architecture
+
+AppKit throughout, no dependencies beyond `HouseKit`.
+
+| | |
+| --- | --- |
+| `Services/PutIOClient`, `PutIOOAuth`, `KeychainStore` | Put.io API, browser OAuth, token storage |
+| `Services/CargoCoordinator` | The state machine: background cycle, sync jobs, settings mutations |
+| `Services/LibraryOrganizer` | Release-name parsing, destination preview, atomic move |
+| `Services/IMDbWatchlistService` | Public watchlist fetch and pagination |
+| `Core/CargoStore` | One JSON state file in Application Support, durable job history |
+| `UI/MainWindowController`, `Pages`, `ListTableViewController` | Dashboard: sidebar + native tables |
+| `UI/SettingsPages` | The HouseKit settings window with Cargo's pages |
+| `CargoApp` | `NSStatusItem` and its menu — header, actions, then the house tail |
+
+See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
+for known risks.
+
+## Limitations
+
+- Downloads are not yet resumable across sleep or SSD removal.
+- Media identification is heuristic; low-confidence files stay in `_Inbox`.
+- Remote deletion is off by default and stays a separate switch.
+- No ShowRSS parsing or magnet submission — that is upstream, on purpose.

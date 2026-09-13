@@ -8,3 +8,4 @@ build/
 # Local app state and credentials
 state.json
 *.local.json
+*.xcodeproj

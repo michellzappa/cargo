@@ -1,4 +1,5 @@
 import AppKit
+import HouseKit
 
 @main
 @MainActor
@@ -11,7 +12,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let coordinator = CargoCoordinator()
     private let notificationService = CargoNotificationService()
     private lazy var mainWindowController = MainWindowController(coordinator: coordinator)
-    private lazy var settingsWindowController = SettingsWindowController(coordinator: coordinator)
+    private lazy var settingsWindowController = SettingsWindowController.cargo(coordinator: coordinator)
 
     static func main() {
         let application = NSApplication.shared
@@ -24,30 +25,36 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApplication.shared.setActivationPolicy(.accessory)
         NSApplication.shared.mainMenu = makeMainMenu()
         notificationService.requestAuthorization()
-        try? LaunchAtLoginManager.shared.setEnabled(coordinator.state.settings.launchAtLoginEnabled)
+        if LaunchAtLogin.isEnabled != coordinator.state.settings.launchAtLoginEnabled {
+            try? LaunchAtLogin.setEnabled(coordinator.state.settings.launchAtLoginEnabled)
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            button.image = Self.menuBarIcon
+            button.image = MenuBarPlate.image(glyph: HouseGlyphs.cargo)
             button.imagePosition = .imageOnly
             button.setAccessibilityLabel("Cargo menu")
             button.toolTip = "Cargo"
         }
 
-        // Action-first menu with visible shortcuts, same shape as Tessellate's.
+        // House menu: header, the actions, then the shared tail.
         statusMenu = NSMenu()
-        statusHeaderItem = NSMenuItem.sectionHeader(title: "Cargo")
+        statusHeaderItem = StatusMenu.sectionHeader("Cargo")
         statusMenu.addItem(statusHeaderItem)
         statusMenu.addItem(NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "o"))
         statusMenu.addItem(NSMenuItem(title: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: "n"))
         statusMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshNow(_:)), keyEquivalent: "r"))
-        statusMenu.addItem(.separator())
-        statusMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ","))
-        launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
-        statusMenu.addItem(launchAtLoginItem)
-        statusMenu.addItem(.separator())
-        statusMenu.addItem(NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q"))
         statusMenu.items.forEach { $0.target = self }
+        StatusMenu.appendStandardTail(
+            to: statusMenu,
+            appName: "Cargo",
+            target: self,
+            settings: #selector(showSettings(_:)),
+            launchAtLogin: #selector(toggleLaunchAtLogin(_:)),
+            launchAtLoginEnabled: coordinator.state.settings.launchAtLoginEnabled,
+            quit: #selector(quitCargo(_:))
+        )
+        launchAtLoginItem = statusMenu.items.first { $0.title == "Launch at Login" }
         statusMenu.delegate = self
         statusItem.menu = statusMenu
         statusItem.isVisible = true
@@ -60,7 +67,9 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             object: coordinator
         )
         updateStatusMenu()
-        mainWindowController.show()
+        // A login item should not put a window up; only when there is nothing
+        // to run yet does the dashboard open by itself.
+        if !coordinator.isConnected { mainWindowController.show() }
         startBackgroundCycle()
     }
 
@@ -241,18 +250,5 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             lines.append(summary.failures.count == 1 ? "1 item needs attention" : "\(summary.failures.count) items need attention")
         }
         notificationService.post(title: "Cargo workflow updated", body: lines.joined(separator: " · "))
-    }
-
-    /// Three container slabs on the shared house plate (see MenuBarPlate).
-    private static let menuBarIcon: NSImage = MenuBarPlate.image { _ in
-        let field = MenuBarPlate.field
-        let gap: CGFloat = 0.5
-        let slab = (field.height - gap * 2) / 3
-        MenuBarPlate.mark(NSRect(x: field.minX, y: field.minY, width: field.width, height: slab), alpha: 0.97)
-        MenuBarPlate.mark(NSRect(x: field.minX, y: field.minY + slab + gap, width: field.width, height: slab), alpha: 0.72)
-        MenuBarPlate.mark(
-            NSRect(x: field.minX + 1.5, y: field.minY + (slab + gap) * 2, width: field.width - 3, height: slab),
-            alpha: 0.52
-        )
     }
 }

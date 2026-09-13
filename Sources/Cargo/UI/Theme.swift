@@ -54,13 +54,6 @@ enum Theme {
         NSImage(systemSymbolName: name, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: pointSize, weight: weight))
     }
-
-    static var buildLabel: String {
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
-        guard let version, let build, !version.isEmpty, !build.isEmpty else { return "development build" }
-        return "v\(version) (\(build))"
-    }
 }
 
 enum Formatters {

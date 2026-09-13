@@ -1,4 +1,5 @@
 import Foundation
+import HouseKit
 
 struct CargoBackgroundCycleSummary: Sendable {
     var discovered: [String] = []
@@ -264,7 +265,7 @@ final class CargoCoordinator {
         automaticRemoteCleanup: Bool,
         automaticInboxCleanup: Bool
     ) throws {
-        try LaunchAtLoginManager.shared.setEnabled(launchAtLogin)
+        try LaunchAtLogin.setEnabled(launchAtLogin)
         state.settings.automaticSyncEnabled = automaticSync
         state.settings.automaticOrganizationEnabled = automaticOrganization
         state.settings.notificationsEnabled = notifications
@@ -278,7 +279,7 @@ final class CargoCoordinator {
         var settings = state.settings
         try mutate(&settings)
         if settings.launchAtLoginEnabled != state.settings.launchAtLoginEnabled {
-            try LaunchAtLoginManager.shared.setEnabled(settings.launchAtLoginEnabled)
+            try LaunchAtLogin.setEnabled(settings.launchAtLoginEnabled)
         }
         state.settings = settings
         try persist()

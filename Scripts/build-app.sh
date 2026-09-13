@@ -1,35 +1,33 @@
 #!/bin/zsh
-
+# Build Cargo.app and install it to /Applications, signed with the stable
+# Apple Development identity from project.yml (so the Accessibility grant
+# survives rebuilds). Regenerates the Xcode project and the icon every time.
+#
+#   ./scripts/build-app.sh            # Release → /Applications/Cargo.app
+#   ./scripts/build-app.sh --debug
 set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+housekit="${HOUSEKIT_PATH:-$here/../housekit}"
+config=Release
+[[ "${1:-}" == "--debug" ]] && config=Debug
 
-scriptDirectory="$(cd "$(dirname "$0")" && pwd)"
-projectDirectory="$(cd "$scriptDirectory/.." && pwd)"
-versionFile="$projectDirectory/Resources/Cargo-Version.env"
-source "$versionFile"
-buildNumber="$(git -C "$projectDirectory" rev-list --count HEAD)"
-swift build --package-path "$projectDirectory" -c release
-binaryDirectory="$(swift build --package-path "$projectDirectory" -c release --show-bin-path)"
-stagingAppDirectory="$projectDirectory/build/Cargo.app"
-appDirectory="/Users/mz/Applications/Cargo.app"
-iconsetDirectory="$projectDirectory/build/CargoIcon.iconset"
+swift build -c release --package-path "$housekit" >/dev/null
+"$(swift build -c release --package-path "$housekit" --show-bin-path)/housekit-icon" cargo "$here/Resources/AppIcon.icns" >/dev/null
 
-mkdir -p "$stagingAppDirectory/Contents/MacOS" "$stagingAppDirectory/Contents/Resources" "$iconsetDirectory" "/Users/mz/Applications"
-cp "$binaryDirectory/Cargo" "$stagingAppDirectory/Contents/MacOS/Cargo"
-cp "$projectDirectory/Resources/Cargo-Info.plist" "$stagingAppDirectory/Contents/Info.plist"
-/usr/bin/swift "$projectDirectory/Scripts/generate-cargo-icon.swift" "$iconsetDirectory"
-/usr/bin/iconutil -c icns "$iconsetDirectory" -o "$stagingAppDirectory/Contents/Resources/CargoIcon.icns"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $CARGO_VERSION" "$stagingAppDirectory/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $buildNumber" "$stagingAppDirectory/Contents/Info.plist"
-chmod +x "$stagingAppDirectory/Contents/MacOS/Cargo"
-/usr/bin/ditto "$stagingAppDirectory" "$appDirectory"
-/usr/bin/xattr -cr "$appDirectory"
-/usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
-/usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
-# Prefer a stable Apple Development identity so Keychain/TCC grants survive rebuilds.
-signingIdentity="${CARGO_SIGNING_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk -F'"' '/Apple Development/ {print $2; exit}')}"
-codesign --force --deep --sign "${signingIdentity:--}" --timestamp=none "$appDirectory"
-/usr/bin/xattr -dr com.apple.FinderInfo "$appDirectory" 2>/dev/null || true
-/usr/bin/xattr -dr 'com.apple.fileprovider.fpfs#P' "$appDirectory" 2>/dev/null || true
-codesign --verify --deep --strict "$appDirectory"
+cd "$here"
+xcodegen generate --quiet
+build="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+xcodebuild -project Cargo.xcodeproj -scheme Cargo -configuration "$config" \
+  -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$build" \
+  CODE_SIGNING_ALLOWED=NO -quiet build
+app="build/DerivedData/Build/Products/$config/Cargo.app"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" "$app/Contents/Info.plist"
+codesign --force --sign "Apple Development" --entitlements Resources/Cargo.entitlements --options runtime "$app"
 
-printf '%s (version %s, build %s, signed: %s)\n' "$appDirectory" "$CARGO_VERSION" "$buildNumber" "${signingIdentity:-ad-hoc}"
+target=/Applications/Cargo.app
+if pgrep -xq Cargo; then osascript -e 'tell application "Cargo" to quit' >/dev/null 2>&1 || true; sleep 0.5; fi
+rm -rf "$target"
+/usr/bin/ditto "$app" "$target"
+codesign --verify --strict "$target"
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")"
+printf '%s (version %s, build %s)\n' "$target" "$version" "$build"
