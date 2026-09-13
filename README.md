@@ -48,7 +48,7 @@ Downloaded → Organized); availability stays with ShowRSS and Put.io.
 No notarized release yet. Build it yourself:
 
 ```sh
-./Scripts/build-app.sh      # → /Applications/Cargo.app, signed, icon regenerated
+./scripts/build-app.sh      # → /Applications/Cargo.app, signed, icon regenerated
 ```
 
 Needs `xcodegen` and the sibling [`../housekit`](../housekit) package, which
