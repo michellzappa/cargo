@@ -5,10 +5,8 @@ import AppKit
 final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
-    private var connectionStatusMenuItem: NSMenuItem!
-    private var transfersStatusMenuItem: NSMenuItem!
-    private var inboxStatusMenuItem: NSMenuItem!
-    private var updatedStatusMenuItem: NSMenuItem!
+    private var statusHeaderItem: NSMenuItem!
+    private var launchAtLoginItem: NSMenuItem!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
     private let notificationService = CargoNotificationService()
@@ -36,24 +34,19 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.toolTip = "Cargo"
         }
 
+        // Action-first menu with visible shortcuts, same shape as Tessellate's.
         statusMenu = NSMenu()
-        statusMenu.autoenablesItems = false
-        connectionStatusMenuItem = NSMenuItem(title: "Put.io · Not connected yet", action: nil, keyEquivalent: "")
-        transfersStatusMenuItem = NSMenuItem(title: "Transfers · 0", action: nil, keyEquivalent: "")
-        inboxStatusMenuItem = NSMenuItem(title: "Inbox · 0 waiting", action: nil, keyEquivalent: "")
-        updatedStatusMenuItem = NSMenuItem(title: "Updated · not yet", action: nil, keyEquivalent: "")
-        for item in [connectionStatusMenuItem!, transfersStatusMenuItem!, inboxStatusMenuItem!, updatedStatusMenuItem!] {
-            item.isEnabled = false
-            statusMenu.addItem(item)
-        }
+        statusHeaderItem = NSMenuItem.sectionHeader(title: "Cargo")
+        statusMenu.addItem(statusHeaderItem)
+        statusMenu.addItem(NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "o"))
+        statusMenu.addItem(NSMenuItem(title: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: "n"))
+        statusMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshNow(_:)), keyEquivalent: "r"))
         statusMenu.addItem(.separator())
-        statusMenu.addItem(NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: ""))
-        statusMenu.addItem(NSMenuItem(title: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: ""))
-        statusMenu.addItem(NSMenuItem(title: "Refresh Now", action: #selector(refreshNow(_:)), keyEquivalent: ""))
+        statusMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ","))
+        launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        statusMenu.addItem(launchAtLoginItem)
         statusMenu.addItem(.separator())
-        statusMenu.addItem(NSMenuItem(title: "Settings…", action: #selector(showSettings(_:)), keyEquivalent: ""))
-        statusMenu.addItem(.separator())
-        statusMenu.addItem(NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: ""))
+        statusMenu.addItem(NSMenuItem(title: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q"))
         statusMenu.items.forEach { $0.target = self }
         statusMenu.delegate = self
         statusItem.menu = statusMenu
@@ -127,6 +120,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(withTitle: "Cargo", action: nil, keyEquivalent: "").submenu = appMenu
 
         let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "o").target = self
         fileMenu.addItem(withTitle: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: "n").target = self
         fileMenu.addItem(withTitle: "Add Transfer from Clipboard", action: #selector(pasteTransfer(_:)), keyEquivalent: "V").target = self
         fileMenu.addItem(.separator())
@@ -177,11 +171,15 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func updateStatusMenu() {
         guard statusMenu != nil else { return }
         let state = coordinator.state
-        connectionStatusMenuItem.title = "Put.io · \(coordinator.putIOStatus)"
-        transfersStatusMenuItem.title = "Transfers · \(state.transfers.count) active"
+        var parts: [String] = []
+        parts.append(coordinator.isConnected
+            ? coordinator.putIOStatus.replacingOccurrences(of: "Connected as ", with: "")
+            : "Not connected")
+        if !state.transfers.isEmpty { parts.append("\(state.transfers.count) transfers") }
         let inboxCount = coordinator.inboxFileURLs().count
-        inboxStatusMenuItem.title = "Inbox · \(inboxCount) \(inboxCount == 1 ? "file waiting" : "files waiting")"
-        updatedStatusMenuItem.title = "Updated · \(Formatters.time.string(from: state.lastUpdated))"
+        if inboxCount > 0 { parts.append("\(inboxCount) in Inbox") }
+        statusHeaderItem.title = parts.joined(separator: " · ")
+        launchAtLoginItem.state = state.settings.launchAtLoginEnabled ? .on : .off
     }
 
     // MARK: - Actions
@@ -206,6 +204,15 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func refreshNow(_ sender: Any?) {
         mainWindowController.refreshNow(sender)
+    }
+
+    @objc func toggleLaunchAtLogin(_ sender: Any?) {
+        let enabled = !coordinator.state.settings.launchAtLoginEnabled
+        do {
+            try coordinator.updateSettings { $0.launchAtLoginEnabled = enabled }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     @objc func quitCargo(_ sender: Any?) {
