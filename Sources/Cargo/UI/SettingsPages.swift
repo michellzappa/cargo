@@ -16,7 +16,8 @@ extension SettingsWindowController {
             )),
             SettingsPage("About", symbol: "info.circle", controller: AboutPage(
                 appName: "Cargo",
-                tagline: "Put.io → SSD → Infuse, without touching it."
+                tagline: "Put.io → SSD → Infuse, without touching it.",
+                links: [("GitHub", URL(string: "https://github.com/michellzappa/cargo")!)]
             ))
         ])
     }
