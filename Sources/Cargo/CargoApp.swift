@@ -44,6 +44,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusMenu.addItem(NSMenuItem(title: "Open Cargo", action: #selector(showDashboard(_:)), keyEquivalent: "o"))
         statusMenu.addItem(NSMenuItem(title: "Add Transfer…", action: #selector(addTransfer(_:)), keyEquivalent: "n"))
         statusMenu.addItem(NSMenuItem(title: "Refresh", action: #selector(refreshNow(_:)), keyEquivalent: "r"))
+        statusMenu.addItem(.separator())
+        statusMenu.addItem(NSMenuItem(title: "Edit Watchlist on IMDb…", action: #selector(openWatchlist(_:)), keyEquivalent: "i"))
         statusMenu.items.forEach { $0.target = self }
         StatusMenu.appendStandardTail(
             to: statusMenu,
@@ -135,6 +137,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Refresh", action: #selector(refreshNow(_:)), keyEquivalent: "r").target = self
         fileMenu.addItem(.separator())
+        fileMenu.addItem(withTitle: "Edit Watchlist on IMDb…", action: #selector(openWatchlist(_:)), keyEquivalent: "i").target = self
+        fileMenu.addItem(.separator())
         fileMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         mainMenu.addItem(withTitle: "File", action: nil, keyEquivalent: "").submenu = fileMenu
 
@@ -209,6 +213,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc func pasteTransfer(_ sender: Any?) {
         mainWindowController.show()
         mainWindowController.pasteTransfer(sender)
+    }
+
+    /// The configured IMDb list, in the browser — that is where the list is edited.
+    @objc func openWatchlist(_ sender: Any?) {
+        guard let url = URL(string: coordinator.state.settings.imdbWatchlistURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc func refreshNow(_ sender: Any?) {

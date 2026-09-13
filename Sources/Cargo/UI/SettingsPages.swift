@@ -148,7 +148,8 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate {
         section("IMDb Watchlist")
         watchlistURLField.delegate = self
         let refresh = SettingsForm.button("Refresh", target: self, action: #selector(refreshWatchlistNow))
-        row("Public list URL", [watchlistURLField, refresh])
+        let open = SettingsForm.button("Edit on IMDb…", target: self, action: #selector(openWatchlist))
+        row("Public list URL", [watchlistURLField, refresh, open])
         row(nil, watchlistStatusLabel)
         row(nil, statusLabel)
     }
@@ -178,6 +179,12 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate {
         } catch {
             NSAlert(error: error).runModal()
         }
+    }
+
+    @objc private func openWatchlist() {
+        commitWatchlistURL()
+        guard let url = URL(string: coordinator.state.settings.imdbWatchlistURL) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     @objc private func refreshWatchlistNow() {
