@@ -243,20 +243,16 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         notificationService.post(title: "Cargo workflow updated", body: lines.joined(separator: " · "))
     }
 
-    /// The app icon scaled for the menu bar, full color — house style shared with
-    /// Tessellate and Headroom. The icon's plate spans 824/1024 of the artwork; scale
-    /// so it lands at 16pt inside the 18pt canvas, the shared menu bar plate size.
-    private static let menuBarIcon: NSImage = {
-        let source = NSApp.applicationIconImage ?? NSImage(size: NSSize(width: 18, height: 18))
-        let size = NSSize(width: 18, height: 18)
-        let plateFraction: CGFloat = 824 / 1024
-        let drawSize = 16 / plateFraction
-        let drawRect = NSRect(x: (size.width - drawSize) / 2, y: (size.height - drawSize) / 2, width: drawSize, height: drawSize)
-        let resized = NSImage(size: size, flipped: false) { _ in
-            source.draw(in: drawRect, from: .zero, operation: .sourceOver, fraction: 1)
-            return true
-        }
-        resized.isTemplate = false
-        return resized
-    }()
+    /// Three container slabs on the shared house plate (see MenuBarPlate).
+    private static let menuBarIcon: NSImage = MenuBarPlate.image { _ in
+        let field = MenuBarPlate.field
+        let gap: CGFloat = 0.5
+        let slab = (field.height - gap * 2) / 3
+        MenuBarPlate.mark(NSRect(x: field.minX, y: field.minY, width: field.width, height: slab), alpha: 0.97)
+        MenuBarPlate.mark(NSRect(x: field.minX, y: field.minY + slab + gap, width: field.width, height: slab), alpha: 0.72)
+        MenuBarPlate.mark(
+            NSRect(x: field.minX + 1.5, y: field.minY + (slab + gap) * 2, width: field.width - 3, height: slab),
+            alpha: 0.52
+        )
+    }
 }
