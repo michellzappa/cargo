@@ -1,3 +1,4 @@
+import HouseKit
 import UserNotifications
 
 @MainActor
@@ -5,7 +6,7 @@ final class CargoNotificationService {
     private let center = UNUserNotificationCenter.current()
 
     func requestAuthorization() {
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        Notifications.request()
     }
 
     func post(title: String, body: String) {

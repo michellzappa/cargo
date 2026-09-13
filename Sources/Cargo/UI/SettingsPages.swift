@@ -12,7 +12,8 @@ extension SettingsWindowController {
                 launchAtLogin: (
                     get: { coordinator.state.settings.launchAtLoginEnabled },
                     set: { value in try? coordinator.updateSettings { $0.launchAtLoginEnabled = value } }
-                )
+                ),
+                permissions: [.notifications]
             )),
             SettingsPage("About", symbol: "info.circle", controller: AboutPage(
                 appName: "Cargo",
