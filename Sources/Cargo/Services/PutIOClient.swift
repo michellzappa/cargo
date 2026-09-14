@@ -3,9 +3,11 @@ import Foundation
 protocol PutIOClient: Sendable {
     func fetchAccount() async throws -> PutIOAccountSummary
     func fetchTransfers() async throws -> [RemoteTransfer]
-    func fetchFiles(parentID: Int) async throws -> [RemoteFile]
+    /// `types` filters server-side (Put.io names: VIDEO, FOLDER, ARCHIVE…); nil lists everything.
+    func fetchFiles(parentID: Int, types: [String]?) async throws -> [RemoteFile]
     func downloadFile(fileID: Int, to destinationURL: URL) async throws
-    func deleteFile(fileID: Int) async throws
+    /// `skipTrash` deletes for good; otherwise the file lands in Put.io's trash.
+    func deleteFile(fileID: Int, skipTrash: Bool) async throws
 
     // Transfer management
     func addTransfer(url: String) async throws -> RemoteTransfer
@@ -17,6 +19,13 @@ protocol PutIOClient: Sendable {
     func downloadURL(fileID: Int) async throws -> URL
     func fetchSubtitles(fileID: Int) async throws -> [PutIOSubtitle]
     func downloadSubtitle(fileID: Int, key: String, to destinationURL: URL) async throws
+
+    // Activity, archives, trash
+    func fetchEvents() async throws -> [PutIOEvent]
+    func extractFiles(ids: [Int]) async throws
+    func fetchExtractions() async throws -> [PutIOExtraction]
+    func fetchTrash() async throws -> PutIOTrashSummary
+    func emptyTrash() async throws
 }
 
 /// Defaults so lightweight clients (stubs, unconfigured) only implement the core surface.
@@ -30,6 +39,38 @@ extension PutIOClient {
     func downloadSubtitle(fileID: Int, key: String, to destinationURL: URL) async throws {
         throw UnconfiguredPutIOClient.ClientError.notConfigured
     }
+    func fetchEvents() async throws -> [PutIOEvent] { [] }
+    func extractFiles(ids: [Int]) async throws { throw UnconfiguredPutIOClient.ClientError.notConfigured }
+    func fetchExtractions() async throws -> [PutIOExtraction] { [] }
+    func fetchTrash() async throws -> PutIOTrashSummary { PutIOTrashSummary(count: 0, bytes: 0) }
+    func emptyTrash() async throws { throw UnconfiguredPutIOClient.ClientError.notConfigured }
+
+    func fetchFiles(parentID: Int) async throws -> [RemoteFile] { try await fetchFiles(parentID: parentID, types: nil) }
+    func deleteFile(fileID: Int) async throws { try await deleteFile(fileID: fileID, skipTrash: false) }
+}
+
+/// One line of Put.io's activity feed (`events/list`).
+struct PutIOEvent: Sendable, Equatable, Identifiable {
+    enum Kind: String, Sendable { case transferCompleted, transferError, other }
+    let id: Int
+    let kind: Kind
+    let name: String
+    let fileID: Int?
+    let createdAt: Date
+}
+
+/// A server-side archive extraction (`files/extractions`).
+struct PutIOExtraction: Sendable, Equatable {
+    enum Status: String, Sendable { case inProgress, completed, error, unknown }
+    let id: Int
+    let name: String
+    let status: Status
+    let message: String?
+}
+
+struct PutIOTrashSummary: Sendable, Equatable {
+    let count: Int
+    let bytes: Int64
 }
 
 struct PutIOSubtitle: Sendable, Equatable, Identifiable {
@@ -68,7 +109,7 @@ struct UnconfiguredPutIOClient: PutIOClient {
         throw ClientError.notConfigured
     }
 
-    func fetchFiles(parentID: Int) async throws -> [RemoteFile] {
+    func fetchFiles(parentID: Int, types: [String]?) async throws -> [RemoteFile] {
         throw ClientError.notConfigured
     }
 
@@ -76,7 +117,7 @@ struct UnconfiguredPutIOClient: PutIOClient {
         throw ClientError.notConfigured
     }
 
-    func deleteFile(fileID: Int) async throws {
+    func deleteFile(fileID: Int, skipTrash: Bool) async throws {
         throw ClientError.notConfigured
     }
 }
@@ -141,15 +182,16 @@ struct PutIOAPIClient: PutIOClient {
         return envelope.transfers.map(Self.mapTransfer)
     }
 
-    func fetchFiles(parentID: Int) async throws -> [RemoteFile] {
-        let envelope: PutIOFileListEnvelope = try await request(
-            path: "files/list",
-            queryItems: [
-                URLQueryItem(name: "parent_id", value: String(parentID)),
-                URLQueryItem(name: "per_page", value: "100"),
-                URLQueryItem(name: "no_cursor", value: "1")
-            ]
-        )
+    func fetchFiles(parentID: Int, types: [String]?) async throws -> [RemoteFile] {
+        var queryItems = [
+            URLQueryItem(name: "parent_id", value: String(parentID)),
+            URLQueryItem(name: "per_page", value: "1000"),
+            URLQueryItem(name: "no_cursor", value: "1")
+        ]
+        if let types, !types.isEmpty {
+            queryItems.append(URLQueryItem(name: "file_type", value: types.joined(separator: ",")))
+        }
+        let envelope: PutIOFileListEnvelope = try await request(path: "files/list", queryItems: queryItems)
         return envelope.files.map(Self.mapFile)
     }
 
@@ -197,8 +239,61 @@ struct PutIOAPIClient: PutIOClient {
         }
     }
 
-    func deleteFile(fileID: Int) async throws {
-        _ = try await post(path: "files/delete", form: ["file_ids": String(fileID)], failure: "Delete failed.")
+    func deleteFile(fileID: Int, skipTrash: Bool) async throws {
+        var form = ["file_ids": String(fileID)]
+        if skipTrash { form["skip_trash"] = "true" }
+        _ = try await post(path: "files/delete", form: form, failure: "Delete failed.")
+    }
+
+    func fetchEvents() async throws -> [PutIOEvent] {
+        let envelope: PutIOEventListEnvelope = try await request(path: "events/list")
+        return envelope.events.map { event in
+            let kind: PutIOEvent.Kind = switch event.type {
+            case "transfer_completed": .transferCompleted
+            case "transfer_error": .transferError
+            default: .other
+            }
+            return PutIOEvent(
+                id: event.id,
+                kind: kind,
+                name: event.transferName ?? event.fileName ?? event.type,
+                fileID: event.fileID,
+                createdAt: Self.date(from: event.createdAt)
+            )
+        }
+    }
+
+    func extractFiles(ids: [Int]) async throws {
+        let list = ids.map(String.init).joined(separator: ",")
+        _ = try await post(path: "files/extract", form: ["file_ids": list], failure: "Could not start extraction.")
+    }
+
+    func fetchExtractions() async throws -> [PutIOExtraction] {
+        let envelope: PutIOExtractionListEnvelope = try await request(path: "files/extractions")
+        return envelope.extractions.map { extraction in
+            let status: PutIOExtraction.Status = switch extraction.status?.uppercased() {
+            case "IN_PROGRESS", "WAITING", "STARTED": .inProgress
+            case "COMPLETED", "DONE": .completed
+            case "ERROR", "FAILED": .error
+            default: .unknown
+            }
+            return PutIOExtraction(id: extraction.id, name: extraction.name ?? "", status: status, message: extraction.message)
+        }
+    }
+
+    func fetchTrash() async throws -> PutIOTrashSummary {
+        let envelope: PutIOTrashListEnvelope = try await request(
+            path: "trash/list",
+            queryItems: [URLQueryItem(name: "per_page", value: "1000")]
+        )
+        return PutIOTrashSummary(
+            count: envelope.total ?? envelope.files.count,
+            bytes: envelope.files.reduce(0) { $0 + max($1.size ?? 0, 0) }
+        )
+    }
+
+    func emptyTrash() async throws {
+        _ = try await post(path: "trash/empty", form: [:], failure: "Could not empty the trash.")
     }
 
     func addTransfer(url: String) async throws -> RemoteTransfer {
@@ -350,6 +445,7 @@ struct PutIOAPIClient: PutIOClient {
         case "AUDIO": .audio
         case "IMAGE": .image
         case "PDF": .pdf
+        case "ARCHIVE": .archive
         case "OTHER": .other
         default: .unknown
         }
@@ -476,4 +572,42 @@ struct PutIOTransferPayload: Decodable {
         case createdAt = "created_at"
         case finishedAt = "finished_at"
     }
+}
+
+struct PutIOEventListEnvelope: Decodable {
+    let events: [PutIOEventPayload]
+}
+
+struct PutIOEventPayload: Decodable {
+    let id: Int
+    let type: String
+    let transferName: String?
+    let fileName: String?
+    let fileID: Int?
+    let createdAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case type
+        case transferName = "transfer_name"
+        case fileName = "file_name"
+        case fileID = "file_id"
+        case createdAt = "created_at"
+    }
+}
+
+struct PutIOExtractionListEnvelope: Decodable {
+    let extractions: [PutIOExtractionPayload]
+}
+
+struct PutIOExtractionPayload: Decodable {
+    let id: Int
+    let name: String?
+    let status: String?
+    let message: String?
+}
+
+struct PutIOTrashListEnvelope: Decodable {
+    let files: [PutIOFilePayload]
+    let total: Int?
 }

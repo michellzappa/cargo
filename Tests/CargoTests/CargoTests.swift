@@ -431,6 +431,8 @@ final class CargoTests: XCTestCase {
         await coordinator.processLocalSync(remoteFileID: file.id)
 
         XCTAssertEqual(recorder.ids, [file.id, folder.id])
+        // Cargo's own cleanup must not park files in the trash, or the quota never frees.
+        XCTAssertEqual(recorder.skippedTrash, [true, true])
         XCTAssertEqual(coordinator.state.deletedRemoteFileIDs, [file.id])
         XCTAssertEqual(coordinator.state.deletedRemoteFolderIDs, [folder.id])
         XCTAssertEqual(coordinator.state.localJobs.first?.status, .needsReview)
@@ -547,6 +549,43 @@ final class CargoTests: XCTestCase {
 
 private final class StubDeleteRecorder: @unchecked Sendable {
     var ids: [Int] = []
+    var skippedTrash: [Bool] = []
+    var extracted: [Int] = []
+    var extractions: [PutIOExtraction] = []
+}
+
+extension CargoTests {
+    @MainActor
+    func testBackgroundCycleAsksPutIOToExtractArchivesThenRemovesThem() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoArchiveTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        var state = store.snapshot()
+        state.settings = CargoSettings(imdbWatchlistURL: "")
+        try store.replace(with: state)
+
+        let archive = RemoteFile(id: 90, name: "Release.rar", type: .archive, parentID: 0, sizeBytes: 5, createdAt: Date())
+        let recorder = StubDeleteRecorder()
+        let coordinator = CargoCoordinator(
+            store: store,
+            client: StubPutIOClient(filesByParent: [0: [archive]], deleteRecorder: recorder)
+        )
+
+        // First cycle: the archive is discovered and extraction requested.
+        _ = await coordinator.runBackgroundCycle()
+        XCTAssertEqual(recorder.extracted, [archive.id])
+        XCTAssertEqual(coordinator.state.requestedExtractionFileIDs, [archive.id])
+        XCTAssertTrue(recorder.ids.isEmpty)
+
+        // Put.io reports it done: the archive is deleted, skipping the trash.
+        recorder.extractions = [PutIOExtraction(id: 1, name: archive.name, status: .completed, message: nil)]
+        _ = await coordinator.runBackgroundCycle()
+        XCTAssertEqual(recorder.extracted, [archive.id], "no second extraction request")
+        XCTAssertEqual(recorder.ids, [archive.id])
+        XCTAssertEqual(recorder.skippedTrash, [true])
+        XCTAssertTrue(coordinator.state.requestedExtractionFileIDs.isEmpty)
+    }
 }
 
 private struct StubPutIOClient: PutIOClient {
@@ -570,7 +609,7 @@ private struct StubPutIOClient: PutIOClient {
 
     func fetchTransfers() async throws -> [RemoteTransfer] { transfers }
 
-    func fetchFiles(parentID: Int) async throws -> [RemoteFile] {
+    func fetchFiles(parentID: Int, types: [String]?) async throws -> [RemoteFile] {
         if let files = filesByParent[parentID] {
             return files
         }
@@ -595,7 +634,14 @@ private struct StubPutIOClient: PutIOClient {
         try Data("test file".utf8).write(to: destinationURL)
     }
 
-    func deleteFile(fileID: Int) async throws {
+    func deleteFile(fileID: Int, skipTrash: Bool) async throws {
         deleteRecorder.ids.append(fileID)
+        deleteRecorder.skippedTrash.append(skipTrash)
     }
+
+    func extractFiles(ids: [Int]) async throws {
+        deleteRecorder.extracted.append(contentsOf: ids)
+    }
+
+    func fetchExtractions() async throws -> [PutIOExtraction] { deleteRecorder.extractions }
 }

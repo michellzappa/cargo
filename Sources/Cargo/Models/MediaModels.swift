@@ -48,6 +48,7 @@ enum RemoteFileType: String, Codable, Sendable {
     case audio
     case image
     case pdf
+    case archive
     case other
     case unknown
 
@@ -57,6 +58,7 @@ enum RemoteFileType: String, Codable, Sendable {
         case .video: "Video"
         case .audio: "Audio"
         case .image: "Image"
+        case .archive: "Archive"
         case .pdf: "PDF"
         case .other: "File"
         case .unknown: "Unknown"
@@ -84,6 +86,10 @@ struct RemoteFile: Codable, Identifiable, Sendable {
 
     var isFolder: Bool {
         type == .folder
+    }
+
+    var isArchive: Bool {
+        type == .archive
     }
 
     var isMediaFile: Bool {
@@ -172,6 +178,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var launchAtLoginEnabled: Bool
     var automaticRemoteCleanupEnabled: Bool
     var automaticInboxCleanupEnabled: Bool
+    /// Ask Put.io to unpack archives it finds (rar'd releases) so the video inside shows up.
+    var automaticExtractEnabled: Bool
     var imdbWatchlistURL: String
     /// How often the background cycle polls Put.io and the watchlist.
     var refreshIntervalMinutes: Int
@@ -190,6 +198,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         launchAtLoginEnabled: Bool = true,
         automaticRemoteCleanupEnabled: Bool = true,
         automaticInboxCleanupEnabled: Bool = true,
+        automaticExtractEnabled: Bool = true,
         imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
         refreshIntervalMinutes: Int = 1
     ) {
@@ -204,6 +213,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.launchAtLoginEnabled = launchAtLoginEnabled
         self.automaticRemoteCleanupEnabled = automaticRemoteCleanupEnabled
         self.automaticInboxCleanupEnabled = automaticInboxCleanupEnabled
+        self.automaticExtractEnabled = automaticExtractEnabled
         self.imdbWatchlistURL = imdbWatchlistURL
         self.refreshIntervalMinutes = refreshIntervalMinutes
     }
@@ -220,6 +230,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case launchAtLoginEnabled
         case automaticRemoteCleanupEnabled
         case automaticInboxCleanupEnabled
+        case automaticExtractEnabled
         case imdbWatchlistURL
         case refreshIntervalMinutes
     }
@@ -237,6 +248,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         launchAtLoginEnabled = try container.decodeIfPresent(Bool.self, forKey: .launchAtLoginEnabled) ?? true
         automaticRemoteCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticRemoteCleanupEnabled) ?? true
         automaticInboxCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticInboxCleanupEnabled) ?? true
+        automaticExtractEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticExtractEnabled) ?? true
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
         refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1
@@ -262,6 +274,11 @@ struct CargoState: Codable, Sendable {
     var imdbWatchlistLastUpdated: Date?
     var deletedRemoteFileIDs: [Int]
     var deletedRemoteFolderIDs: [Int]
+    /// Archives seen in Put.io (rar'd releases) and the ones we asked it to unpack.
+    var remoteArchiveFiles: [RemoteFile]
+    var requestedExtractionFileIDs: [Int]
+    /// Last `events/list` id we processed; only newer events count.
+    var lastPutIOEventID: Int?
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -278,6 +295,9 @@ struct CargoState: Codable, Sendable {
         imdbWatchlistLastUpdated: Date? = nil,
         deletedRemoteFileIDs: [Int] = [],
         deletedRemoteFolderIDs: [Int] = [],
+        remoteArchiveFiles: [RemoteFile] = [],
+        requestedExtractionFileIDs: [Int] = [],
+        lastPutIOEventID: Int? = nil,
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -293,6 +313,9 @@ struct CargoState: Codable, Sendable {
         self.imdbWatchlistLastUpdated = imdbWatchlistLastUpdated
         self.deletedRemoteFileIDs = deletedRemoteFileIDs
         self.deletedRemoteFolderIDs = deletedRemoteFolderIDs
+        self.remoteArchiveFiles = remoteArchiveFiles
+        self.requestedExtractionFileIDs = requestedExtractionFileIDs
+        self.lastPutIOEventID = lastPutIOEventID
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -314,6 +337,9 @@ struct CargoState: Codable, Sendable {
         imdbWatchlistLastUpdated = try container.decodeIfPresent(Date.self, forKey: .imdbWatchlistLastUpdated)
         deletedRemoteFileIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFileIDs) ?? []
         deletedRemoteFolderIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFolderIDs) ?? []
+        remoteArchiveFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteArchiveFiles) ?? []
+        requestedExtractionFileIDs = try container.decodeIfPresent([Int].self, forKey: .requestedExtractionFileIDs) ?? []
+        lastPutIOEventID = try container.decodeIfPresent(Int.self, forKey: .lastPutIOEventID)
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -331,6 +357,9 @@ struct CargoState: Codable, Sendable {
         case imdbWatchlistLastUpdated
         case deletedRemoteFileIDs
         case deletedRemoteFolderIDs
+        case remoteArchiveFiles
+        case requestedExtractionFileIDs
+        case lastPutIOEventID
         case settings
         case lastUpdated
     }

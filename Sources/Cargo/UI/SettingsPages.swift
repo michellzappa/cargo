@@ -77,6 +77,9 @@ final class PutIOPage: CargoPage {
     private lazy var connectButton = SettingsForm.button("Connect with Put.io…", target: self, action: #selector(connect))
     private lazy var disconnectButton = SettingsForm.button("Disconnect", target: self, action: #selector(disconnect))
     private let accountLabel = SettingsForm.caption("")
+    private let storageLabel = SettingsForm.label("")
+    private let trashLabel = SettingsForm.label("")
+    private lazy var emptyTrashButton = SettingsForm.button("Empty Trash…", target: self, action: #selector(emptyTrash))
     private let intervalPopup = SettingsForm.popup()
 
     override func build() {
@@ -84,6 +87,11 @@ final class PutIOPage: CargoPage {
         row("Status", accountLabel)
         row(nil, [connectButton, disconnectButton])
         note("Authorization happens in the browser and returns through cargo://oauth/callback. The token lives in Keychain, never in the state file or logs.")
+
+        section("Storage")
+        row("Disk", storageLabel)
+        row("Trash", [trashLabel, emptyTrashButton])
+        note("Files Cargo removes after a verified local copy skip the trash. Files you delete by hand go to the trash and still count against your quota until it is emptied.")
 
         section("Polling")
         for minutes in CargoSettings.refreshIntervalChoices {
@@ -102,6 +110,35 @@ final class PutIOPage: CargoPage {
         disconnectButton.isHidden = !connected
         accountLabel.stringValue = coordinator.putIOStatus
         intervalPopup.selectItem(withTag: coordinator.state.settings.refreshIntervalMinutes)
+        if let disk = coordinator.diskUsage {
+            storageLabel.stringValue = "\(Formatters.bytes(disk.usedBytes)) used · \(Formatters.bytes(disk.availableBytes)) free of \(Formatters.bytes(disk.totalBytes))"
+        } else {
+            storageLabel.stringValue = "—"
+        }
+        if let trash = coordinator.trashSummary {
+            trashLabel.stringValue = trash.count == 0 ? "Empty" : "\(trash.count) item\(trash.count == 1 ? "" : "s") · \(Formatters.bytes(trash.bytes))"
+            emptyTrashButton.isEnabled = trash.count > 0
+        } else {
+            trashLabel.stringValue = "—"
+            emptyTrashButton.isEnabled = false
+        }
+    }
+
+    @objc private func emptyTrash() {
+        let alert = NSAlert()
+        alert.messageText = "Empty Put.io trash?"
+        alert.informativeText = "Everything in the trash is deleted for good. This includes files you trashed outside Cargo."
+        alert.addButton(withTitle: "Empty Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        Task { @MainActor [coordinator, statusLabel] in
+            do {
+                try await coordinator.emptyPutIOTrash()
+            } catch {
+                statusLabel.stringValue = error.localizedDescription
+            }
+        }
     }
 
     @objc private func connect() {
@@ -260,6 +297,7 @@ final class AutomationPage: CargoPage {
         section("Background cycle")
         let toggles: [(String, WritableKeyPath<CargoSettings, Bool>)] = [
             ("Sync new completed Put.io media", \.automaticSyncEnabled),
+            ("Ask Put.io to unpack archives (rar releases)", \.automaticExtractEnabled),
             ("Organize and rename Inbox media", \.automaticOrganizationEnabled),
             ("Delete Put.io file after verified local copy", \.automaticRemoteCleanupEnabled),
             ("Remove Inbox sidecars and empty folders", \.automaticInboxCleanupEnabled)
@@ -270,7 +308,7 @@ final class AutomationPage: CargoPage {
             }
             switches.append((control, keyPath))
         }
-        note("Put.io deletion happens only after a verified local copy. Inbox cleanup removes non-media sidecars only when a nested folder has no media or subfolders left.")
+        note("Put.io deletion happens only after a verified local copy and skips the trash. Extracted archives are removed the same way. Inbox cleanup removes non-media sidecars only when a nested folder has no media or subfolders left.")
 
         section("Notifications")
         let notifications = toggle("Send notifications", isOn: coordinator.state.settings.notificationsEnabled) { [weak self] value in

@@ -309,7 +309,7 @@ final class FilesPageViewController: PageViewController {
                 guard let self else { return }
                 guard confirm(
                     "Delete “\(file.displayPath)” from Put.io?",
-                    detail: "This permanently removes it from your Put.io account. Local copies are not affected.",
+                    detail: "It goes to Put.io's trash; empty the trash in Settings → Put.io to free the space. Local copies are not affected.",
                     button: "Delete"
                 ) else { return }
                 run { try await self.coordinator.deleteRemoteFile(remoteFileID: file.id) }
@@ -342,7 +342,33 @@ final class FilesPageViewController: PageViewController {
                 ]
             )
         }
-        return [ListSection(rows: rows)]
+        let archives = state.remoteArchiveFiles.map { archive -> ListRow in
+            let requested = state.requestedExtractionFileIDs.contains(archive.id)
+            let extract = RowAction(title: requested ? "Extracting…" : "Extract on Put.io", isEnabled: !requested) { [weak self] in
+                self?.run { try await self?.coordinator.requestExtraction(remoteFileID: archive.id) }
+            }
+            let delete = RowAction(title: "Delete from Put.io…", isDestructive: true, isSeparatorBefore: true) { [weak self] in
+                guard let self, confirm(
+                    "Delete “\(archive.displayPath)” from Put.io?",
+                    detail: "It goes to Put.io's trash; empty the trash in Settings → Put.io to free the space.",
+                    button: "Delete"
+                ) else { return }
+                run { try await self.coordinator.deleteRemoteFile(remoteFileID: archive.id) }
+            }
+            return ListRow(
+                id: "archive-\(archive.id)",
+                title: archive.displayPath,
+                details: ["Archive · \(Formatters.bytes(archive.sizeBytes))"],
+                badge: requested ? .info("Extracting") : .warning("Archive"),
+                primaryAction: extract,
+                menuActions: [extract, copyAction("Copy Name", archive.name), delete]
+            )
+        }
+        var sections = [ListSection(rows: rows)]
+        if !archives.isEmpty {
+            sections.append(ListSection(title: "Archives — Put.io unpacks these server-side", rows: archives))
+        }
+        return sections
     }
 
     private func chooseSubtitle(for file: RemoteFile) {

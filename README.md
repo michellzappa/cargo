@@ -25,11 +25,21 @@ a sidebar — Transfers, Files, Inbox, Watchlist, History — each a native tabl
 
 Every `refreshIntervalMinutes` the background cycle:
 
-1. refreshes Put.io transfers and the recursive video inventory,
-2. downloads newly completed video media into `_Inbox` (staging, resumable),
-3. classifies and renames Inbox media into the Movies / TV Shows layout,
-4. optionally deletes the Put.io original after the local copy verifies,
-5. removes sidecars and empty folders, and posts one notification.
+1. refreshes the account, transfers and Put.io's activity feed (`events/list`),
+   mirroring completed and failed transfers into History,
+2. walks the video inventory — only when something landed, an extraction is
+   in flight, or every tenth cycle; folders are listed with a server-side
+   `file_type` filter so sidecars never cross the wire,
+3. asks Put.io to unpack any archive it finds (rar'd releases) and removes the
+   archive once the videos inside exist,
+4. downloads newly completed video media into `_Inbox` (staging, resumable),
+5. classifies and renames Inbox media into the Movies / TV Shows layout,
+6. deletes the Put.io original after the local copy verifies — skipping the
+   trash, so the quota is actually freed,
+7. removes sidecars and empty folders, and posts one notification.
+
+Settings → Put.io shows disk usage and what is in the trash, with Empty Trash
+for the files you deleted by hand (those do go to the trash, on purpose).
 
 Each step is a switch in Settings → Automation. The Watchlist page follows a
 public IMDb Watchlist as a *desired* list (Wanted → Available → Queued →
@@ -80,7 +90,7 @@ AppKit throughout, no dependencies beyond `HouseKit`.
 
 | | |
 | --- | --- |
-| `Services/PutIOClient`, `PutIOOAuth`, `KeychainStore` | Put.io API, browser OAuth, token storage |
+| `Services/PutIOClient`, `PutIOOAuth`, `KeychainStore` | Put.io API (account, transfers, files with type filter, download, delete/skip-trash, events, extract, trash), browser OAuth, token storage |
 | `Services/CargoCoordinator` | The state machine: background cycle, sync jobs, settings mutations |
 | `Services/LibraryOrganizer` | Release-name parsing, destination preview, atomic move |
 | `Services/IMDbWatchlistService` | Public watchlist fetch and pagination |

@@ -8,10 +8,12 @@ struct CargoBackgroundCycleSummary: Sendable {
     var deletedFolders: [String] = []
     var downloaded: [String] = []
     var organized: [String] = []
+    var extracting: [String] = []
     var failures: [String] = []
 
     var hasMeaningfulChanges: Bool {
-        !discovered.isEmpty || !watchlistAdded.isEmpty || !deleted.isEmpty || !deletedFolders.isEmpty || !downloaded.isEmpty || !organized.isEmpty || !failures.isEmpty
+        !discovered.isEmpty || !watchlistAdded.isEmpty || !deleted.isEmpty || !deletedFolders.isEmpty
+            || !downloaded.isEmpty || !organized.isEmpty || !extracting.isEmpty || !failures.isEmpty
     }
 }
 
@@ -81,6 +83,10 @@ final class CargoCoordinator {
     }
     private var changeNotificationScheduled = false
     private(set) var diskUsage: PutIODiskUsage? {
+        didSet { scheduleChangeNotification() }
+    }
+    /// What is sitting in Put.io's trash, refreshed with the account.
+    private(set) var trashSummary: PutIOTrashSummary? {
         didSet { scheduleChangeNotification() }
     }
     private(set) var remoteFolderID = 0
@@ -342,21 +348,41 @@ final class CargoCoordinator {
         .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
     }
 
-    func refreshFromPutIO() async {
+    private var cyclesSinceInventoryWalk = 0
+    private static let inventoryWalkEvery = 10
+
+    /// Pulls account, transfers and the activity feed. The recursive inventory
+    /// walk is the expensive part, so it runs only when something could have
+    /// changed: a transfer completed since last time (from the event feed or
+    /// the transfer list), an extraction in flight, the first run, an explicit
+    /// `force` (the Refresh button) — and every tenth cycle regardless.
+    func refreshFromPutIO(force: Bool = true) async {
         do {
             let account = try await putIOClient.fetchAccount()
             let transfers = try await putIOClient.fetchTransfers()
-            let remoteFiles = try await putIOClient.fetchFiles(parentID: 0)
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: 0, types: nil)
+            let previouslyDone = Set(state.transfers.filter { [.completed, .seeding].contains($0.status) }.map(\.id))
+            let newlyDone = transfers.contains { [.completed, .seeding].contains($0.status) && !previouslyDone.contains($0.id) }
             state.transfers = transfers
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            let inventory = try await fetchRemoteInventory()
-            state.remoteMediaFiles = inventory.mediaFiles
-            state.remoteFolders = inventory.folders
+
+            let newEvents = try await processPutIOEvents()
+            let somethingLanded = newlyDone || newEvents.contains { $0.kind == .transferCompleted }
+            cyclesSinceInventoryWalk += 1
+            let overdue = cyclesSinceInventoryWalk >= Self.inventoryWalkEvery
+            if force || somethingLanded || overdue || !state.remoteMediaBaselineEstablished || !state.requestedExtractionFileIDs.isEmpty {
+                cyclesSinceInventoryWalk = 0
+                let inventory = try await fetchRemoteInventory()
+                state.remoteMediaFiles = inventory.mediaFiles
+                state.remoteFolders = inventory.folders
+                state.remoteArchiveFiles = inventory.archives
+            }
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
             try persist()
             diskUsage = account.disk
+            trashSummary = try? await putIOClient.fetchTrash()
             putIOStatus = "Connected as \(account.username)"
         } catch {
             if putIOClient is UnconfiguredPutIOClient {
@@ -367,9 +393,101 @@ final class CargoCoordinator {
         }
     }
 
+    /// Reads Put.io's activity feed since the last event we handled and mirrors
+    /// it into History, so "what happened on Put.io" is answerable from Cargo.
+    private func processPutIOEvents() async throws -> [PutIOEvent] {
+        let events = try await putIOClient.fetchEvents()
+        let newest = events.map(\.id).max()
+        guard let lastSeen = state.lastPutIOEventID else {
+            // First run: take the feed as the baseline, don't replay history.
+            state.lastPutIOEventID = newest
+            return []
+        }
+        let fresh = events.filter { $0.id > lastSeen }.sorted { $0.id < $1.id }
+        for event in fresh {
+            switch event.kind {
+            case .transferCompleted:
+                recordHistory(kind: .info, title: "Put.io finished a transfer", detail: event.name)
+            case .transferError:
+                recordHistory(kind: .warning, title: "Put.io transfer failed", detail: event.name)
+            case .other:
+                break
+            }
+        }
+        if let newest { state.lastPutIOEventID = max(lastSeen, newest) }
+        return fresh
+    }
+
+    /// Asks Put.io to unpack archives it has not been asked about yet, and
+    /// clears archives whose extraction finished (their videos are now files).
+    private func reconcileArchives(summary: inout CargoBackgroundCycleSummary) async {
+        guard state.settings.automaticExtractEnabled else { return }
+        let pending = state.remoteArchiveFiles.filter { !state.requestedExtractionFileIDs.contains($0.id) }
+        if !pending.isEmpty {
+            do {
+                try await putIOClient.extractFiles(ids: pending.map(\.id))
+                state.requestedExtractionFileIDs.append(contentsOf: pending.map(\.id))
+                summary.extracting = pending.map(\.displayPath)
+                recordHistory(
+                    kind: .info,
+                    title: "Asked Put.io to extract",
+                    detail: pending.map(\.displayPath).joined(separator: ", ")
+                )
+            } catch {
+                recordHistory(kind: .warning, title: "Put.io extraction request failed", detail: error.localizedDescription)
+            }
+        }
+        guard !state.requestedExtractionFileIDs.isEmpty, let extractions = try? await putIOClient.fetchExtractions() else { return }
+        for archive in state.remoteArchiveFiles where state.requestedExtractionFileIDs.contains(archive.id) {
+            guard let extraction = extractions.last(where: { $0.name == archive.name }) else { continue }
+            switch extraction.status {
+            case .completed:
+                state.requestedExtractionFileIDs.removeAll { $0 == archive.id }
+                if state.settings.automaticRemoteCleanupEnabled {
+                    do {
+                        try await putIOClient.deleteFile(fileID: archive.id, skipTrash: true)
+                        state.remoteArchiveFiles.removeAll { $0.id == archive.id }
+                        recordHistory(kind: .success, title: "Extracted and removed archive", detail: archive.displayPath)
+                    } catch {
+                        recordHistory(kind: .warning, title: "Could not remove extracted archive", detail: "\(archive.displayPath): \(error.localizedDescription)")
+                    }
+                } else {
+                    recordHistory(kind: .success, title: "Put.io extracted", detail: archive.displayPath)
+                }
+            case .error:
+                state.requestedExtractionFileIDs.removeAll { $0 == archive.id }
+                let detail = "\(archive.displayPath): \(extraction.message ?? "Put.io could not unpack it")"
+                summary.failures.append(detail)
+                recordHistory(kind: .failure, title: "Extraction failed", detail: detail)
+            case .inProgress, .unknown:
+                break
+            }
+        }
+        try? persist()
+    }
+
+    func requestExtraction(remoteFileID: Int) async throws {
+        guard let archive = state.remoteArchiveFiles.first(where: { $0.id == remoteFileID }) else {
+            throw SettingsError.remoteFileMissing
+        }
+        try await putIOClient.extractFiles(ids: [archive.id])
+        if !state.requestedExtractionFileIDs.contains(archive.id) {
+            state.requestedExtractionFileIDs.append(archive.id)
+        }
+        try persist()
+        recordHistory(kind: .info, title: "Asked Put.io to extract", detail: "\(archive.displayPath) · manual")
+    }
+
+    func emptyPutIOTrash() async throws {
+        try await putIOClient.emptyTrash()
+        trashSummary = PutIOTrashSummary(count: 0, bytes: 0)
+        recordHistory(kind: .success, title: "Emptied Put.io trash", detail: "manual")
+    }
+
     func runBackgroundCycle() async -> CargoBackgroundCycleSummary {
         var summary = CargoBackgroundCycleSummary()
-        await refreshFromPutIO()
+        await refreshFromPutIO(force: false)
+        await reconcileArchives(summary: &summary)
         summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
 
         let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
@@ -442,9 +560,12 @@ final class CargoCoordinator {
         return summary
     }
 
-    private func fetchRemoteInventory() async throws -> (mediaFiles: [RemoteFile], folders: [RemoteFile]) {
+    private static let inventoryTypes = ["FOLDER", "VIDEO", "ARCHIVE"]
+
+    private func fetchRemoteInventory() async throws -> (mediaFiles: [RemoteFile], folders: [RemoteFile], archives: [RemoteFile]) {
         var mediaFilesByID = [Int: RemoteFile]()
         var foldersByID = [Int: RemoteFile]()
+        var archivesByID = [Int: RemoteFile]()
         var folderQueue: [(id: Int, path: String)] = []
 
         for file in state.remoteFiles {
@@ -457,6 +578,10 @@ final class CargoCoordinator {
                 var mediaFile = file
                 mediaFile.path = file.name
                 mediaFilesByID[file.id] = mediaFile
+            } else if file.isArchive {
+                var archive = file
+                archive.path = file.name
+                archivesByID[file.id] = archive
             }
         }
 
@@ -464,7 +589,8 @@ final class CargoCoordinator {
 
         while let folder = folderQueue.popLast() {
             guard visitedFolderIDs.insert(folder.id).inserted else { continue }
-            let files = try await putIOClient.fetchFiles(parentID: folder.id)
+            // Server-side filter: sidecars never cross the wire.
+            let files = try await putIOClient.fetchFiles(parentID: folder.id, types: Self.inventoryTypes)
             for file in files {
                 if file.isFolder {
                     var folderFile = file
@@ -477,17 +603,18 @@ final class CargoCoordinator {
                     var mediaFile = file
                     mediaFile.path = Self.joinRemotePath(folder.path, file.name)
                     mediaFilesByID[file.id] = mediaFile
+                } else if file.isArchive {
+                    var archive = file
+                    archive.path = Self.joinRemotePath(folder.path, file.name)
+                    archivesByID[file.id] = archive
                 }
             }
         }
 
-        let mediaFiles = mediaFilesByID.values.sorted {
-            $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending
+        func sorted(_ files: Dictionary<Int, RemoteFile>.Values) -> [RemoteFile] {
+            files.sorted { $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending }
         }
-        let folders = foldersByID.values.sorted {
-            $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending
-        }
-        return (mediaFiles, folders)
+        return (sorted(mediaFilesByID.values), sorted(foldersByID.values), sorted(archivesByID.values))
     }
 
     private static func joinRemotePath(_ parent: String, _ child: String) -> String {
@@ -578,7 +705,7 @@ final class CargoCoordinator {
         }
 
         do {
-            let remoteFiles = try await putIOClient.fetchFiles(parentID: folder.id)
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
             remoteFolderStack.append((id: self.remoteFolderID, name: remoteFolderName))
             self.remoteFolderID = folder.id
             remoteFolderName = folder.name
@@ -593,7 +720,7 @@ final class CargoCoordinator {
         guard let previousFolder = remoteFolderStack.popLast() else { return }
 
         do {
-            let remoteFiles = try await putIOClient.fetchFiles(parentID: previousFolder.id)
+            let remoteFiles = try await putIOClient.fetchFiles(parentID: previousFolder.id, types: nil)
             remoteFolderID = previousFolder.id
             remoteFolderName = previousFolder.name
             state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
@@ -747,13 +874,16 @@ final class CargoCoordinator {
     /// User-initiated deletion from the Files page. No local-copy verification —
     /// the UI is responsible for confirming with the user first.
     @discardableResult
-    func deleteRemoteFile(remoteFileID: Int, reason: String? = nil) async throws -> RemoteFile {
+    /// Manual deletes go to Put.io's trash (recoverable). Cargo's own cleanup
+    /// after a verified local copy skips the trash — otherwise the quota is
+    /// only freed when someone remembers to empty it.
+    func deleteRemoteFile(remoteFileID: Int, reason: String? = nil, skipTrash: Bool = false) async throws -> RemoteFile {
         guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
             ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
             throw SettingsError.remoteFileMissing
         }
 
-        try await putIOClient.deleteFile(fileID: remoteFileID)
+        try await putIOClient.deleteFile(fileID: remoteFileID, skipTrash: skipTrash)
         state.remoteFiles.removeAll { $0.id == remoteFileID }
         state.remoteMediaFiles.removeAll { $0.id == remoteFileID || $0.parentID == remoteFileID }
         state.remoteFolders.removeAll { $0.id == remoteFileID }
@@ -777,7 +907,8 @@ final class CargoCoordinator {
         try verifyLocalCopy(remoteFileID: remoteFileID, localURL: localURL)
         let remoteFile = try await deleteRemoteFile(
             remoteFileID: remoteFileID,
-            reason: "\(jobName) · local copy verified"
+            reason: "\(jobName) · local copy verified",
+            skipTrash: true
         )
         do {
             return try await deleteEmptyRemoteFolders(startingAt: remoteFile.parentID)
@@ -797,10 +928,10 @@ final class CargoCoordinator {
 
         while folderID != 0,
               let folder = state.remoteFolders.first(where: { $0.id == folderID }) {
-            let children = try await putIOClient.fetchFiles(parentID: folder.id)
+            let children = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
             guard children.isEmpty else { break }
 
-            try await putIOClient.deleteFile(fileID: folder.id)
+            try await putIOClient.deleteFile(fileID: folder.id, skipTrash: true)
             if !state.deletedRemoteFolderIDs.contains(folder.id) {
                 state.deletedRemoteFolderIDs.append(folder.id)
             }
@@ -1031,7 +1162,7 @@ final class CargoCoordinator {
     }
 
     private static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
-        files.filter { $0.isFolder || $0.isMediaFile }
+        files.filter { $0.isFolder || $0.isMediaFile || $0.isArchive }
     }
 
 }

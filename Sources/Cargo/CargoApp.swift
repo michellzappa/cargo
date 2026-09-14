@@ -251,6 +251,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !summary.watchlistAdded.isEmpty { lines.append("Watchlist added \(plural(summary.watchlistAdded.count, "title"))") }
         if !summary.deleted.isEmpty { lines.append("Removed \(plural(summary.deleted.count, "remote file"))") }
         if !summary.deletedFolders.isEmpty { lines.append("Removed \(plural(summary.deletedFolders.count, "empty folder"))") }
+        if !summary.extracting.isEmpty { lines.append("Unpacking \(plural(summary.extracting.count, "archive"))") }
         if !summary.organized.isEmpty {
             lines.append("Organized \(plural(summary.organized.count, "item"))")
         } else if !summary.downloaded.isEmpty {
