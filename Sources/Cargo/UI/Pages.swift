@@ -97,7 +97,8 @@ class PageViewController: NSViewController {
             NSLayoutConstraint.activate([
                 bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
                 bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-                bar.topAnchor.constraint(equalTo: view.topAnchor)
+                // The content view runs under the unified title bar; the bar must not.
+                bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor)
             ])
             top = bar.bottomAnchor
         }

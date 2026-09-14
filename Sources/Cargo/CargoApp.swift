@@ -81,12 +81,35 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls where url.scheme == PutIOOAuth.redirectURI.scheme {
-            Task { @MainActor in
-                do {
-                    try await coordinator.finishPutIOAuthorization(from: url)
-                } catch {
-                    NSAlert(error: error).runModal()
+            switch url.host {
+            case "oauth":
+                Task { @MainActor in
+                    do {
+                        try await coordinator.finishPutIOAuthorization(from: url)
+                    } catch {
+                        NSAlert(error: error).runModal()
+                    }
                 }
+            case "settings":
+                settingsWindowController.show()
+            case "open":
+                // cargo://open?page=library
+                let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "page" }?.value
+                mainWindowController.show(page: Page.allCases.first { $0.title.lowercased() == name?.lowercased() })
+            case "snapshot":
+                // cargo://snapshot?page=library&to=/path.png — debugging aid: renders the window to a PNG.
+                let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+                let name = items.first { $0.name == "page" }?.value
+                let path = items.first { $0.name == "to" }?.value ?? NSTemporaryDirectory() + "cargo-snapshot.png"
+                mainWindowController.show(page: Page.allCases.first { $0.title.lowercased() == name?.lowercased() })
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [mainWindowController] in
+                    guard let view = mainWindowController.window?.contentView?.superview,
+                          let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+                    view.cacheDisplay(in: view.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+                }
+            default:
+                break
             }
         }
     }
