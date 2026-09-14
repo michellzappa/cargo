@@ -582,45 +582,41 @@ final class WatchlistPageViewController: PageViewController {
         }
     }
 
-    enum Filter: String, CaseIterable {
-        case all, wanted, notOrganized
+    /// The tabs above the list, by where a title is in the pipeline.
+    enum Filter: Int, CaseIterable {
+        case all, wanted, onPutIO, inLibrary
         var label: String {
             switch self {
-            case .all: "Everything"
-            case .wanted: "Wanted only"
-            case .notOrganized: "Not organized"
+            case .all: "All"
+            case .wanted: "Wanted"
+            case .onPutIO: "On Put.io"
+            case .inLibrary: "In Library"
             }
         }
-        static let defaultsKey = "cargo.watchlist.filter"
+        static let defaultsKey = "cargo.watchlist.tab"
     }
 
-    private var filter: Filter = Filter(rawValue: UserDefaults.standard.string(forKey: Filter.defaultsKey) ?? "") ?? .all {
+    private var filter: Filter = Filter(rawValue: UserDefaults.standard.integer(forKey: Filter.defaultsKey)) ?? .all {
         didSet {
             UserDefaults.standard.set(filter.rawValue, forKey: Filter.defaultsKey)
             reload()
         }
     }
 
-    override func accessoryView() -> NSView? {
-        let filterPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        filterPopup.controlSize = .small
-        filterPopup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        for option in Filter.allCases {
-            filterPopup.addItem(withTitle: "Show \(option.label)")
-            filterPopup.lastItem?.representedObject = option.rawValue
-        }
-        filterPopup.selectItem(at: Filter.allCases.firstIndex(of: filter) ?? 0)
-        filterPopup.target = self
-        filterPopup.action = #selector(filterChanged(_:))
-        let stack = NSStackView(views: [filterPopup, sortPopup()])
-        stack.orientation = .horizontal
-        stack.spacing = 8
-        return stack
+    override func leadingAccessoryView() -> NSView? {
+        let control = NSSegmentedControl(labels: Filter.allCases.map(\.label), trackingMode: .selectOne, target: self, action: #selector(filterChanged(_:)))
+        control.controlSize = .large
+        control.segmentStyle = .automatic
+        control.font = .systemFont(ofSize: 13, weight: .medium)
+        control.selectedSegment = filter.rawValue
+        for index in 0..<control.segmentCount { control.setWidth(0, forSegment: index) }
+        return control
     }
 
-    @objc private func filterChanged(_ sender: NSPopUpButton) {
-        guard let raw = sender.selectedItem?.representedObject as? String, let next = Filter(rawValue: raw) else { return }
-        filter = next
+    override func accessoryView() -> NSView? { sortPopup() }
+
+    @objc private func filterChanged(_ sender: NSSegmentedControl) {
+        filter = Filter(rawValue: sender.selectedSegment) ?? .all
     }
 
     private func sortPopup() -> NSPopUpButton {
@@ -697,10 +693,12 @@ final class WatchlistPageViewController: PageViewController {
     override func sections() -> [ListSection] {
         let state = coordinator.state
         let visible = state.imdbWatchlistItems.filter { item in
+            let status = Self.status(for: item, state: state).text
             switch filter {
-            case .all: true
-            case .wanted: Self.status(for: item, state: state).text == "Wanted"
-            case .notOrganized: Self.status(for: item, state: state).text != "Organized"
+            case .all: return true
+            case .wanted: return status == "Wanted"
+            case .onPutIO: return ["Available", "Queued", "In Inbox"].contains(status)
+            case .inLibrary: return status == "Organized"
             }
         }
         let rows = sorted(visible, state: state).map { item -> ListRow in
