@@ -130,6 +130,7 @@ class PageViewController: NSViewController {
 
     func reload() {
         list.apply(sections())
+        refreshAccessories()
     }
 
     // Subclass API
@@ -138,6 +139,15 @@ class PageViewController: NSViewController {
     func listActions() -> [RowAction] { [refreshAction()] }
     /// Optional control shown right-aligned above the list.
     func accessoryView() -> NSView? { nil }
+    /// Called after every reload so bar controls can enable/disable themselves.
+    func refreshAccessories() {}
+
+    func barButton(_ title: String, action: Selector) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        return button
+    }
     /// Optional control shown left-aligned above the list (tabs).
     func leadingAccessoryView() -> NSView? { nil }
 
@@ -225,6 +235,18 @@ final class TransfersPageViewController: PageViewController {
                 Task { _ = await self.coordinator.runBackgroundCycle() }
             }
         ]
+    }
+
+    private lazy var clearFinishedButton = barButton("Clear Finished", action: #selector(clearFinished))
+
+    override func accessoryView() -> NSView? { clearFinishedButton }
+
+    override func refreshAccessories() {
+        clearFinishedButton.isEnabled = coordinator.state.transfers.contains { [.completed, .seeding].contains($0.status) }
+    }
+
+    @objc private func clearFinished() {
+        run { [weak self] in try await self?.coordinator.cleanFinishedTransfers() }
     }
 
     override func sections() -> [ListSection] {
@@ -439,6 +461,18 @@ final class InboxPageViewController: PageViewController {
             title: "Nothing waiting for organization",
             detail: "Synced files land in \(coordinator.state.settings.stagingDirectoryName) and show up here."
         )
+    }
+
+    private lazy var clearFailedButton = barButton("Clear Failed", action: #selector(clearFailed))
+
+    override func accessoryView() -> NSView? { clearFailedButton }
+
+    override func refreshAccessories() {
+        clearFailedButton.isEnabled = coordinator.state.localJobs.contains { $0.status == .failed }
+    }
+
+    @objc private func clearFailed() {
+        coordinator.clearFailedJobs()
     }
 
     override func listActions() -> [RowAction] {
@@ -1018,11 +1052,12 @@ final class HistoryPageViewController: PageViewController {
         ]
     }
 
-    override func accessoryView() -> NSView? {
-        let button = NSButton(title: "Clear History", target: self, action: #selector(clearHistory))
-        button.bezelStyle = .rounded
-        button.controlSize = .small
-        return button
+    private lazy var clearHistoryButton = barButton("Clear History", action: #selector(clearHistory))
+
+    override func accessoryView() -> NSView? { clearHistoryButton }
+
+    override func refreshAccessories() {
+        clearHistoryButton.isEnabled = !coordinator.state.history.isEmpty
     }
 
     @objc private func clearHistory() {
