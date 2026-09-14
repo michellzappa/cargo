@@ -777,13 +777,14 @@ final class LibraryPageViewController: PageViewController {
 
     /// The tabs above the list.
     enum Tab: Int, CaseIterable {
-        case all, movies, shows, incomplete
+        case all, movies, shows, incomplete, unmatched
         var label: String {
             switch self {
             case .all: "All"
             case .movies: "Movies"
             case .shows: "TV Shows"
             case .incomplete: "Incomplete"
+            case .unmatched: "Unmatched"
             }
         }
         static let defaultsKey = "cargo.library.tab"
@@ -877,6 +878,10 @@ final class LibraryPageViewController: PageViewController {
             var details: [String] = []
             var badge: StatusBadge?
             var primary: RowAction?
+            if meta == nil, coordinator.hasTMDBKey {
+                let missed = state.metadataMisses[item.id] != nil
+                badge = .neutral(missed ? "No TMDB match" : "Not looked up yet")
+            }
             switch item.kind {
             case .movie:
                 details.append("\(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
@@ -934,12 +939,14 @@ final class LibraryPageViewController: PageViewController {
             case .movies: item.kind == .movie
             case .shows: item.kind == .show
             case .incomplete: !coordinator.missingEpisodes(for: item).isEmpty
+            case .unmatched: state.metadata[item.id] == nil
             }
         }
         let movies = sorted(visible.filter { $0.kind == .movie }).map(row)
         let shows = sorted(visible.filter { $0.kind == .show }).map(row)
         if tab == .movies { return [ListSection(rows: movies)] }
         if tab == .shows || tab == .incomplete { return [ListSection(rows: shows)] }
+        if tab == .unmatched, movies.isEmpty || shows.isEmpty { return [ListSection(rows: movies + shows)] }
         return [ListSection(title: "Movies", rows: movies), ListSection(title: "TV Shows", rows: shows)]
     }
 
