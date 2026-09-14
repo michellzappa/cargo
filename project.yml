@@ -11,6 +11,8 @@ configs:
 packages:
   HouseKit:
     path: ../housekit
+  EasySubsKit:
+    path: ../easysubs
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -42,6 +44,8 @@ targets:
     dependencies:
       - package: HouseKit
         product: HouseKit
+      - package: EasySubsKit
+        product: EasySubsKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.cargo.Cargo

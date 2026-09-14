@@ -1,4 +1,5 @@
 import AppKit
+import EasySubsKit
 import HouseKit
 
 extension SettingsWindowController {
@@ -182,6 +183,18 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         return field
     }()
     private let tmdbStatusLabel = SettingsForm.caption("")
+    private let languagePopup = SettingsForm.popup()
+    private let osUsernameField = SettingsForm.textField(placeholder: "username", width: 180)
+    private let osAPIKeyField = SettingsForm.textField(placeholder: "API key", width: 300)
+    private let osPasswordField: NSSecureTextField = {
+        let field = NSSecureTextField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "password"
+        field.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        return field
+    }()
+    private let osStatusLabel = SettingsForm.caption("")
 
     override func build() {
         section("Local library")
@@ -214,7 +227,33 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         row("API key", [tmdbKeyField, getKey])
         row(nil, [tmdbStatusLabel, SettingsForm.button("Retry Misses", target: self, action: #selector(retryMisses))])
         note("Posters, years and episode counts for the Library and Watchlist. Paste the v3 API key (32 hex characters), not the read access token. Free for personal use; the key lives in Keychain.")
+
+        section("Subtitles")
+        for language in SubtitleLanguage.common {
+            languagePopup.addItem(withTitle: language.name)
+            languagePopup.lastItem?.representedObject = language.code
+        }
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChanged)
+        row("Language", languagePopup)
+        osUsernameField.delegate = self
+        osPasswordField.delegate = self
+        osAPIKeyField.delegate = self
+        row("OpenSubtitles", [osUsernameField, osPasswordField])
+        let getOSKey = SettingsForm.button("Get a key…", target: self, action: #selector(openOpenSubtitles))
+        row("API key", [osAPIKeyField, getOSKey])
+        row(nil, osStatusLabel)
+        note("After a file is organized, Cargo saves Put.io's subtitle for it when there is one, else asks OpenSubtitles (the EasySubs engine: hash match first, filename second). Free account + API consumer key; the password lives in Keychain.")
         row(nil, statusLabel)
+    }
+
+    @objc private func languageChanged() {
+        guard let code = languagePopup.selectedItem?.representedObject as? String else { return }
+        save { $0.subtitleLanguage = code }
+    }
+
+    @objc private func openOpenSubtitles() {
+        NSWorkspace.shared.open(URL(string: "https://www.opensubtitles.com/en/consumers")!)
     }
 
     @objc private func retryMisses() {
@@ -242,6 +281,14 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         if misses > 0 { status += " · \(misses) not found" }
         if let error = coordinator.tmdbStatus { status += " · \(error)" }
         tmdbStatusLabel.stringValue = status
+        if let index = languagePopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == settings.subtitleLanguage }) {
+            languagePopup.selectItem(at: index)
+        }
+        if !isEditing(osUsernameField) { osUsernameField.stringValue = settings.openSubtitlesUsername }
+        if !isEditing(osAPIKeyField) { osAPIKeyField.stringValue = settings.openSubtitlesAPIKey }
+        let hasPassword = !(coordinator.openSubtitlesCredentials.password.isEmpty)
+        if !isEditing(osPasswordField) { osPasswordField.stringValue = hasPassword ? "••••••••" : "" }
+        osStatusLabel.stringValue = coordinator.openSubtitlesCredentials.isComplete ? "Ready" : "Put.io subtitles only until username, password and API key are set"
     }
 
     func pathControl(_ pathControl: NSPathControl, willDisplay openPanel: NSOpenPanel) {
@@ -286,6 +333,21 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         guard let field = notification.object as? NSTextField else { return }
         if field === watchlistURLField {
             commitWatchlistURL()
+        } else if field === osUsernameField {
+            let value = osUsernameField.stringValue.trimmingCharacters(in: .whitespaces)
+            save { $0.openSubtitlesUsername = value }
+        } else if field === osAPIKeyField {
+            let value = osAPIKeyField.stringValue.trimmingCharacters(in: .whitespaces)
+            save { $0.openSubtitlesAPIKey = value }
+        } else if field === osPasswordField {
+            let value = osPasswordField.stringValue
+            guard !value.hasPrefix("••") else { return }
+            do {
+                try coordinator.saveOpenSubtitlesPassword(value)
+                statusLabel.stringValue = "Saved \(Formatters.time.string(from: Date()))"
+            } catch {
+                statusLabel.stringValue = error.localizedDescription
+            }
         } else if field === tmdbKeyField {
             let value = tmdbKeyField.stringValue
             guard !value.hasPrefix("••") else { return }
@@ -344,7 +406,8 @@ final class AutomationPage: CargoPage {
             ("Organize and rename Inbox media", \.automaticOrganizationEnabled),
             ("Delete Put.io file after verified local copy", \.automaticRemoteCleanupEnabled),
             ("Remove Inbox sidecars and empty folders", \.automaticInboxCleanupEnabled),
-            ("Clear finished transfers from Put.io after each cycle", \.automaticTransferCleanEnabled)
+            ("Clear finished transfers from Put.io after each cycle", \.automaticTransferCleanEnabled),
+            ("Fetch subtitles after organizing", \.automaticSubtitlesEnabled)
         ]
         for (title, keyPath) in toggles {
             let control = toggle(title, isOn: coordinator.state.settings[keyPath: keyPath]) { [weak self] value in

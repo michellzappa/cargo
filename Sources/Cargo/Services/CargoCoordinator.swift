@@ -1,3 +1,4 @@
+import EasySubsKit
 import Foundation
 import HouseKit
 
@@ -65,6 +66,7 @@ final class CargoCoordinator {
 
     private let store: CargoStore
     private let keychain = KeychainStore()
+    private let subtitles = SubtitleService()
     private let imdbWatchlistService = IMDbWatchlistService()
     private var putIOClient: PutIOClient
     private var remoteFolderStack: [(id: Int, name: String)] = []
@@ -1009,6 +1011,9 @@ final class CargoCoordinator {
                 title: "Downloaded",
                 detail: "\(jobName) → \(destinationURL.path)"
             )
+            if state.settings.automaticSubtitlesEnabled {
+                await parkPutIOSubtitle(remoteFileID: remoteFileID)
+            }
 
             if state.settings.automaticRemoteCleanupEnabled {
                 do {
@@ -1199,7 +1204,85 @@ final class CargoCoordinator {
             title: "Organized",
             detail: "\(job.name) → \(destinationURL.path)"
         )
+        if state.settings.automaticSubtitlesEnabled {
+            Task { await self.attachSubtitle(to: destinationURL, remoteFileID: job.remoteFileID) }
+        }
         return destinationURL
+    }
+
+    // MARK: - Subtitles
+
+    var openSubtitlesCredentials: OpenSubtitlesCredentials {
+        OpenSubtitlesCredentials(
+            apiKey: state.settings.openSubtitlesAPIKey,
+            username: state.settings.openSubtitlesUsername,
+            password: keychain.readOpenSubtitlesPassword() ?? ""
+        )
+    }
+
+    func saveOpenSubtitlesPassword(_ password: String) throws {
+        try keychain.saveOpenSubtitlesPassword(password)
+        scheduleChangeNotification()
+    }
+
+    /// Put.io's subtitle for the file in the wanted language, kept aside until the
+    /// file has its final name. Best effort; the remote copy is about to go.
+    private func parkPutIOSubtitle(remoteFileID: Int) async {
+        guard let list = try? await putIOClient.fetchSubtitles(fileID: remoteFileID), !list.isEmpty else { return }
+        let wanted = state.settings.subtitleLanguage.lowercased()
+        let pick = list.first { $0.language.lowercased().hasPrefix(wanted) || $0.key.lowercased().contains(wanted) } ?? list.first!
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("cargo-\(remoteFileID).srt")
+        do {
+            try await putIOClient.downloadSubtitle(fileID: remoteFileID, key: pick.key, to: temporary)
+            try subtitles.park(putIOSubtitle: Data(contentsOf: temporary), remoteFileID: remoteFileID)
+            try? FileManager.default.removeItem(at: temporary)
+        } catch {
+            recordHistory(kind: .warning, title: "Put.io subtitle not saved", detail: error.localizedDescription)
+        }
+    }
+
+    /// Parked Put.io subtitle if there is one, else OpenSubtitles. Records the outcome.
+    @discardableResult
+    func attachSubtitle(to video: URL, remoteFileID: Int?, force: Bool = false) async -> SubtitleService.Outcome {
+        if !force, SubtitleService.hasSubtitle(video) { return .alreadyPresent }
+        if let remoteFileID, let saved = subtitles.claimParked(remoteFileID: remoteFileID, for: video) {
+            recordHistory(kind: .success, title: "Subtitle from Put.io", detail: saved.lastPathComponent)
+            return .saved(saved, source: "Put.io")
+        }
+        if force { try? FileManager.default.removeItem(at: SubtitleService.sidecarURL(for: video)) }
+        let outcome = await subtitles.fetchFromOpenSubtitles(
+            for: video,
+            language: state.settings.subtitleLanguage,
+            credentials: openSubtitlesCredentials
+        )
+        switch outcome {
+        case .saved(let url, let source):
+            recordHistory(kind: .success, title: "Subtitle saved", detail: "\(url.lastPathComponent) · \(source)")
+        case .notFound(let reason):
+            recordHistory(kind: .warning, title: "No subtitle", detail: "\(video.lastPathComponent): \(reason)")
+        case .noCredentials, .alreadyPresent:
+            break
+        }
+        return outcome
+    }
+
+    /// Every video under a library item that has no subtitle yet.
+    func fetchSubtitles(for item: LibraryItem) async -> (saved: Int, failed: Int) {
+        guard let root = libraryRootURL() else { return (0, 0) }
+        let accessing = root.startAccessingSecurityScopedResource()
+        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+        let url = root.appendingPathComponent(item.relativePath)
+        var videos: [URL] = []
+        if item.kind == .movie {
+            videos = [url]
+        } else if let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            videos = enumerator.allObjects.compactMap { $0 as? URL }.filter { LibraryOrganizer.isMediaFile(named: $0.lastPathComponent) }
+        }
+        var saved = 0, failed = 0
+        for video in videos where !SubtitleService.hasSubtitle(video) {
+            if case .saved = await attachSubtitle(to: video, remoteFileID: nil) { saved += 1 } else { failed += 1 }
+        }
+        return (saved, failed)
     }
 
     @discardableResult

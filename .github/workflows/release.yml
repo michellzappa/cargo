@@ -36,6 +36,11 @@ jobs:
         with:
           repository: michellzappa/housekit
           path: housekit
+      - name: Check out EasySubsKit
+        uses: actions/checkout@v4
+        with:
+          repository: michellzappa/easysubs
+          path: easysubs
 
       - name: Install XcodeGen
         run: brew install xcodegen

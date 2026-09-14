@@ -901,7 +901,8 @@ final class LibraryPageViewController: PageViewController {
             }
             switch item.kind {
             case .movie:
-                details.append("\(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
+                let subs = SubtitleService.hasSubtitle(url) ? " · subtitles" : ""
+                details.append("\(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))\(subs)")
             case .show:
                 details.append("\(item.seasonCount) season\(item.seasonCount == 1 ? "" : "s") · \(item.episodeCount) episode\(item.episodeCount == 1 ? "" : "s") · \(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
                 if let counts = meta?.episodeCounts, !counts.isEmpty {
@@ -930,6 +931,17 @@ final class LibraryPageViewController: PageViewController {
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
             }
+            menu.append(RowAction(title: "Get Subtitles") { [weak self] in
+                guard let self else { return }
+                run {
+                    let result = await self.coordinator.fetchSubtitles(for: item)
+                    let alert = NSAlert()
+                    alert.messageText = result.saved == 0 && result.failed == 0
+                        ? "\(item.displayTitle) already has subtitles"
+                        : "Saved \(result.saved) subtitle\(result.saved == 1 ? "" : "s")" + (result.failed > 0 ? " · \(result.failed) not found" : "")
+                    alert.runModal()
+                }
+            })
             menu.append(RowAction(title: "Search on IMDb") {
                 var components = URLComponents(string: "https://www.imdb.com/find/")
                 components?.queryItems = [URLQueryItem(name: "q", value: item.displayTitle), URLQueryItem(name: "s", value: "tt")]

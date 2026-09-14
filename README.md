@@ -47,7 +47,11 @@ Every `refreshIntervalMinutes` the background cycle:
 5. classifies and renames Inbox media into the Movies / TV Shows layout,
 6. deletes the Put.io original after the local copy verifies — skipping the
    trash, so the quota is actually freed,
-7. removes sidecars and empty folders, and posts one notification.
+7. fetches a subtitle for what it organized — Put.io's own if it had one
+   (saved before the remote copy is deleted), else OpenSubtitles through
+   [EasySubsKit](https://github.com/michellzappa/easysubs) (hash match, then
+   filename) — as `Title (Year).srt` beside the video,
+8. removes sidecars and empty folders, and posts one notification.
 
 Settings → Put.io shows disk usage and what is in the trash, with Empty Trash
 for the files you deleted by hand (those do go to the trash, on purpose).
@@ -93,11 +97,12 @@ own `DEVELOPMENT_TEAM` in `project.yml`.
 Settings lives in the menu bar item (⌘,): **Put.io** (account, polling
 interval) · **Library** (library folder, folder names, IMDb watchlist) ·
 **Automation** (each background step, notifications) · **General** (launch at
-login) · **About**.
+login) · **About**. Settings → Library also holds the TMDB key and the
+OpenSubtitles account + language for subtitles.
 
 ## Architecture
 
-AppKit throughout, no dependencies beyond `HouseKit`.
+AppKit throughout; dependencies are the sibling packages `HouseKit` and `EasySubsKit`.
 
 | | |
 | --- | --- |
@@ -106,6 +111,7 @@ AppKit throughout, no dependencies beyond `HouseKit`.
 | `Services/LibraryOrganizer` | Release-name parsing, destination preview, atomic move |
 | `Services/IMDbWatchlistService` | Public watchlist fetch and pagination |
 | `Services/LibraryIndex`, `TMDBClient` | Disk scan of the library layout; TMDB find/search/season counts, poster cache |
+| `Services/SubtitleService` | Put.io subtitle parking + OpenSubtitles via `EasySubsKit` (sibling package `../easysubs`) |
 | `Core/CargoStore` | One JSON state file in Application Support, durable job history |
 | `UI/MainWindowController`, `Pages`, `ListTableViewController` | Dashboard: sidebar + native tables |
 | `UI/SettingsPages` | The HouseKit settings window with Cargo's pages |

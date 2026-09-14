@@ -182,6 +182,11 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var automaticExtractEnabled: Bool
     /// `transfers/clean` after each cycle: finished transfers stop piling up on Put.io.
     var automaticTransferCleanEnabled: Bool
+    /// Subtitles after organizing: Put.io's own first, then OpenSubtitles (EasySubsKit).
+    var automaticSubtitlesEnabled: Bool
+    var subtitleLanguage: String
+    var openSubtitlesUsername: String
+    var openSubtitlesAPIKey: String
     var imdbWatchlistURL: String
     /// How often the background cycle polls Put.io and the watchlist.
     var refreshIntervalMinutes: Int
@@ -202,6 +207,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticInboxCleanupEnabled: Bool = true,
         automaticExtractEnabled: Bool = true,
         automaticTransferCleanEnabled: Bool = false,
+        automaticSubtitlesEnabled: Bool = true,
+        subtitleLanguage: String = "en",
+        openSubtitlesUsername: String = "",
+        openSubtitlesAPIKey: String = "",
         imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
         refreshIntervalMinutes: Int = 1
     ) {
@@ -218,6 +227,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.automaticInboxCleanupEnabled = automaticInboxCleanupEnabled
         self.automaticExtractEnabled = automaticExtractEnabled
         self.automaticTransferCleanEnabled = automaticTransferCleanEnabled
+        self.automaticSubtitlesEnabled = automaticSubtitlesEnabled
+        self.subtitleLanguage = subtitleLanguage
+        self.openSubtitlesUsername = openSubtitlesUsername
+        self.openSubtitlesAPIKey = openSubtitlesAPIKey
         self.imdbWatchlistURL = imdbWatchlistURL
         self.refreshIntervalMinutes = refreshIntervalMinutes
     }
@@ -236,6 +249,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case automaticInboxCleanupEnabled
         case automaticExtractEnabled
         case automaticTransferCleanEnabled
+        case automaticSubtitlesEnabled
+        case subtitleLanguage
+        case openSubtitlesUsername
+        case openSubtitlesAPIKey
         case imdbWatchlistURL
         case refreshIntervalMinutes
     }
@@ -255,6 +272,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticInboxCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticInboxCleanupEnabled) ?? true
         automaticExtractEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticExtractEnabled) ?? true
         automaticTransferCleanEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticTransferCleanEnabled) ?? false
+        automaticSubtitlesEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticSubtitlesEnabled) ?? true
+        subtitleLanguage = try container.decodeIfPresent(String.self, forKey: .subtitleLanguage) ?? "en"
+        openSubtitlesUsername = try container.decodeIfPresent(String.self, forKey: .openSubtitlesUsername) ?? ""
+        openSubtitlesAPIKey = try container.decodeIfPresent(String.self, forKey: .openSubtitlesAPIKey) ?? ""
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
         refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1

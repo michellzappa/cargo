@@ -5,6 +5,7 @@ final class KeychainStore {
     private let service = "app.cargo.Cargo"
     private let account = "putio-access-token"
     private let tmdbAccount = "tmdb-api-key"
+    private let openSubtitlesAccount = "opensubtitles-password"
 
     enum KeychainError: LocalizedError {
         case saveFailure(OSStatus)
@@ -23,6 +24,11 @@ final class KeychainStore {
     func readToken() -> String? { read(account: account) }
     func saveToken(_ token: String) throws { try save(token, account: account) }
     func deleteToken() throws { try delete(account: account) }
+
+    func readOpenSubtitlesPassword() -> String? { read(account: openSubtitlesAccount) }
+    func saveOpenSubtitlesPassword(_ password: String) throws {
+        if password.isEmpty { try delete(account: openSubtitlesAccount) } else { try save(password, account: openSubtitlesAccount) }
+    }
 
     func readTMDBKey() -> String? { read(account: tmdbAccount) }
     func saveTMDBKey(_ key: String) throws {

@@ -18,6 +18,10 @@ jobs:
         with:
           repository: michellzappa/housekit
           path: housekit
+      - uses: actions/checkout@v4
+        with:
+          repository: michellzappa/easysubs
+          path: easysubs
       - run: brew install xcodegen
       - run: xcodegen generate
       - name: Build

@@ -36,8 +36,4 @@ The app should run in the user's GUI session rather than relying on a detached s
 
 ## EasySubs contract
 
-The public EasySubs repository found during planning appears to be a browser extension. Before integrating it, confirm whether the desired future integration is subtitle acquisition, subtitle placement, or launching a title in EasySubs. The Cargo core should expose a generic post-import job boundary regardless.
-
-## Distribution
-
-Before sharing outside the development machine, Cargo needs an `.app` bundle, signing/notarization decisions, privacy messaging, and a clear policy for App Sandbox versus a direct-download build.
+Settled: EasySubs is `michellzappa/easysubs`, and its engine is the `EasySubsKit` Swift package Cargo depends on as a sibling (`../easysubs`). Cargo fetches subtitles after organizing — Put.io's own first, OpenSubtitles second. Credentials live in Settings → Library (password in Keychain).

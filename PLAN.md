@@ -70,7 +70,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ### 5. EasySubs integration
 
-- [ ] Confirm the integration contract for EasySubs.
+- [x] Confirm the integration contract for EasySubs: EasySubsKit package, subtitles after organize.
 - [ ] Prefer a local protocol or file-based handoff over app-specific coupling.
 - [ ] Add subtitle processing as a post-import job type.
 - [ ] Keep subtitle failures independent from media import success.
