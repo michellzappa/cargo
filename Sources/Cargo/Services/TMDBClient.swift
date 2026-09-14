@@ -44,12 +44,44 @@ struct TMDBClient: Sendable {
         throw ClientError.notFound
     }
 
+    /// Search with the year first; if that finds nothing, without it. Among the
+    /// results, prefer an exact normalized title, then a year within one.
     func search(title: String, year: Int?, type: TMDBMetadata.MediaType) async throws -> TMDBMetadata {
+        var results = try await searchResults(title: title, year: year, type: type)
+        if results.isEmpty, year != nil { results = try await searchResults(title: title, year: nil, type: type) }
+        guard !results.isEmpty else { throw ClientError.notFound }
+        let wanted = Self.normalize(title)
+        func score(_ result: Result) -> Int {
+            var score = 0
+            let names = [result.title, result.name, result.originalTitle, result.originalName].compactMap { $0 }.map(Self.normalize)
+            if names.contains(wanted) { score += 4 }
+            else if names.contains(where: { $0.hasPrefix(wanted) || wanted.hasPrefix($0) }) { score += 2 }
+            if let year, let date = result.releaseDate ?? result.firstAirDate, let found = Int(date.prefix(4)) {
+                if found == year { score += 3 } else if abs(found - year) == 1 { score += 1 } else { score -= 2 }
+            }
+            return score
+        }
+        let best = results.enumerated().max { a, b in
+            let sa = score(a.element), sb = score(b.element)
+            return sa == sb ? a.offset > b.offset : sa < sb
+        }!.element
+        return try await metadata(for: best, type: type)
+    }
+
+    private func searchResults(title: String, year: Int?, type: TMDBMetadata.MediaType) async throws -> [Result] {
         var query = ["query": title]
         if let year { query[type == .movie ? "year" : "first_air_date_year"] = String(year) }
         let envelope: SearchEnvelope = try await get("search/\(type.rawValue)", query)
-        guard let first = envelope.results.first else { throw ClientError.notFound }
-        return try await metadata(for: first, type: type)
+        return envelope.results
+    }
+
+    /// Case, punctuation and articles out: "Titan: The OceanGate Disaster" ≈ "Titan the Oceangate Disaster".
+    static func normalize(_ value: String) -> String {
+        value.lowercased()
+            .folding(options: [.diacriticInsensitive], locale: nil)
+            .replacingOccurrences(of: "&", with: "and")
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
     }
 
     private func metadata(for result: Result, type: TMDBMetadata.MediaType) async throws -> TMDBMetadata {
@@ -98,12 +130,16 @@ struct TMDBClient: Sendable {
         let id: Int
         let title: String?
         let name: String?
+        let originalTitle: String?
+        let originalName: String?
         let posterPath: String?
         let overview: String?
         let releaseDate: String?
         let firstAirDate: String?
         enum CodingKeys: String, CodingKey {
             case id, title, name, overview
+            case originalTitle = "original_title"
+            case originalName = "original_name"
             case posterPath = "poster_path"
             case releaseDate = "release_date"
             case firstAirDate = "first_air_date"

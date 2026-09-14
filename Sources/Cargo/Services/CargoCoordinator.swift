@@ -518,29 +518,53 @@ final class CargoCoordinator {
 
     /// Fills in TMDB metadata for library and watchlist entries that lack it
     /// or whose copy is a week old — a handful per cycle, to stay polite.
-    func enrichMetadata(limit: Int = 20) async {
+    func enrichMetadata(limit: Int = 40) async {
         guard let key = keychain.readTMDBKey(), !key.isEmpty else { return }
         let client = TMDBClient(apiKey: key)
         var budget = limit
         var changed = false
 
-        for item in state.libraryItems where budget > 0 {
-            if let existing = state.metadata[item.id], !existing.isStale { continue }
+        func needsLookup(_ id: String) -> Bool {
+            if let existing = state.metadata[id], !existing.isStale { return false }
+            if let missed = state.metadataMisses[id], Date().timeIntervalSince(missed) < 7 * 86_400 { return false }
+            return true
+        }
+        func store(_ id: String, _ lookup: () async throws -> TMDBMetadata) async -> Bool {
             budget -= 1
-            if let meta = try? await client.search(title: item.title, year: item.year, type: item.kind == .movie ? .movie : .tv) {
-                state.metadata[item.id] = meta
-                changed = true
+            do {
+                state.metadata[id] = try await lookup()
+                state.metadataMisses[id] = nil
+                return true
+            } catch TMDBClient.ClientError.notFound {
+                state.metadataMisses[id] = Date()
+                return true
+            } catch {
+                // Network or key trouble: stop for this cycle rather than burn the budget.
+                budget = 0
+                tmdbStatus = error.localizedDescription
+                return false
             }
         }
-        for item in state.imdbWatchlistItems where budget > 0 && item.id.hasPrefix("tt") {
-            if let existing = state.metadata[item.id], !existing.isStale { continue }
-            budget -= 1
-            if let meta = try? await client.find(imdbID: item.id) {
-                state.metadata[item.id] = meta
-                changed = true
-            }
+
+        for item in state.libraryItems where budget > 0 && needsLookup(item.id) {
+            let kind: TMDBMetadata.MediaType = item.kind == .movie ? .movie : .tv
+            changed = await store(item.id) { try await client.search(title: item.title, year: item.year, type: kind) } || changed
+        }
+        for item in state.imdbWatchlistItems where budget > 0 && item.id.hasPrefix("tt") && needsLookup(item.id) {
+            changed = await store(item.id) { try await client.find(imdbID: item.id) } || changed
         }
         if changed { try? persist() }
+    }
+
+    private(set) var tmdbStatus: String? {
+        didSet { scheduleChangeNotification() }
+    }
+
+    /// Forget misses so the next cycle tries them again (after a rename, say).
+    func retryMetadataMisses() {
+        state.metadataMisses.removeAll()
+        try? persist()
+        Task { await enrichMetadata() }
     }
 
     /// Season → episode numbers TMDB says exist but the disk lacks.

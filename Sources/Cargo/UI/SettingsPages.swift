@@ -212,9 +212,13 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         tmdbKeyField.delegate = self
         let getKey = SettingsForm.button("Get a key…", target: self, action: #selector(openTMDBSignup))
         row("API key", [tmdbKeyField, getKey])
-        row(nil, tmdbStatusLabel)
+        row(nil, [tmdbStatusLabel, SettingsForm.button("Retry Misses", target: self, action: #selector(retryMisses))])
         note("Posters, years and episode counts for the Library and Watchlist. Paste the v3 API key (32 hex characters), not the read access token. Free for personal use; the key lives in Keychain.")
         row(nil, statusLabel)
+    }
+
+    @objc private func retryMisses() {
+        coordinator.retryMetadataMisses()
     }
 
     @objc private func openTMDBSignup() {
@@ -233,7 +237,11 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         let hasKey = coordinator.hasTMDBKey
         if !isEditing(tmdbKeyField) { tmdbKeyField.stringValue = hasKey ? "••••••••••••••••" : "" }
         let enriched = coordinator.state.metadata.count
-        tmdbStatusLabel.stringValue = hasKey ? "Key saved · \(enriched) title\(enriched == 1 ? "" : "s") enriched" : "No key"
+        let misses = coordinator.state.metadataMisses.count
+        var status = hasKey ? "Key saved · \(enriched) matched" : "No key"
+        if misses > 0 { status += " · \(misses) not found" }
+        if let error = coordinator.tmdbStatus { status += " · \(error)" }
+        tmdbStatusLabel.stringValue = status
     }
 
     func pathControl(_ pathControl: NSPathControl, willDisplay openPanel: NSOpenPanel) {

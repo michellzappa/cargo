@@ -330,8 +330,9 @@ private final class ListCellView: NSTableCellView {
             thumbnailHeight,
             thumbnailWidth,
             thumbnailLeading,
-            textStack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-            textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            textStack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 8),
+            textStack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -8),
+            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
             actionButton.leadingAnchor.constraint(equalTo: textStack.trailingAnchor, constant: 12),
             actionButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
             actionButton.centerYAnchor.constraint(equalTo: centerYAnchor)

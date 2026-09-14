@@ -288,6 +288,8 @@ struct CargoState: Codable, Sendable {
     /// The SSD, as last scanned; and TMDB metadata keyed by library item id or IMDb id.
     var libraryItems: [LibraryItem]
     var metadata: [String: TMDBMetadata]
+    /// Lookups TMDB had nothing for, and when; retried after a week, not every cycle.
+    var metadataMisses: [String: Date]
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -309,6 +311,7 @@ struct CargoState: Codable, Sendable {
         lastPutIOEventID: Int? = nil,
         libraryItems: [LibraryItem] = [],
         metadata: [String: TMDBMetadata] = [:],
+        metadataMisses: [String: Date] = [:],
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -329,6 +332,7 @@ struct CargoState: Codable, Sendable {
         self.lastPutIOEventID = lastPutIOEventID
         self.libraryItems = libraryItems
         self.metadata = metadata
+        self.metadataMisses = metadataMisses
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -355,6 +359,7 @@ struct CargoState: Codable, Sendable {
         lastPutIOEventID = try container.decodeIfPresent(Int.self, forKey: .lastPutIOEventID)
         libraryItems = try container.decodeIfPresent([LibraryItem].self, forKey: .libraryItems) ?? []
         metadata = try container.decodeIfPresent([String: TMDBMetadata].self, forKey: .metadata) ?? [:]
+        metadataMisses = try container.decodeIfPresent([String: Date].self, forKey: .metadataMisses) ?? [:]
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -377,6 +382,7 @@ struct CargoState: Codable, Sendable {
         case lastPutIOEventID
         case libraryItems
         case metadata
+        case metadataMisses
         case settings
         case lastUpdated
     }

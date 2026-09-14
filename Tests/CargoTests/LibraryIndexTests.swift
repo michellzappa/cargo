@@ -43,3 +43,11 @@ final class LibraryIndexTests: XCTestCase {
         XCTAssertNil(LibraryIndex.seasonEpisode(from: "Movie.mkv"))
     }
 }
+
+final class TMDBNormalizeTests: XCTestCase {
+    func testNormalizeIgnoresPunctuationCaseAndAccents() {
+        XCTAssertEqual(TMDBClient.normalize("Titan: The OceanGate Disaster"), "titan the oceangate disaster")
+        XCTAssertEqual(TMDBClient.normalize("The Man from U.N.C.L.E."), "the man from u n c l e")
+        XCTAssertEqual(TMDBClient.normalize("Amélie & Co"), "amelie and co")
+    }
+}
