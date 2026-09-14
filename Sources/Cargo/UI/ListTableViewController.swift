@@ -263,6 +263,7 @@ private final class ListCellView: NSTableCellView {
     private let thumbnailView = NSImageView()
     private var thumbnailLeading: NSLayoutConstraint!
     private var thumbnailWidth: NSLayoutConstraint!
+    private var thumbnailHeight: NSLayoutConstraint!
     private var thumbnailURL: URL?
     private var action: RowAction?
 
@@ -276,6 +277,9 @@ private final class ListCellView: NSTableCellView {
         thumbnailView.layer?.masksToBounds = true
         thumbnailView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
         thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+        thumbnailView.setContentHuggingPriority(.required, for: .vertical)
+        thumbnailView.setContentCompressionResistancePriority(.init(1), for: .vertical)
+        thumbnailView.setContentCompressionResistancePriority(.init(1), for: .horizontal)
         addSubview(thumbnailView)
 
         let titleRow = NSStackView(views: [titleLabel, badgeView])
@@ -316,11 +320,14 @@ private final class ListCellView: NSTableCellView {
         addSubview(textStack)
         addSubview(actionButton)
         thumbnailWidth = thumbnailView.widthAnchor.constraint(equalToConstant: 0)
+        thumbnailHeight = thumbnailView.heightAnchor.constraint(equalToConstant: 0)
         thumbnailLeading = textStack.leadingAnchor.constraint(equalTo: thumbnailView.trailingAnchor, constant: 0)
         NSLayoutConstraint.activate([
             thumbnailView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
-            thumbnailView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            thumbnailView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            thumbnailView.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 6),
+            thumbnailView.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -6),
+            thumbnailHeight,
             thumbnailWidth,
             thumbnailLeading,
             textStack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
@@ -338,6 +345,7 @@ private final class ListCellView: NSTableCellView {
         thumbnailURL = row.thumbnail
         if let url = row.thumbnail {
             thumbnailWidth.constant = 40
+            thumbnailHeight.constant = 60
             thumbnailLeading.constant = 10
             thumbnailView.isHidden = false
             thumbnailView.image = nil
@@ -348,6 +356,7 @@ private final class ListCellView: NSTableCellView {
             }
         } else {
             thumbnailWidth.constant = 0
+            thumbnailHeight.constant = 0
             thumbnailLeading.constant = 0
             thumbnailView.isHidden = true
         }
