@@ -5,6 +5,7 @@ enum Page: Int, CaseIterable {
     case transfers
     case files
     case inbox
+    case library
     case watchlist
     case history
 
@@ -13,6 +14,7 @@ enum Page: Int, CaseIterable {
         case .transfers: "Transfers"
         case .files: "Files"
         case .inbox: "Inbox"
+        case .library: "Library"
         case .watchlist: "Watchlist"
         case .history: "History"
         }
@@ -23,6 +25,7 @@ enum Page: Int, CaseIterable {
         case .transfers: "arrow.down.circle"
         case .files: "folder"
         case .inbox: "tray"
+        case .library: "film.stack"
         case .watchlist: "star"
         case .history: "clock"
         }
@@ -34,6 +37,7 @@ enum Page: Int, CaseIterable {
         case .transfers: coordinator.state.transfers.count
         case .files: coordinator.state.remoteMediaFiles.count
         case .inbox: coordinator.inboxFileURLs().count
+        case .library: coordinator.state.libraryItems.count
         case .watchlist: coordinator.state.imdbWatchlistItems.count
         case .history: coordinator.state.history.count
         }
@@ -45,6 +49,7 @@ enum Page: Int, CaseIterable {
         case .transfers: TransfersPageViewController(page: self, coordinator: coordinator)
         case .files: FilesPageViewController(page: self, coordinator: coordinator)
         case .inbox: InboxPageViewController(page: self, coordinator: coordinator)
+        case .library: LibraryPageViewController(page: self, coordinator: coordinator)
         case .watchlist: WatchlistPageViewController(page: self, coordinator: coordinator)
         case .history: HistoryPageViewController(page: self, coordinator: coordinator)
         }
@@ -683,25 +688,50 @@ final class WatchlistPageViewController: PageViewController {
                 if let url = URL(string: "https://www.imdb.com/title/\(item.id)/") { NSWorkspace.shared.open(url) }
             }
             let added = item.addedAt.map { "Added \(Formatters.date.string(from: $0))" } ?? item.id
+            let meta = state.metadata[item.id]
+            var menu = [search, imdb]
+            if let meta {
+                menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
+            }
+            if let library = Self.libraryItem(for: item, state: state), let root = coordinator.libraryRootURL() {
+                menu.append(RowAction(title: "Reveal in Library") {
+                    NSWorkspace.shared.activateFileViewerSelecting([root.appendingPathComponent(library.relativePath)])
+                })
+            }
+            menu.append(copyAction("Copy Title", item.title))
             return ListRow(
                 id: item.id,
                 title: item.year.map { "\(item.title) (\($0))" } ?? item.title,
                 details: [[item.titleType, added].compactMap { $0 }.joined(separator: " · ")],
                 badge: Self.status(for: item, state: state),
+                thumbnail: meta?.posterURL,
                 primaryAction: search,
-                menuActions: [search, imdb, copyAction("Copy Title", item.title)]
+                menuActions: menu
             )
         }
         return [ListSection(rows: rows)]
     }
 
     static func status(for item: IMDbWatchlistItem, state: CargoState) -> StatusBadge {
+        if libraryItem(for: item, state: state) != nil { return .success("Organized") }
         let matching = state.localJobs.filter { matches(item.title, filename: $0.name) }
         if matching.contains(where: { $0.status == .completed }) { return .success("Organized") }
         if matching.contains(where: { $0.status == .needsReview }) { return .highlight("In Inbox") }
         if matching.contains(where: { [.queued, .downloading, .importing].contains($0.status) }) { return .info("Queued") }
         if state.remoteMediaFiles.contains(where: { matches(item.title, filename: $0.displayPath) }) { return .info("Available") }
         return .warning("Wanted")
+    }
+
+    /// Same rule as `CargoCoordinator.libraryItem(for:)`, usable without an instance.
+    static func libraryItem(for item: IMDbWatchlistItem, state: CargoState) -> LibraryItem? {
+        if let meta = state.metadata[item.id],
+           let hit = state.libraryItems.first(where: { state.metadata[$0.id]?.tmdbID == meta.tmdbID }) {
+            return hit
+        }
+        let wanted = CargoCoordinator.normalizedTitle(item.title)
+        return state.libraryItems.first {
+            CargoCoordinator.normalizedTitle($0.title) == wanted && (item.year == nil || $0.year == nil || $0.year == item.year)
+        }
     }
 
     private static func matches(_ title: String, filename: String) -> Bool {
@@ -714,6 +744,143 @@ final class WatchlistPageViewController: PageViewController {
             .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
             .split(separator: " ")
             .joined(separator: " ")
+    }
+}
+
+// MARK: - Library
+
+final class LibraryPageViewController: PageViewController {
+    enum Sort: String, CaseIterable {
+        case added, title, size
+        var label: String {
+            switch self {
+            case .added: "Recently Added"
+            case .title: "Title"
+            case .size: "Size"
+            }
+        }
+        static let defaultsKey = "cargo.library.sort"
+    }
+
+    private var sort: Sort = Sort(rawValue: UserDefaults.standard.string(forKey: Sort.defaultsKey) ?? "") ?? .added {
+        didSet {
+            UserDefaults.standard.set(sort.rawValue, forKey: Sort.defaultsKey)
+            reload()
+        }
+    }
+
+    override var subtitle: String {
+        let items = coordinator.state.libraryItems
+        guard !items.isEmpty else { return "" }
+        let movies = items.filter { $0.kind == .movie }.count
+        let shows = items.filter { $0.kind == .show }
+        let episodes = shows.reduce(0) { $0 + $1.episodeCount }
+        let size = items.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        return "\(movies) movies · \(shows.count) shows · \(episodes) episodes · \(Formatters.bytes(size))"
+    }
+
+    override var emptyState: EmptyState {
+        EmptyState(
+            symbol: "film.stack",
+            title: coordinator.state.settings.hasLibraryRoot ? "Nothing in the library yet" : "No library folder",
+            detail: coordinator.state.settings.hasLibraryRoot
+                ? "Organized media shows up here as Movies and TV Shows."
+                : "Choose the folder Infuse reads in Settings → Library."
+        )
+    }
+
+    override func listActions() -> [RowAction] {
+        [
+            RowAction(title: "Rescan Library") { [weak self] in self?.coordinator.scanLibrary() },
+            RowAction(title: "Open Library in Finder", isEnabled: coordinator.libraryRootURL() != nil) { [weak self] in
+                guard let url = self?.coordinator.libraryRootURL() else { return }
+                NSWorkspace.shared.open(url)
+            }
+        ]
+    }
+
+    override func accessoryView() -> NSView? {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        for option in Sort.allCases {
+            popup.addItem(withTitle: "Sort by \(option.label)")
+            popup.lastItem?.representedObject = option.rawValue
+        }
+        popup.selectItem(at: Sort.allCases.firstIndex(of: sort) ?? 0)
+        popup.target = self
+        popup.action = #selector(sortChanged(_:))
+        return popup
+    }
+
+    @objc private func sortChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String, let next = Sort(rawValue: raw) else { return }
+        sort = next
+    }
+
+    private func sorted(_ items: [LibraryItem]) -> [LibraryItem] {
+        switch sort {
+        case .added: items.sorted { $0.addedAt > $1.addedAt }
+        case .title: items.sorted { $0.displayTitle.localizedStandardCompare($1.displayTitle) == .orderedAscending }
+        case .size: items.sorted { $0.sizeBytes > $1.sizeBytes }
+        }
+    }
+
+    override func sections() -> [ListSection] {
+        let state = coordinator.state
+        guard let root = coordinator.libraryRootURL() else { return [] }
+        func row(_ item: LibraryItem) -> ListRow {
+            let meta = state.metadata[item.id]
+            let url = root.appendingPathComponent(item.relativePath)
+            var details: [String] = []
+            var badge: StatusBadge?
+            switch item.kind {
+            case .movie:
+                details.append("\(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
+            case .show:
+                details.append("\(item.seasonCount) season\(item.seasonCount == 1 ? "" : "s") · \(item.episodeCount) episode\(item.episodeCount == 1 ? "" : "s") · \(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
+                if let counts = meta?.episodeCounts, !counts.isEmpty {
+                    // Completeness per season, the thing Infuse never tells you.
+                    let gaps = item.episodes.keys.sorted().compactMap { season -> String? in
+                        guard let expected = counts[season], let have = item.episodes[season]?.count, have < expected else { return nil }
+                        return "Season \(season) · \(have) of \(expected)"
+                    }
+                    if gaps.isEmpty {
+                        badge = .success("Complete")
+                    } else {
+                        badge = .warning("Incomplete")
+                        details.append(gaps.joined(separator: "  ·  "))
+                    }
+                }
+            }
+            let reveal = RowAction(title: "Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            let play = RowAction(title: "Play in Infuse", isEnabled: item.kind == .movie) {
+                var components = URLComponents(string: "infuse://x-callback-url/play")
+                components?.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
+                if let infuse = components?.url { NSWorkspace.shared.open(infuse) }
+            }
+            var menu = [reveal, play]
+            if let meta {
+                menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
+            }
+            menu.append(copyAction("Copy Path", url.path))
+            menu.append(RowAction(title: "Move to Trash…", isDestructive: true, isSeparatorBefore: true) { [weak self] in
+                guard let self, confirm("Move “\(item.displayTitle)” to the Trash?", detail: "The files leave the library; Infuse will stop showing it. Recoverable from the Trash.", button: "Move to Trash") else { return }
+                do { try coordinator.deleteLibraryItem(item) } catch { NSAlert(error: error).runModal() }
+            })
+            return ListRow(
+                id: item.id,
+                title: item.displayTitle,
+                details: details,
+                badge: badge,
+                thumbnail: meta?.posterURL,
+                primaryAction: reveal,
+                menuActions: menu
+            )
+        }
+        let movies = sorted(state.libraryItems.filter { $0.kind == .movie }).map(row)
+        let shows = sorted(state.libraryItems.filter { $0.kind == .show }).map(row)
+        return [ListSection(title: "Movies", rows: movies), ListSection(title: "TV Shows", rows: shows)]
     }
 }
 

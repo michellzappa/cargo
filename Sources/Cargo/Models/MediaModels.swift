@@ -285,6 +285,9 @@ struct CargoState: Codable, Sendable {
     var requestedExtractionFileIDs: [Int]
     /// Last `events/list` id we processed; only newer events count.
     var lastPutIOEventID: Int?
+    /// The SSD, as last scanned; and TMDB metadata keyed by library item id or IMDb id.
+    var libraryItems: [LibraryItem]
+    var metadata: [String: TMDBMetadata]
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -304,6 +307,8 @@ struct CargoState: Codable, Sendable {
         remoteArchiveFiles: [RemoteFile] = [],
         requestedExtractionFileIDs: [Int] = [],
         lastPutIOEventID: Int? = nil,
+        libraryItems: [LibraryItem] = [],
+        metadata: [String: TMDBMetadata] = [:],
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -322,6 +327,8 @@ struct CargoState: Codable, Sendable {
         self.remoteArchiveFiles = remoteArchiveFiles
         self.requestedExtractionFileIDs = requestedExtractionFileIDs
         self.lastPutIOEventID = lastPutIOEventID
+        self.libraryItems = libraryItems
+        self.metadata = metadata
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -346,6 +353,8 @@ struct CargoState: Codable, Sendable {
         remoteArchiveFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteArchiveFiles) ?? []
         requestedExtractionFileIDs = try container.decodeIfPresent([Int].self, forKey: .requestedExtractionFileIDs) ?? []
         lastPutIOEventID = try container.decodeIfPresent(Int.self, forKey: .lastPutIOEventID)
+        libraryItems = try container.decodeIfPresent([LibraryItem].self, forKey: .libraryItems) ?? []
+        metadata = try container.decodeIfPresent([String: TMDBMetadata].self, forKey: .metadata) ?? [:]
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -366,6 +375,8 @@ struct CargoState: Codable, Sendable {
         case remoteArchiveFiles
         case requestedExtractionFileIDs
         case lastPutIOEventID
+        case libraryItems
+        case metadata
         case settings
         case lastUpdated
     }

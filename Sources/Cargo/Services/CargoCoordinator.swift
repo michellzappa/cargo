@@ -478,6 +478,83 @@ final class CargoCoordinator {
         recordHistory(kind: .info, title: "Asked Put.io to extract", detail: "\(archive.displayPath) · manual")
     }
 
+    // MARK: - Library
+
+    var hasTMDBKey: Bool { !(keychain.readTMDBKey() ?? "").isEmpty }
+
+    func saveTMDBKey(_ key: String) throws {
+        try keychain.saveTMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
+        scheduleChangeNotification()
+    }
+
+    /// Rescans the SSD. Cheap — directory listings only — so it runs every cycle.
+    func scanLibrary() {
+        guard let root = libraryRootURL() else { return }
+        let accessing = root.startAccessingSecurityScopedResource()
+        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+        let items = LibraryIndex.scan(root: root, settings: state.settings)
+        guard items != state.libraryItems else { return }
+        state.libraryItems = items
+        try? persist()
+    }
+
+    /// Library item for a watchlist entry: by TMDB id when both sides have
+    /// metadata, else by title and year.
+    func libraryItem(for watchlistItem: IMDbWatchlistItem) -> LibraryItem? {
+        if let meta = state.metadata[watchlistItem.id] {
+            if let hit = state.libraryItems.first(where: { state.metadata[$0.id]?.tmdbID == meta.tmdbID }) { return hit }
+        }
+        let wanted = Self.normalizedTitle(watchlistItem.title)
+        return state.libraryItems.first {
+            Self.normalizedTitle($0.title) == wanted && (watchlistItem.year == nil || $0.year == nil || $0.year == watchlistItem.year)
+        }
+    }
+
+    static func normalizedTitle(_ value: String) -> String {
+        value.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Fills in TMDB metadata for library and watchlist entries that lack it
+    /// or whose copy is a week old — a handful per cycle, to stay polite.
+    func enrichMetadata(limit: Int = 20) async {
+        guard let key = keychain.readTMDBKey(), !key.isEmpty else { return }
+        let client = TMDBClient(apiKey: key)
+        var budget = limit
+        var changed = false
+
+        for item in state.libraryItems where budget > 0 {
+            if let existing = state.metadata[item.id], !existing.isStale { continue }
+            budget -= 1
+            if let meta = try? await client.search(title: item.title, year: item.year, type: item.kind == .movie ? .movie : .tv) {
+                state.metadata[item.id] = meta
+                changed = true
+            }
+        }
+        for item in state.imdbWatchlistItems where budget > 0 && item.id.hasPrefix("tt") {
+            if let existing = state.metadata[item.id], !existing.isStale { continue }
+            budget -= 1
+            if let meta = try? await client.find(imdbID: item.id) {
+                state.metadata[item.id] = meta
+                changed = true
+            }
+        }
+        if changed { try? persist() }
+    }
+
+    func deleteLibraryItem(_ item: LibraryItem) throws {
+        guard let root = libraryRootURL() else { throw SettingsError.libraryRootMissing }
+        let accessing = root.startAccessingSecurityScopedResource()
+        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+        let url = root.appendingPathComponent(item.relativePath)
+        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        state.libraryItems.removeAll { $0.id == item.id }
+        try persist()
+        recordHistory(kind: .success, title: "Moved to Trash", detail: item.displayTitle)
+        scanLibrary()
+    }
+
     // MARK: - Clearing
 
     func clearHistory() {
@@ -525,6 +602,8 @@ final class CargoCoordinator {
         pruneHistory()
         pruneDeletedMarkers()
         summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
+        scanLibrary()
+        await enrichMetadata()
 
         let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
         let isFirstObservation = !state.remoteMediaBaselineEstablished
@@ -593,6 +672,7 @@ final class CargoCoordinator {
             }
         }
 
+        scanLibrary()
         if state.settings.automaticTransferCleanEnabled,
            state.transfers.contains(where: { [.completed, .seeding].contains($0.status) }) {
             do {

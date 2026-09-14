@@ -21,7 +21,15 @@ local copy is verified, and ambiguous files wait in `_Inbox` for a human.
 
 The menu bar item shows live status (account, transfers, Inbox count) and the
 actions: Open Cargo ⌘O, Add Transfer… ⌘N, Refresh ⌘R. The dashboard window has
-a sidebar — Transfers, Files, Inbox, Watchlist, History — each a native table.
+a sidebar — Transfers, Files, Inbox, Library, Watchlist, History — each a
+native table.
+
+**Library** is the SSD itself, rescanned every cycle from the folder layout
+the organizer writes: Movies and TV Shows with seasons, episode counts, size
+and date added. With a TMDB API key (Settings → Library, free for personal
+use, kept in Keychain) rows get posters and shows get completeness — *Season 2
+· 7 of 10* — and Watchlist entries link to library items by TMDB id instead of
+title guessing. Reveal in Finder, Play in Infuse, Open on TMDB, Move to Trash.
 
 Every `refreshIntervalMinutes` the background cycle:
 
@@ -94,6 +102,7 @@ AppKit throughout, no dependencies beyond `HouseKit`.
 | `Services/CargoCoordinator` | The state machine: background cycle, sync jobs, settings mutations |
 | `Services/LibraryOrganizer` | Release-name parsing, destination preview, atomic move |
 | `Services/IMDbWatchlistService` | Public watchlist fetch and pagination |
+| `Services/LibraryIndex`, `TMDBClient` | Disk scan of the library layout; TMDB find/search/season counts, poster cache |
 | `Core/CargoStore` | One JSON state file in Application Support, durable job history |
 | `UI/MainWindowController`, `Pages`, `ListTableViewController` | Dashboard: sidebar + native tables |
 | `UI/SettingsPages` | The HouseKit settings window with Cargo's pages |

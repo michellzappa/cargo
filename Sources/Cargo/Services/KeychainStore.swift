@@ -4,6 +4,7 @@ import Security
 final class KeychainStore {
     private let service = "app.cargo.Cargo"
     private let account = "putio-access-token"
+    private let tmdbAccount = "tmdb-api-key"
 
     enum KeychainError: LocalizedError {
         case saveFailure(OSStatus)
@@ -19,7 +20,16 @@ final class KeychainStore {
         }
     }
 
-    func readToken() -> String? {
+    func readToken() -> String? { read(account: account) }
+    func saveToken(_ token: String) throws { try save(token, account: account) }
+    func deleteToken() throws { try delete(account: account) }
+
+    func readTMDBKey() -> String? { read(account: tmdbAccount) }
+    func saveTMDBKey(_ key: String) throws {
+        if key.isEmpty { try delete(account: tmdbAccount) } else { try save(key, account: tmdbAccount) }
+    }
+
+    private func read(account: String) -> String? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -36,7 +46,7 @@ final class KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
-    func saveToken(_ token: String) throws {
+    private func save(_ token: String, account: String) throws {
         let data = Data(token.utf8)
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -58,7 +68,7 @@ final class KeychainStore {
         }
     }
 
-    func deleteToken() throws {
+    private func delete(account: String) throws {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

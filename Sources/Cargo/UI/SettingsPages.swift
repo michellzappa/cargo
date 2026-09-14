@@ -173,6 +173,15 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
     private let tvShowsField = SettingsForm.textField(width: 220)
     private let watchlistURLField = SettingsForm.textField(placeholder: "https://www.imdb.com/user/…/watchlist/", width: 300)
     private let watchlistStatusLabel = SettingsForm.caption("")
+    private let tmdbKeyField: NSSecureTextField = {
+        let field = NSSecureTextField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "v3 API key"
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        return field
+    }()
+    private let tmdbStatusLabel = SettingsForm.caption("")
 
     override func build() {
         section("Local library")
@@ -210,6 +219,10 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         }
         if !isEditing(watchlistURLField) { watchlistURLField.stringValue = settings.imdbWatchlistURL }
         watchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
+        let hasKey = coordinator.hasTMDBKey
+        if !isEditing(tmdbKeyField) { tmdbKeyField.stringValue = hasKey ? "••••••••••••••••" : "" }
+        let enriched = coordinator.state.metadata.count
+        tmdbStatusLabel.stringValue = hasKey ? "Key saved · \(enriched) title\(enriched == 1 ? "" : "s") enriched" : "No key"
     }
 
     func pathControl(_ pathControl: NSPathControl, willDisplay openPanel: NSOpenPanel) {
@@ -254,6 +267,16 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         guard let field = notification.object as? NSTextField else { return }
         if field === watchlistURLField {
             commitWatchlistURL()
+        } else if field === tmdbKeyField {
+            let value = tmdbKeyField.stringValue
+            guard !value.hasPrefix("••") else { return }
+            do {
+                try coordinator.saveTMDBKey(value)
+                statusLabel.stringValue = "Saved \(Formatters.time.string(from: Date()))"
+                Task { await coordinator.enrichMetadata() }
+            } catch {
+                statusLabel.stringValue = error.localizedDescription
+            }
         } else {
             commitDirectoryNames()
         }

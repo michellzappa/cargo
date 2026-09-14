@@ -21,6 +21,8 @@ struct ListRow {
     var details: [String] = []
     var badge: StatusBadge? = nil
     var progress: Double? = nil
+    /// Poster/artwork shown at the leading edge, loaded lazily.
+    var thumbnail: URL? = nil
     var primaryAction: RowAction? = nil
     var menuActions: [RowAction] = []
 }
@@ -258,11 +260,23 @@ private final class ListCellView: NSTableCellView {
     private let progressIndicator = NSProgressIndicator()
     private let actionButton = NSButton(title: "", target: nil, action: nil)
     private let textStack = NSStackView()
+    private let thumbnailView = NSImageView()
+    private var thumbnailLeading: NSLayoutConstraint!
+    private var thumbnailWidth: NSLayoutConstraint!
+    private var thumbnailURL: URL?
     private var action: RowAction?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
+
+        thumbnailView.imageScaling = .scaleProportionallyUpOrDown
+        thumbnailView.wantsLayer = true
+        thumbnailView.layer?.cornerRadius = 4
+        thumbnailView.layer?.masksToBounds = true
+        thumbnailView.layer?.backgroundColor = NSColor.quaternaryLabelColor.cgColor
+        thumbnailView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(thumbnailView)
 
         let titleRow = NSStackView(views: [titleLabel, badgeView])
         titleRow.orientation = .horizontal
@@ -301,8 +315,14 @@ private final class ListCellView: NSTableCellView {
 
         addSubview(textStack)
         addSubview(actionButton)
+        thumbnailWidth = thumbnailView.widthAnchor.constraint(equalToConstant: 0)
+        thumbnailLeading = textStack.leadingAnchor.constraint(equalTo: thumbnailView.trailingAnchor, constant: 0)
         NSLayoutConstraint.activate([
-            textStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            thumbnailView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            thumbnailView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -6),
+            thumbnailWidth,
+            thumbnailLeading,
             textStack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             textStack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             actionButton.leadingAnchor.constraint(equalTo: textStack.trailingAnchor, constant: 12),
@@ -315,6 +335,22 @@ private final class ListCellView: NSTableCellView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(with row: ListRow) {
+        thumbnailURL = row.thumbnail
+        if let url = row.thumbnail {
+            thumbnailWidth.constant = 40
+            thumbnailLeading.constant = 10
+            thumbnailView.isHidden = false
+            thumbnailView.image = nil
+            Task { @MainActor [weak self] in
+                let image = await PosterCache.shared.image(for: url)
+                guard let self, self.thumbnailURL == url else { return }
+                self.thumbnailView.image = image
+            }
+        } else {
+            thumbnailWidth.constant = 0
+            thumbnailLeading.constant = 0
+            thumbnailView.isHidden = true
+        }
         titleLabel.stringValue = row.title
         titleLabel.textColor = row.titleColor ?? Theme.LabelStyle.rowTitle.color
         badgeView.badge = row.badge
