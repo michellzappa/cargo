@@ -10,6 +10,8 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     private let updatedLabel = Theme.label(style: .caption)
     private let diskLabel = Theme.label(style: .caption)
     private let diskIndicator = NSProgressIndicator()
+    private let ssdLabel = Theme.label(style: .caption)
+    private let ssdIndicator = NSProgressIndicator()
     private let contentContainer = NSViewController()
     private var pages: [Page: PageViewController] = [:]
     private(set) var selectedPage: Page = .transfers
@@ -129,21 +131,25 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         connectionRow.alignment = .centerY
         connectionRow.spacing = 6
 
-        diskIndicator.style = .bar
-        diskIndicator.isIndeterminate = false
-        diskIndicator.minValue = 0
-        diskIndicator.maxValue = 1
-        diskIndicator.controlSize = .small
-        diskIndicator.translatesAutoresizingMaskIntoConstraints = false
+        for indicator in [diskIndicator, ssdIndicator] {
+            indicator.style = .bar
+            indicator.isIndeterminate = false
+            indicator.minValue = 0
+            indicator.maxValue = 1
+            indicator.controlSize = .small
+            indicator.translatesAutoresizingMaskIntoConstraints = false
+        }
 
-        let footer = NSStackView(views: [connectionRow, updatedLabel, diskLabel, diskIndicator])
+        let footer = NSStackView(views: [connectionRow, updatedLabel, diskLabel, diskIndicator, ssdLabel, ssdIndicator])
         footer.orientation = .vertical
         footer.alignment = .leading
         footer.spacing = 4
         footer.translatesAutoresizingMaskIntoConstraints = false
         diskIndicator.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
+        ssdIndicator.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
         connectionRow.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
         footer.setCustomSpacing(10, after: updatedLabel)
+        footer.setCustomSpacing(8, after: diskIndicator)
 
         root.addSubview(scrollView)
         root.addSubview(footer)
@@ -170,13 +176,28 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         updatedLabel.stringValue = "Updated \(Formatters.time.string(from: coordinator.state.lastUpdated))"
 
         if let disk = coordinator.diskUsage {
-            diskLabel.stringValue = "Put.io · \(Formatters.bytes(disk.availableBytes)) free of \(Formatters.bytes(disk.totalBytes))"
+            diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"
+            diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes))"
             diskIndicator.doubleValue = disk.fraction
             diskLabel.isHidden = false
             diskIndicator.isHidden = false
         } else {
             diskLabel.isHidden = true
             diskIndicator.isHidden = true
+        }
+
+        // The library volume: same shape as the Put.io line, so the two read together.
+        if let root = coordinator.libraryRootURL(),
+           let values = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey, .volumeNameKey]),
+           let free = values.volumeAvailableCapacityForImportantUsage, let total = values.volumeTotalCapacity, total > 0 {
+            ssdLabel.stringValue = "\(values.volumeName ?? "SSD") · \(Formatters.shortBytes(free)) free"
+            ssdLabel.toolTip = "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total)))"
+            ssdIndicator.doubleValue = 1 - Double(free) / Double(total)
+            ssdLabel.isHidden = false
+            ssdIndicator.isHidden = false
+        } else {
+            ssdLabel.isHidden = true
+            ssdIndicator.isHidden = true
         }
     }
 

@@ -85,6 +85,15 @@ enum Formatters {
     static func bytes(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
+
+    /// "104 GB", "1.4 TB" — for places where the number has to fit on one short line.
+    static func shortBytes(_ bytes: Int64) -> String {
+        let tb = Double(bytes) / 1_000_000_000_000
+        if tb >= 1 { return String(format: tb < 10 ? "%.1f TB" : "%.0f TB", tb) }
+        let gb = Double(bytes) / 1_000_000_000
+        if gb >= 1 { return String(format: gb < 10 ? "%.1f GB" : "%.0f GB", gb) }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
 }
 
 /// Tinted capsule used for row status ("Wanted", "Seeding", "Organized").
