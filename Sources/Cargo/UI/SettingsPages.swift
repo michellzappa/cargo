@@ -301,7 +301,8 @@ final class AutomationPage: CargoPage {
             ("Ask Put.io to unpack archives (rar releases)", \.automaticExtractEnabled),
             ("Organize and rename Inbox media", \.automaticOrganizationEnabled),
             ("Delete Put.io file after verified local copy", \.automaticRemoteCleanupEnabled),
-            ("Remove Inbox sidecars and empty folders", \.automaticInboxCleanupEnabled)
+            ("Remove Inbox sidecars and empty folders", \.automaticInboxCleanupEnabled),
+            ("Clear finished transfers from Put.io after each cycle", \.automaticTransferCleanEnabled)
         ]
         for (title, keyPath) in toggles {
             let control = toggle(title, isOn: coordinator.state.settings[keyPath: keyPath]) { [weak self] value in

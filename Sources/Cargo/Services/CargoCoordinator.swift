@@ -478,6 +478,40 @@ final class CargoCoordinator {
         recordHistory(kind: .info, title: "Asked Put.io to extract", detail: "\(archive.displayPath) · manual")
     }
 
+    // MARK: - Clearing
+
+    func clearHistory() {
+        state.history.removeAll()
+        state.lastUpdated = Date()
+        try? persist()
+    }
+
+    /// Routine entries older than 30 days go; warnings and failures stay 90.
+    private func pruneHistory() {
+        let now = Date()
+        state.history.removeAll { entry in
+            let age = now.timeIntervalSince(entry.date)
+            switch entry.kind {
+            case .info, .success: return age > 30 * 86_400
+            case .warning, .failure: return age > 90 * 86_400
+            }
+        }
+    }
+
+    func clearFailedJobs() {
+        state.localJobs.removeAll { $0.status == .failed }
+        try? persist()
+    }
+
+    /// "Deleted" markers only matter while the inventory could still show the
+    /// file; once Put.io no longer lists it, forget it.
+    private func pruneDeletedMarkers() {
+        let live = Set(state.remoteMediaFiles.map(\.id)).union(state.remoteFiles.map(\.id)).union(state.remoteArchiveFiles.map(\.id))
+        state.deletedRemoteFileIDs.removeAll { !live.contains($0) }
+        let liveFolders = Set(state.remoteFolders.map(\.id))
+        state.deletedRemoteFolderIDs.removeAll { !liveFolders.contains($0) }
+    }
+
     func emptyPutIOTrash() async throws {
         try await putIOClient.emptyTrash()
         trashSummary = PutIOTrashSummary(count: 0, bytes: 0)
@@ -488,6 +522,8 @@ final class CargoCoordinator {
         var summary = CargoBackgroundCycleSummary()
         await refreshFromPutIO(force: false)
         await reconcileArchives(summary: &summary)
+        pruneHistory()
+        pruneDeletedMarkers()
         summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
 
         let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
@@ -557,6 +593,16 @@ final class CargoCoordinator {
             }
         }
 
+        if state.settings.automaticTransferCleanEnabled,
+           state.transfers.contains(where: { [.completed, .seeding].contains($0.status) }) {
+            do {
+                try await putIOClient.cleanFinishedTransfers()
+                state.transfers.removeAll { $0.status == .completed || $0.status == .seeding }
+                try persist()
+            } catch {
+                recordHistory(kind: .warning, title: "Could not clear finished transfers", detail: error.localizedDescription)
+            }
+        }
         return summary
     }
 

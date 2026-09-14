@@ -425,6 +425,9 @@ final class InboxPageViewController: PageViewController {
                 guard let inbox else { return }
                 NSWorkspace.shared.open(inbox)
             },
+            RowAction(title: "Clear Failed", isEnabled: coordinator.state.localJobs.contains { $0.status == .failed }) { [weak self] in
+                self?.coordinator.clearFailedJobs()
+            },
             refreshAction()
         ]
     }
@@ -549,7 +552,48 @@ final class WatchlistPageViewController: PageViewController {
         }
     }
 
+    enum Filter: String, CaseIterable {
+        case all, wanted, notOrganized
+        var label: String {
+            switch self {
+            case .all: "Everything"
+            case .wanted: "Wanted only"
+            case .notOrganized: "Not organized"
+            }
+        }
+        static let defaultsKey = "cargo.watchlist.filter"
+    }
+
+    private var filter: Filter = Filter(rawValue: UserDefaults.standard.string(forKey: Filter.defaultsKey) ?? "") ?? .all {
+        didSet {
+            UserDefaults.standard.set(filter.rawValue, forKey: Filter.defaultsKey)
+            reload()
+        }
+    }
+
     override func accessoryView() -> NSView? {
+        let filterPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        filterPopup.controlSize = .small
+        filterPopup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        for option in Filter.allCases {
+            filterPopup.addItem(withTitle: "Show \(option.label)")
+            filterPopup.lastItem?.representedObject = option.rawValue
+        }
+        filterPopup.selectItem(at: Filter.allCases.firstIndex(of: filter) ?? 0)
+        filterPopup.target = self
+        filterPopup.action = #selector(filterChanged(_:))
+        let stack = NSStackView(views: [filterPopup, sortPopup()])
+        stack.orientation = .horizontal
+        stack.spacing = 8
+        return stack
+    }
+
+    @objc private func filterChanged(_ sender: NSPopUpButton) {
+        guard let raw = sender.selectedItem?.representedObject as? String, let next = Filter(rawValue: raw) else { return }
+        filter = next
+    }
+
+    private func sortPopup() -> NSPopUpButton {
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -622,7 +666,14 @@ final class WatchlistPageViewController: PageViewController {
 
     override func sections() -> [ListSection] {
         let state = coordinator.state
-        let rows = sorted(state.imdbWatchlistItems, state: state).map { item -> ListRow in
+        let visible = state.imdbWatchlistItems.filter { item in
+            switch filter {
+            case .all: true
+            case .wanted: Self.status(for: item, state: state).text == "Wanted"
+            case .notOrganized: Self.status(for: item, state: state).text != "Organized"
+            }
+        }
+        let rows = sorted(visible, state: state).map { item -> ListRow in
             let search = RowAction(title: "Search") {
                 var components = URLComponents(string: "https://chill.institute/search")
                 components?.queryItems = [URLQueryItem(name: "q", value: item.title)]
@@ -671,6 +722,28 @@ final class WatchlistPageViewController: PageViewController {
 final class HistoryPageViewController: PageViewController {
     override var emptyState: EmptyState {
         EmptyState(symbol: "clock", title: "No workflow activity yet")
+    }
+
+    override func listActions() -> [RowAction] {
+        [
+            RowAction(title: "Clear History", isDestructive: true, isEnabled: !coordinator.state.history.isEmpty) { [weak self] in
+                guard let self, confirm("Clear the history?", detail: "Routine entries expire after 30 days on their own; warnings and failures after 90.", button: "Clear") else { return }
+                coordinator.clearHistory()
+            },
+            refreshAction()
+        ]
+    }
+
+    override func accessoryView() -> NSView? {
+        let button = NSButton(title: "Clear History", target: self, action: #selector(clearHistory))
+        button.bezelStyle = .rounded
+        button.controlSize = .small
+        return button
+    }
+
+    @objc private func clearHistory() {
+        guard confirm("Clear the history?", detail: "Routine entries expire after 30 days on their own; warnings and failures after 90.", button: "Clear") else { return }
+        coordinator.clearHistory()
     }
 
     override func sections() -> [ListSection] {

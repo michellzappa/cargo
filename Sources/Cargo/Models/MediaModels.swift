@@ -180,6 +180,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var automaticInboxCleanupEnabled: Bool
     /// Ask Put.io to unpack archives it finds (rar'd releases) so the video inside shows up.
     var automaticExtractEnabled: Bool
+    /// `transfers/clean` after each cycle: finished transfers stop piling up on Put.io.
+    var automaticTransferCleanEnabled: Bool
     var imdbWatchlistURL: String
     /// How often the background cycle polls Put.io and the watchlist.
     var refreshIntervalMinutes: Int
@@ -199,6 +201,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticRemoteCleanupEnabled: Bool = true,
         automaticInboxCleanupEnabled: Bool = true,
         automaticExtractEnabled: Bool = true,
+        automaticTransferCleanEnabled: Bool = false,
         imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
         refreshIntervalMinutes: Int = 1
     ) {
@@ -214,6 +217,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.automaticRemoteCleanupEnabled = automaticRemoteCleanupEnabled
         self.automaticInboxCleanupEnabled = automaticInboxCleanupEnabled
         self.automaticExtractEnabled = automaticExtractEnabled
+        self.automaticTransferCleanEnabled = automaticTransferCleanEnabled
         self.imdbWatchlistURL = imdbWatchlistURL
         self.refreshIntervalMinutes = refreshIntervalMinutes
     }
@@ -231,6 +235,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case automaticRemoteCleanupEnabled
         case automaticInboxCleanupEnabled
         case automaticExtractEnabled
+        case automaticTransferCleanEnabled
         case imdbWatchlistURL
         case refreshIntervalMinutes
     }
@@ -249,6 +254,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         automaticRemoteCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticRemoteCleanupEnabled) ?? true
         automaticInboxCleanupEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticInboxCleanupEnabled) ?? true
         automaticExtractEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticExtractEnabled) ?? true
+        automaticTransferCleanEnabled = try container.decodeIfPresent(Bool.self, forKey: .automaticTransferCleanEnabled) ?? false
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
         refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1
