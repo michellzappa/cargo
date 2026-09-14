@@ -51,3 +51,24 @@ final class TMDBNormalizeTests: XCTestCase {
         XCTAssertEqual(TMDBClient.normalize("Amélie & Co"), "amelie and co")
     }
 }
+
+final class InterruptedJobTests: XCTestCase {
+    @MainActor
+    func testDownloadingJobsAreRequeuedOnLaunch() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("CargoRequeue-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        var state = store.snapshot()
+        state.localJobs = [
+            LocalSyncJob(id: UUID(), remoteFileID: 1, name: "stuck.mkv", status: .downloading, progress: 0.4, destination: nil, errorMessage: nil, updatedAt: .distantPast),
+            LocalSyncJob(id: UUID(), remoteFileID: 2, name: "done.mkv", status: .completed, progress: 1, destination: nil, errorMessage: nil, updatedAt: .distantPast)
+        ]
+        try store.replace(with: state)
+
+        let coordinator = CargoCoordinator(store: store, client: UnconfiguredPutIOClient())
+
+        XCTAssertEqual(coordinator.state.localJobs.map(\.status), [.queued, .completed])
+        XCTAssertEqual(coordinator.state.localJobs[0].progress, 0)
+        XCTAssertEqual(coordinator.state.history.first?.title, "Resuming interrupted download")
+    }
+}

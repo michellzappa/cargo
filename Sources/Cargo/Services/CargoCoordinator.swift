@@ -114,6 +114,23 @@ final class CargoCoordinator {
             self.state.settings.stagingDirectoryName = "_Inbox"
             try? store.replace(with: self.state)
         }
+        requeueInterruptedJobs()
+    }
+
+    /// A download in flight when the app quit is gone; the job record isn't.
+    /// The cycle only picks up `queued`, so put them back — they start over.
+    private func requeueInterruptedJobs() {
+        var interrupted: [String] = []
+        for index in state.localJobs.indices where [.downloading, .importing].contains(state.localJobs[index].status) {
+            state.localJobs[index].status = .queued
+            state.localJobs[index].progress = 0
+            state.localJobs[index].errorMessage = nil
+            state.localJobs[index].updatedAt = Date()
+            interrupted.append(state.localJobs[index].name)
+        }
+        guard !interrupted.isEmpty else { return }
+        try? store.replace(with: state)
+        recordHistory(kind: .warning, title: "Resuming interrupted download\(interrupted.count == 1 ? "" : "s")", detail: interrupted.joined(separator: ", "))
     }
 
     func refresh() {
