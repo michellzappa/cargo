@@ -2,10 +2,21 @@ import AppKit
 
 /// One action a row offers — as the trailing button, in the context menu, or both.
 struct RowAction {
+    /// Asked once before the handler runs — once for the whole selection when
+    /// several rows are selected, so a multi-delete is one dialog, not ten.
+    struct Confirmation {
+        let message: String
+        let detail: String
+        let button: String
+        /// Message when applied to several rows; `%d` is the count.
+        var pluralMessage: String? = nil
+    }
+
     let title: String
     var isDestructive = false
     var isEnabled = true
     var isSeparatorBefore = false
+    var confirmation: Confirmation? = nil
     let handler: @MainActor () -> Void
 
     static func separator() -> RowAction {
@@ -47,7 +58,7 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
         case row(ListRow)
     }
 
-    private let tableView = NSTableView()
+    private let tableView = ListTableView()
     private let scrollView = NSScrollView()
     private let emptyStateView = NSStackView()
     private let emptySymbolView = NSImageView()
@@ -77,7 +88,9 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
         tableView.intercellSpacing = NSSize(width: 0, height: 4)
         tableView.selectionHighlightStyle = .regular
         tableView.allowsEmptySelection = true
-        tableView.allowsMultipleSelection = false
+        // Actions apply to every selected row; ⌫ runs the destructive one.
+        tableView.allowsMultipleSelection = true
+        tableView.onDeleteKey = { [weak self] in self?.performDestructiveActionOnSelection() }
         tableView.floatsGroupRows = false
         tableView.gridStyleMask = []
         tableView.dataSource = self
@@ -199,23 +212,43 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
 
     // MARK: - Context menu
 
+    /// The rows an action applies to: the whole selection when the clicked
+    /// row is part of it, otherwise just the clicked row.
+    private var targetRows: [ListRow] {
+        let clicked = tableView.clickedRow
+        let selected = tableView.selectedRowIndexes
+        let indexes = clicked >= 0 && !selected.contains(clicked) ? IndexSet(integer: clicked) : selected
+        return indexes.compactMap(row(at:))
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        menuActions = row(at: tableView.clickedRow)?.menuActions ?? listActions
-        for (index, action) in menuActions.enumerated() {
+        let rows = targetRows
+        guard let first = rows.first else {
+            menuActions = listActions
+            build(menu, from: menuActions, count: 1)
+            return
+        }
+        // Only actions every selected row offers, so a mixed selection can't do the wrong thing.
+        menuActions = first.menuActions.filter { action in
+            rows.allSatisfy { row in row.menuActions.contains { $0.title == action.title } }
+        }
+        build(menu, from: menuActions, count: rows.count)
+    }
+
+    private func build(_ menu: NSMenu, from actions: [RowAction], count: Int) {
+        for (index, action) in actions.enumerated() {
             if action.isSeparatorBefore {
                 menu.addItem(.separator())
                 if action.title.isEmpty { continue }
             }
-            let item = NSMenuItem(title: action.title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
+            let title = count > 1 ? "\(action.title)  (\(count))" : action.title
+            let item = NSMenuItem(title: title, action: #selector(performMenuAction(_:)), keyEquivalent: "")
             item.target = self
             item.tag = index
             item.isEnabled = action.isEnabled
             if action.isDestructive {
-                item.attributedTitle = NSAttributedString(
-                    string: action.title,
-                    attributes: [.foregroundColor: NSColor.systemRed]
-                )
+                item.attributedTitle = NSAttributedString(string: title, attributes: [.foregroundColor: NSColor.systemRed])
             }
             menu.addItem(item)
         }
@@ -223,7 +256,51 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
 
     @objc private func performMenuAction(_ sender: NSMenuItem) {
         guard menuActions.indices.contains(sender.tag) else { return }
-        menuActions[sender.tag].handler()
+        let template = menuActions[sender.tag]
+        let rows = targetRows
+        guard !rows.isEmpty else {
+            template.handler()
+            return
+        }
+        perform(template, on: rows)
+    }
+
+    private func perform(_ template: RowAction, on rows: [ListRow]) {
+        let actions = rows.compactMap { row in row.menuActions.first { $0.title == template.title && $0.isEnabled } }
+        guard !actions.isEmpty else { return }
+        if let confirmation = template.confirmation {
+            let alert = NSAlert()
+            alert.messageText = actions.count > 1
+                ? String(format: confirmation.pluralMessage ?? "%d items — \(confirmation.message)", actions.count)
+                : confirmation.message
+            alert.informativeText = confirmation.detail
+            alert.addButton(withTitle: confirmation.button)
+            alert.addButton(withTitle: "Cancel")
+            alert.buttons.first?.hasDestructiveAction = template.isDestructive
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        for action in actions { action.handler() }
+    }
+
+    private func performDestructiveActionOnSelection() {
+        let rows = tableView.selectedRowIndexes.compactMap(row(at:))
+        guard let first = rows.first,
+              let template = first.menuActions.first(where: { $0.isDestructive && $0.isEnabled })
+        else { return }
+        perform(template, on: rows)
+    }
+}
+
+/// Forwards ⌫ / ⌦ so the list can run the row's destructive action.
+private final class ListTableView: NSTableView {
+    var onDeleteKey: () -> Void = {}
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 51 || event.keyCode == 117, selectedRow >= 0 {
+            onDeleteKey()
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 

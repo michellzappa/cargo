@@ -236,14 +236,17 @@ final class TransfersPageViewController: PageViewController {
                     self?.run { try await self?.coordinator.retryTransfer(id: transfer.id) }
                 })
             }
-            actions.append(RowAction(title: isActive ? "Cancel Transfer" : "Remove Transfer", isDestructive: true) { [weak self] in
-                guard let self else { return }
-                guard confirm(
-                    "\(isActive ? "Cancel" : "Remove") “\(transfer.name)”?",
+            actions.append(RowAction(
+                title: isActive ? "Cancel Transfer" : "Remove Transfer",
+                isDestructive: true,
+                confirmation: .init(
+                    message: "\(isActive ? "Cancel" : "Remove") “\(transfer.name)”?",
                     detail: isActive ? "The download stops and is removed from Put.io." : "Files already in Put.io are kept.",
-                    button: isActive ? "Cancel Transfer" : "Remove"
-                ) else { return }
-                run { try await self.coordinator.cancelTransfer(id: transfer.id) }
+                    button: isActive ? "Cancel Transfer" : "Remove",
+                    pluralMessage: isActive ? "Cancel %d transfers?" : "Remove %d transfers?"
+                )
+            ) { [weak self] in
+                self?.run { try await self?.coordinator.cancelTransfer(id: transfer.id) }
             })
             actions.append(copyAction("Copy Name", transfer.name))
 
@@ -316,14 +319,19 @@ final class FilesPageViewController: PageViewController {
                 coordinator.enqueueLocalSync(remoteFileID: file.id)
                 Task { await self.coordinator.processLocalSync(remoteFileID: file.id) }
             }
-            let delete = RowAction(title: "Delete from Put.io…", isDestructive: true, isEnabled: !deleted, isSeparatorBefore: true) { [weak self] in
-                guard let self else { return }
-                guard confirm(
-                    "Delete “\(file.displayPath)” from Put.io?",
+            let delete = RowAction(
+                title: "Delete from Put.io…",
+                isDestructive: true,
+                isEnabled: !deleted,
+                isSeparatorBefore: true,
+                confirmation: .init(
+                    message: "Delete “\(file.displayPath)” from Put.io?",
                     detail: "It goes to Put.io's trash; empty the trash in Settings → Put.io to free the space. Local copies are not affected.",
-                    button: "Delete"
-                ) else { return }
-                run { try await self.coordinator.deleteRemoteFile(remoteFileID: file.id) }
+                    button: "Delete",
+                    pluralMessage: "Delete %d files from Put.io?"
+                )
+            ) { [weak self] in
+                self?.run { try await self?.coordinator.deleteRemoteFile(remoteFileID: file.id) }
             }
             let subtitles = RowAction(title: "Download Subtitles…", isEnabled: !deleted) { [weak self] in
                 self?.chooseSubtitle(for: file)
@@ -358,13 +366,18 @@ final class FilesPageViewController: PageViewController {
             let extract = RowAction(title: requested ? "Extracting…" : "Extract on Put.io", isEnabled: !requested) { [weak self] in
                 self?.run { try await self?.coordinator.requestExtraction(remoteFileID: archive.id) }
             }
-            let delete = RowAction(title: "Delete from Put.io…", isDestructive: true, isSeparatorBefore: true) { [weak self] in
-                guard let self, confirm(
-                    "Delete “\(archive.displayPath)” from Put.io?",
+            let delete = RowAction(
+                title: "Delete from Put.io…",
+                isDestructive: true,
+                isSeparatorBefore: true,
+                confirmation: .init(
+                    message: "Delete “\(archive.displayPath)” from Put.io?",
                     detail: "It goes to Put.io's trash; empty the trash in Settings → Put.io to free the space.",
-                    button: "Delete"
-                ) else { return }
-                run { try await self.coordinator.deleteRemoteFile(remoteFileID: archive.id) }
+                    button: "Delete",
+                    pluralMessage: "Delete %d files from Put.io?"
+                )
+            ) { [weak self] in
+                self?.run { try await self?.coordinator.deleteRemoteFile(remoteFileID: archive.id) }
             }
             return ListRow(
                 id: "archive-\(archive.id)",
@@ -498,8 +511,14 @@ final class InboxPageViewController: PageViewController {
                         organize,
                         revealAction(entry.sourceURL.path),
                         copyAction("Copy Path", entry.sourceURL.path),
-                        RowAction(title: "Move to Trash", isDestructive: true, isEnabled: exists, isSeparatorBefore: true) { [weak self] in
-                            guard let self, confirm("Move “\(entry.name)” to Trash?", detail: "The file is removed from the Inbox.", button: "Move to Trash") else { return }
+                        RowAction(
+                            title: "Move to Trash",
+                            isDestructive: true,
+                            isEnabled: exists,
+                            isSeparatorBefore: true,
+                            confirmation: .init(message: "Move “\(entry.name)” to Trash?", detail: "The file is removed from the Inbox.", button: "Move to Trash", pluralMessage: "Move %d files to Trash?")
+                        ) { [weak self] in
+                            guard let self else { return }
                             run { try FileManager.default.trashItem(at: entry.sourceURL, resultingItemURL: nil) }
                             reload()
                         }
@@ -919,8 +938,13 @@ final class LibraryPageViewController: PageViewController {
                 if let url = components?.url { NSWorkspace.shared.open(url) }
             })
             menu.append(copyAction("Copy Path", url.path))
-            menu.append(RowAction(title: "Move to Trash…", isDestructive: true, isSeparatorBefore: true) { [weak self] in
-                guard let self, confirm("Move “\(item.displayTitle)” to the Trash?", detail: "The files leave the library; Infuse will stop showing it. Recoverable from the Trash.", button: "Move to Trash") else { return }
+            menu.append(RowAction(
+                title: "Move to Trash…",
+                isDestructive: true,
+                isSeparatorBefore: true,
+                confirmation: .init(message: "Move “\(item.displayTitle)” to the Trash?", detail: "The files leave the library; Infuse will stop showing it. Recoverable from the Trash.", button: "Move to Trash", pluralMessage: "Move %d titles to the Trash?")
+            ) { [weak self] in
+                guard let self else { return }
                 do { try coordinator.deleteLibraryItem(item) } catch { NSAlert(error: error).runModal() }
             })
             return ListRow(
