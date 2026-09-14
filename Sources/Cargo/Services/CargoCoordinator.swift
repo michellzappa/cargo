@@ -543,6 +543,45 @@ final class CargoCoordinator {
         if changed { try? persist() }
     }
 
+    /// Season → episode numbers TMDB says exist but the disk lacks.
+    func missingEpisodes(for item: LibraryItem) -> [Int: [Int]] {
+        guard item.kind == .show, let counts = state.metadata[item.id]?.episodeCounts else { return [:] }
+        var missing: [Int: [Int]] = [:]
+        for (season, count) in counts where count > 0 {
+            // Only seasons the library has started; unaired future seasons are noise.
+            guard let have = item.episodes[season] else { continue }
+            let gaps = (1...count).filter { !have.contains($0) }
+            if !gaps.isEmpty { missing[season] = gaps }
+        }
+        return missing
+    }
+
+    /// Searches Put.io for the show and queues any video whose name carries a
+    /// missing SxxEyy. Returns what was queued and what is still missing.
+    func findMissingOnPutIO(for item: LibraryItem) async throws -> (queued: [String], stillMissing: Int) {
+        let missing = missingEpisodes(for: item)
+        let wanted = Set(missing.flatMap { season, episodes in episodes.map { String(format: "S%02dE%02d", season, $0) } })
+        guard !wanted.isEmpty else { return ([], 0) }
+        let results = try await putIOClient.searchFiles(query: item.title)
+        var queued: [String] = []
+        var found = Set<String>()
+        for file in results where file.isMediaFile {
+            guard let (season, episode) = LibraryIndex.seasonEpisode(from: file.name) else { continue }
+            let marker = String(format: "S%02dE%02d", season, episode)
+            guard wanted.contains(marker), !found.contains(marker) else { continue }
+            found.insert(marker)
+            var remote = file
+            remote.path = file.name
+            enqueueLocalSync(remoteFile: remote)
+            queued.append(file.name)
+        }
+        if !queued.isEmpty {
+            recordHistory(kind: .info, title: "Queued from Put.io search", detail: "\(item.displayTitle): \(queued.joined(separator: ", "))")
+            Task { await runBackgroundCycle() }
+        }
+        return (queued, wanted.count - found.count)
+    }
+
     func deleteLibraryItem(_ item: LibraryItem) throws {
         guard let root = libraryRootURL() else { throw SettingsError.libraryRootMissing }
         let accessing = root.startAccessingSecurityScopedResource()

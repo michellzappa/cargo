@@ -85,9 +85,11 @@ class PageViewController: NSViewController {
         list.view.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(list.view)
         var top = view.topAnchor
-        if let accessory = accessoryView() {
-            // Thin control strip above the list (sort menus and the like).
-            let bar = NSStackView(views: [NSView(), accessory])
+        let leading = leadingAccessoryView()
+        let trailing = accessoryView()
+        if leading != nil || trailing != nil {
+            // Thin control strip above the list: tabs on the left, sort on the right.
+            let bar = NSStackView(views: [leading ?? NSView(), NSView(), trailing ?? NSView()])
             bar.orientation = .horizontal
             bar.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 4, right: 20)
             bar.translatesAutoresizingMaskIntoConstraints = false
@@ -134,6 +136,8 @@ class PageViewController: NSViewController {
     func listActions() -> [RowAction] { [refreshAction()] }
     /// Optional control shown right-aligned above the list.
     func accessoryView() -> NSView? { nil }
+    /// Optional control shown left-aligned above the list (tabs).
+    func leadingAccessoryView() -> NSView? { nil }
 
     // MARK: - Shared helpers
 
@@ -769,6 +773,40 @@ final class LibraryPageViewController: PageViewController {
         }
     }
 
+    /// The tabs above the list.
+    enum Tab: Int, CaseIterable {
+        case all, movies, shows, incomplete, notOnWatchlist
+        var label: String {
+            switch self {
+            case .all: "All"
+            case .movies: "Movies"
+            case .shows: "TV Shows"
+            case .incomplete: "Incomplete"
+            case .notOnWatchlist: "Not on Watchlist"
+            }
+        }
+        static let defaultsKey = "cargo.library.tab"
+    }
+
+    private var tab: Tab = Tab(rawValue: UserDefaults.standard.integer(forKey: Tab.defaultsKey)) ?? .all {
+        didSet {
+            UserDefaults.standard.set(tab.rawValue, forKey: Tab.defaultsKey)
+            reload()
+        }
+    }
+
+    override func leadingAccessoryView() -> NSView? {
+        let control = NSSegmentedControl(labels: Tab.allCases.map(\.label), trackingMode: .selectOne, target: self, action: #selector(tabChanged(_:)))
+        control.controlSize = .small
+        control.segmentStyle = .rounded
+        control.selectedSegment = tab.rawValue
+        return control
+    }
+
+    @objc private func tabChanged(_ sender: NSSegmentedControl) {
+        tab = Tab(rawValue: sender.selectedSegment) ?? .all
+    }
+
     override var subtitle: String {
         let items = coordinator.state.libraryItems
         guard !items.isEmpty else { return "" }
@@ -829,11 +867,14 @@ final class LibraryPageViewController: PageViewController {
     override func sections() -> [ListSection] {
         let state = coordinator.state
         guard let root = coordinator.libraryRootURL() else { return [] }
+        let watchlisted = Set(state.imdbWatchlistItems.compactMap { WatchlistPageViewController.libraryItem(for: $0, state: state)?.id })
         func row(_ item: LibraryItem) -> ListRow {
             let meta = state.metadata[item.id]
             let url = root.appendingPathComponent(item.relativePath)
+            let missing = coordinator.missingEpisodes(for: item)
             var details: [String] = []
             var badge: StatusBadge?
+            var primary: RowAction?
             switch item.kind {
             case .movie:
                 details.append("\(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
@@ -841,15 +882,16 @@ final class LibraryPageViewController: PageViewController {
                 details.append("\(item.seasonCount) season\(item.seasonCount == 1 ? "" : "s") · \(item.episodeCount) episode\(item.episodeCount == 1 ? "" : "s") · \(Formatters.bytes(item.sizeBytes)) · added \(Formatters.date.string(from: item.addedAt))")
                 if let counts = meta?.episodeCounts, !counts.isEmpty {
                     // Completeness per season, the thing Infuse never tells you.
-                    let gaps = item.episodes.keys.sorted().compactMap { season -> String? in
-                        guard let expected = counts[season], let have = item.episodes[season]?.count, have < expected else { return nil }
-                        return "Season \(season) · \(have) of \(expected)"
-                    }
-                    if gaps.isEmpty {
+                    if missing.isEmpty {
                         badge = .success("Complete")
                     } else {
                         badge = .warning("Incomplete")
-                        details.append(gaps.joined(separator: "  ·  "))
+                        details.append(missing.keys.sorted().map { season in
+                            "Season \(season) · \(item.episodes[season]?.count ?? 0) of \(counts[season] ?? 0)"
+                        }.joined(separator: "  ·  "))
+                        primary = RowAction(title: "Find on Put.io") { [weak self] in
+                            self?.findMissing(for: item)
+                        }
                     }
                 }
             }
@@ -860,6 +902,7 @@ final class LibraryPageViewController: PageViewController {
                 if let infuse = components?.url { NSWorkspace.shared.open(infuse) }
             }
             var menu = [reveal, play]
+            if let primary { menu.insert(primary, at: 0) }
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
             }
@@ -874,13 +917,40 @@ final class LibraryPageViewController: PageViewController {
                 details: details,
                 badge: badge,
                 thumbnail: meta?.posterURL,
-                primaryAction: reveal,
+                primaryAction: primary ?? reveal,
                 menuActions: menu
             )
         }
-        let movies = sorted(state.libraryItems.filter { $0.kind == .movie }).map(row)
-        let shows = sorted(state.libraryItems.filter { $0.kind == .show }).map(row)
+        let visible = state.libraryItems.filter { item in
+            switch tab {
+            case .all: true
+            case .movies: item.kind == .movie
+            case .shows: item.kind == .show
+            case .incomplete: !coordinator.missingEpisodes(for: item).isEmpty
+            case .notOnWatchlist: !watchlisted.contains(item.id)
+            }
+        }
+        let movies = sorted(visible.filter { $0.kind == .movie }).map(row)
+        let shows = sorted(visible.filter { $0.kind == .show }).map(row)
+        if tab == .movies { return [ListSection(rows: movies)] }
+        if tab == .shows || tab == .incomplete { return [ListSection(rows: shows)] }
         return [ListSection(title: "Movies", rows: movies), ListSection(title: "TV Shows", rows: shows)]
+    }
+
+    private func findMissing(for item: LibraryItem) {
+        run { [weak self] in
+            guard let self else { return }
+            let result = try await coordinator.findMissingOnPutIO(for: item)
+            let alert = NSAlert()
+            if result.queued.isEmpty {
+                alert.messageText = "Nothing on Put.io for \(item.title)"
+                alert.informativeText = "None of the \(result.stillMissing) missing episodes are in your Put.io account. ShowRSS or a manual transfer has to bring them in first."
+            } else {
+                alert.messageText = "Queued \(result.queued.count) episode\(result.queued.count == 1 ? "" : "s") from Put.io"
+                alert.informativeText = result.queued.joined(separator: "\n") + (result.stillMissing > 0 ? "\n\n\(result.stillMissing) still missing." : "")
+            }
+            alert.runModal()
+        }
     }
 }
 

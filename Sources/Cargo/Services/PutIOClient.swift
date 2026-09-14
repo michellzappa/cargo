@@ -20,6 +20,9 @@ protocol PutIOClient: Sendable {
     func fetchSubtitles(fileID: Int) async throws -> [PutIOSubtitle]
     func downloadSubtitle(fileID: Int, key: String, to destinationURL: URL) async throws
 
+    /// `files/search`: everything in the account matching `query`, any folder.
+    func searchFiles(query: String) async throws -> [RemoteFile]
+
     // Activity, archives, trash
     func fetchEvents() async throws -> [PutIOEvent]
     func extractFiles(ids: [Int]) async throws
@@ -39,6 +42,7 @@ extension PutIOClient {
     func downloadSubtitle(fileID: Int, key: String, to destinationURL: URL) async throws {
         throw UnconfiguredPutIOClient.ClientError.notConfigured
     }
+    func searchFiles(query: String) async throws -> [RemoteFile] { [] }
     func fetchEvents() async throws -> [PutIOEvent] { [] }
     func extractFiles(ids: [Int]) async throws { throw UnconfiguredPutIOClient.ClientError.notConfigured }
     func fetchExtractions() async throws -> [PutIOExtraction] { [] }
@@ -243,6 +247,14 @@ struct PutIOAPIClient: PutIOClient {
         var form = ["file_ids": String(fileID)]
         if skipTrash { form["skip_trash"] = "true" }
         _ = try await post(path: "files/delete", form: form, failure: "Delete failed.")
+    }
+
+    func searchFiles(query: String) async throws -> [RemoteFile] {
+        let envelope: PutIOFileListEnvelope = try await request(
+            path: "files/search",
+            queryItems: [URLQueryItem(name: "query", value: query), URLQueryItem(name: "per_page", value: "100")]
+        )
+        return envelope.files.map(Self.mapFile)
     }
 
     func fetchEvents() async throws -> [PutIOEvent] {
