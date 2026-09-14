@@ -67,7 +67,8 @@ class CargoPage: SettingsForm {
 
     /// True while the user is typing in `field`, so refresh doesn't clobber it.
     func isEditing(_ field: NSTextField) -> Bool {
-        view.window?.firstResponder === field.currentEditor()
+        guard let editor = field.currentEditor() else { return false }
+        return view.window?.firstResponder === editor
     }
 }
 
