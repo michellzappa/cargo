@@ -91,7 +91,8 @@ class PageViewController: NSViewController {
             // Thin control strip above the list: tabs on the left, sort on the right.
             let bar = NSStackView(views: [leading ?? NSView(), NSView(), trailing ?? NSView()])
             bar.orientation = .horizontal
-            bar.edgeInsets = NSEdgeInsets(top: 8, left: 20, bottom: 4, right: 20)
+            bar.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 6, right: 20)
+            bar.alignment = .centerY
             bar.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(bar)
             NSLayoutConstraint.activate([
@@ -776,14 +777,13 @@ final class LibraryPageViewController: PageViewController {
 
     /// The tabs above the list.
     enum Tab: Int, CaseIterable {
-        case all, movies, shows, incomplete, notOnWatchlist
+        case all, movies, shows, incomplete
         var label: String {
             switch self {
             case .all: "All"
             case .movies: "Movies"
             case .shows: "TV Shows"
             case .incomplete: "Incomplete"
-            case .notOnWatchlist: "Not on Watchlist"
             }
         }
         static let defaultsKey = "cargo.library.tab"
@@ -798,9 +798,11 @@ final class LibraryPageViewController: PageViewController {
 
     override func leadingAccessoryView() -> NSView? {
         let control = NSSegmentedControl(labels: Tab.allCases.map(\.label), trackingMode: .selectOne, target: self, action: #selector(tabChanged(_:)))
-        control.controlSize = .small
-        control.segmentStyle = .rounded
+        control.controlSize = .large
+        control.segmentStyle = .automatic
+        control.font = .systemFont(ofSize: 13, weight: .medium)
         control.selectedSegment = tab.rawValue
+        for index in 0..<control.segmentCount { control.setWidth(0, forSegment: index) }
         return control
     }
 
@@ -868,7 +870,6 @@ final class LibraryPageViewController: PageViewController {
     override func sections() -> [ListSection] {
         let state = coordinator.state
         guard let root = coordinator.libraryRootURL() else { return [] }
-        let watchlisted = Set(state.imdbWatchlistItems.compactMap { WatchlistPageViewController.libraryItem(for: $0, state: state)?.id })
         func row(_ item: LibraryItem) -> ListRow {
             let meta = state.metadata[item.id]
             let url = root.appendingPathComponent(item.relativePath)
@@ -928,7 +929,6 @@ final class LibraryPageViewController: PageViewController {
             case .movies: item.kind == .movie
             case .shows: item.kind == .show
             case .incomplete: !coordinator.missingEpisodes(for: item).isEmpty
-            case .notOnWatchlist: !watchlisted.contains(item.id)
             }
         }
         let movies = sorted(visible.filter { $0.kind == .movie }).map(row)

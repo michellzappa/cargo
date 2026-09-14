@@ -29,7 +29,7 @@ the organizer writes: Movies and TV Shows with seasons, episode counts, size
 and date added. With a TMDB API key (Settings → Library, free for personal
 use, kept in Keychain) rows get posters and shows get completeness — *Season 2
 · 7 of 10* — and Watchlist entries link to library items by TMDB id instead of
-title guessing. Tabs: All · Movies · TV Shows · Incomplete · Not on Watchlist.
+title guessing. Tabs: All · Movies · TV Shows · Incomplete.
 An incomplete show's "Find on Put.io" searches the account (`files/search`)
 and queues any missing episode it finds. Reveal in Finder, Play in Infuse,
 Open on TMDB, Move to Trash.
