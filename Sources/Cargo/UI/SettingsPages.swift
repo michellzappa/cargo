@@ -207,7 +207,18 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         let open = SettingsForm.button("Edit on IMDb…", target: self, action: #selector(openWatchlist))
         row("Public list URL", [watchlistURLField, refresh, open])
         row(nil, watchlistStatusLabel)
+
+        section("TMDB")
+        tmdbKeyField.delegate = self
+        let getKey = SettingsForm.button("Get a key…", target: self, action: #selector(openTMDBSignup))
+        row("API key", [tmdbKeyField, getKey])
+        row(nil, tmdbStatusLabel)
+        note("Posters, years and episode counts for the Library and Watchlist. Paste the v3 API key (32 hex characters), not the read access token. Free for personal use; the key lives in Keychain.")
         row(nil, statusLabel)
+    }
+
+    @objc private func openTMDBSignup() {
+        NSWorkspace.shared.open(URL(string: "https://www.themoviedb.org/settings/api")!)
     }
 
     override func refresh() {
