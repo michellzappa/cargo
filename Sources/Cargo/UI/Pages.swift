@@ -908,6 +908,11 @@ final class LibraryPageViewController: PageViewController {
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
             }
+            menu.append(RowAction(title: "Search on IMDb") {
+                var components = URLComponents(string: "https://www.imdb.com/find/")
+                components?.queryItems = [URLQueryItem(name: "q", value: item.displayTitle), URLQueryItem(name: "s", value: "tt")]
+                if let url = components?.url { NSWorkspace.shared.open(url) }
+            })
             menu.append(copyAction("Copy Path", url.path))
             menu.append(RowAction(title: "Move to Trash…", isDestructive: true, isSeparatorBefore: true) { [weak self] in
                 guard let self, confirm("Move “\(item.displayTitle)” to the Trash?", detail: "The files leave the library; Infuse will stop showing it. Recoverable from the Trash.", button: "Move to Trash") else { return }
