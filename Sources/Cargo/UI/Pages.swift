@@ -330,7 +330,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     private var catalogTab = CatalogTab.movies
-    private var viewMode = ViewMode.list
+    private var viewMode = ViewMode.posters
     private var catalogFilter = ""
     private var posterGridController: PosterGridViewController?
 
@@ -477,8 +477,10 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
         } else {
-            allTitle = "All Networks"
-            options = Set(coordinator.chillCatalogShows.flatMap(\.networks)).sorted {
+            allTitle = "All Providers"
+            let providers = coordinator.chillCatalogShows.compactMap { $0.source?.displayName }
+            let values = providers.isEmpty ? coordinator.chillCatalogShows.flatMap(\.networks) : providers
+            options = Set(values).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
         }
@@ -594,7 +596,10 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     private func seriesCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogShows.filter { matchesCatalogFilter($0.networks) }.map { show -> ListRow in
+        let rows = coordinator.chillCatalogShows.filter { show in
+            let values = [show.source?.displayName].compactMap { $0 } + show.networks
+            return matchesCatalogFilter(values)
+        }.map { show -> ListRow in
             let query = show.year > 0 ? "\(show.title) \(show.year)" : show.title
             let search = RowAction(title: "Search Releases") { [weak self] in
                 self?.coordinator.requestChillSearch(query: query)
