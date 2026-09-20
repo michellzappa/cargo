@@ -1,8 +1,28 @@
 import Foundation
 
-/// Chill's provider-specific TV catalog sources. The aggregated request is
+/// Chill's source-specific movie catalog lists. The aggregated request is
 /// intentionally small; fetching these sources gives the Discover page a
-/// useful tail for each provider filter.
+/// useful tail across the available movie charts.
+enum ChillMovieCatalogSource: String, CaseIterable, Codable, Sendable {
+    case imdbMovieMeter = "MOVIES_SOURCE_IMDB_MOVIEMETER"
+    case imdbTop250 = "MOVIES_SOURCE_IMDB_TOP_250"
+    case yts = "MOVIES_SOURCE_YTS"
+    case rottenTomatoes = "MOVIES_SOURCE_ROTTEN_TOMATOES"
+    case trakt = "MOVIES_SOURCE_TRAKT"
+
+    var displayName: String {
+        switch self {
+        case .imdbMovieMeter: "IMDb MovieMeter"
+        case .imdbTop250: "IMDb Top 250"
+        case .yts: "YTS"
+        case .rottenTomatoes: "Rotten Tomatoes"
+        case .trakt: "Trakt"
+        }
+    }
+}
+
+/// Chill's provider-specific TV catalog sources. Fetching these sources gives
+/// the Discover page a useful tail for each provider filter.
 enum ChillTVCatalogSource: String, CaseIterable, Codable, Sendable {
     case netflix = "TV_SHOWS_SOURCE_NETFLIX"
     case hboMax = "TV_SHOWS_SOURCE_HBO_MAX"
@@ -35,6 +55,7 @@ protocol ChillClient: Sendable {
     func fetchProfile() async throws -> ChillProfile
     func search(query: String) async throws -> [ChillSearchResult]
     func fetchMovies() async throws -> [ChillMovie]
+    func fetchMovies(source: ChillMovieCatalogSource) async throws -> [ChillMovie]
     func fetchTVShows() async throws -> [ChillTVShow]
     func fetchTVShows(source: ChillTVCatalogSource) async throws -> [ChillTVShow]
     func addTransfer(url: String) async throws -> ChillTransferResponse
@@ -45,6 +66,7 @@ extension ChillClient {
     func fetchProfile() async throws -> ChillProfile { throw UnconfiguredChillClient.ClientError.notConfigured }
     func search(query: String) async throws -> [ChillSearchResult] { throw UnconfiguredChillClient.ClientError.notConfigured }
     func fetchMovies() async throws -> [ChillMovie] { throw UnconfiguredChillClient.ClientError.notConfigured }
+    func fetchMovies(source: ChillMovieCatalogSource) async throws -> [ChillMovie] { try await fetchMovies() }
     func fetchTVShows() async throws -> [ChillTVShow] { throw UnconfiguredChillClient.ClientError.notConfigured }
     func fetchTVShows(source: ChillTVCatalogSource) async throws -> [ChillTVShow] { try await fetchTVShows() }
     func addTransfer(url: String) async throws -> ChillTransferResponse { throw UnconfiguredChillClient.ClientError.notConfigured }
@@ -180,6 +202,7 @@ struct ChillMovie: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let year: Int
+    let source: ChillMovieCatalogSource?
     let titlePretty: String
     let link: String
     let peers: Int64
@@ -193,7 +216,7 @@ struct ChillMovie: Codable, Equatable, Identifiable, Sendable {
     let genres: [String]
 
     enum CodingKeys: String, CodingKey {
-        case id, title, year, link, peers, seeders, size, rating, overview, genres
+        case id, title, year, source, link, peers, seeders, size, rating, overview, genres
         case titlePretty = "titlePretty"
         case uploadedAt = "uploadedAt"
         case posterURL = "posterUrl"
@@ -205,6 +228,7 @@ struct ChillMovie: Codable, Equatable, Identifiable, Sendable {
         id = container.decodeString(.id)
         title = container.decodeString(.title)
         year = container.decodeInt(.year)
+        source = container.decodeMovieCatalogSource(.source)
         titlePretty = container.decodeString(.titlePretty)
         link = container.decodeString(.link)
         peers = container.decodeInt64(.peers)
@@ -427,6 +451,14 @@ struct ChillAPIClient: ChillClient {
         return response.movies
     }
 
+    func fetchMovies(source: ChillMovieCatalogSource) async throws -> [ChillMovie] {
+        let response: ChillMoviesResponse = try await request(
+            path: "chill.v4.CoreService/GetMoviesBySource",
+            body: MoviesBySourceRequest(source: source.rawValue)
+        )
+        return response.movies
+    }
+
     func fetchTVShows() async throws -> [ChillTVShow] {
         let response: ChillTVShowsResponse = try await request(
             path: "chill.v4.UserService/GetTVShows",
@@ -503,6 +535,7 @@ struct ChillAPIClient: ChillClient {
 
     private struct EmptyRequest: Encodable {}
     private struct SearchRequest: Encodable { let query: String }
+    private struct MoviesBySourceRequest: Encodable { let source: String }
     private struct TVShowsRequest: Encodable { let source: String }
     private struct AddTransferRequest: Encodable { let url: String }
     private struct EpisodeDownloadRequest: Encodable {
@@ -592,6 +625,28 @@ private extension KeyedDecodingContainer {
         case "TV_SHOW_STATUS_IN_PRODUCTION", "IN_PRODUCTION": return 4
         case "TV_SHOW_STATUS_PLANNED", "PLANNED": return 5
         default: return Int(text) ?? 0
+        }
+    }
+
+    func decodeMovieCatalogSource(_ key: Key) -> ChillMovieCatalogSource? {
+        if let text = try? decode(String.self, forKey: key) {
+            if let source = ChillMovieCatalogSource(rawValue: text) { return source }
+            switch text {
+            case "IMDB_MOVIEMETER", "IMDB MOVIEMETER": return .imdbMovieMeter
+            case "IMDB_TOP_250", "IMDB TOP 250": return .imdbTop250
+            case "YTS": return .yts
+            case "ROTTEN_TOMATOES", "ROTTEN TOMATOES": return .rottenTomatoes
+            case "TRAKT": return .trakt
+            default: return nil
+            }
+        }
+        switch decodeInt(key) {
+        case 1: return .imdbMovieMeter
+        case 2: return .imdbTop250
+        case 3: return .yts
+        case 4: return .rottenTomatoes
+        case 5: return .trakt
+        default: return nil
         }
     }
 

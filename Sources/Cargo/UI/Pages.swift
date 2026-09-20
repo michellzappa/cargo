@@ -472,8 +472,10 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
         let options: [String]
         let allTitle: String
         if catalogTab == .movies {
-            allTitle = "All Genres"
-            options = Set(coordinator.chillCatalogMovies.flatMap(\.genres)).sorted {
+            allTitle = "All Sources & Genres"
+            let sources = coordinator.chillCatalogMovies.compactMap { $0.source?.displayName }
+            let values = sources + coordinator.chillCatalogMovies.flatMap(\.genres)
+            options = Set(values).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
         } else {
@@ -559,7 +561,10 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     private func movieCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogMovies.filter { matchesCatalogFilter($0.genres) }.map { movie -> ListRow in
+        let rows = coordinator.chillCatalogMovies.filter { movie in
+            let values = [movie.source?.displayName].compactMap { $0 } + movie.genres
+            return matchesCatalogFilter(values)
+        }.map { movie -> ListRow in
             let query = movie.year > 0 ? "\(movie.displayTitle) \(movie.year)" : movie.displayTitle
             let search = RowAction(title: "Search Releases") { [weak self] in
                 self?.coordinator.requestChillSearch(query: query)

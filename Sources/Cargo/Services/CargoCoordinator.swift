@@ -258,7 +258,7 @@ final class CargoCoordinator {
 
         chillCatalogStatus = "Loading top movies and series…"
         do {
-            async let movies = chillClient.fetchMovies()
+            async let movies = fetchExpandedMovies()
             async let shows = fetchExpandedTVShows()
             chillCatalogMovies = try await movies
             chillCatalogShows = try await shows
@@ -270,6 +270,43 @@ final class CargoCoordinator {
             chillCatalogShows = []
             chillCatalogStatus = error.localizedDescription
         }
+    }
+
+    /// Chill's aggregated movie catalog is intentionally short. Ask each
+    /// chart for its own catalog in parallel, then keep the first copy of
+    /// each title so the Discover page has a useful tail.
+    private func fetchExpandedMovies() async throws -> [ChillMovie] {
+        let client = chillClient
+        let sources = ChillMovieCatalogSource.allCases
+        let batches = await withTaskGroup(of: (Int, [ChillMovie]?).self) { group in
+            for (index, source) in sources.enumerated() {
+                group.addTask {
+                    (index, try? await client.fetchMovies(source: source))
+                }
+            }
+
+            var results = Array(repeating: [ChillMovie](), count: sources.count)
+            for await (index, movies) in group {
+                results[index] = movies ?? []
+            }
+            return results
+        }
+
+        var seen = Set<String>()
+        let expanded = batches.flatMap { $0 }.filter { movie in
+            let title = movie.displayTitle
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .lowercased()
+                .split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
+            let key = title.isEmpty ? "id:\(movie.id)" : "\(title)|\(movie.year)"
+            return seen.insert(key).inserted
+        }
+        if !expanded.isEmpty { return expanded }
+
+        // Preserve the previous aggregated behavior if the source-specific
+        // endpoint is unavailable for this account or API deployment.
+        return try await client.fetchMovies()
     }
 
     /// Chill's aggregated TV catalog is intentionally short. Ask each
@@ -702,11 +739,39 @@ final class CargoCoordinator {
     // MARK: - Library
 
     var hasTMDBKey: Bool { !(keychain.readTMDBKey() ?? "").isEmpty }
+    private var discoverMetadata: [String: TMDBMetadata] = [:]
 
     func saveTMDBKey(_ key: String) throws {
         try keychain.saveTMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
+        discoverMetadata.removeAll()
         scheduleChangeNotification()
     }
+
+    /// Looks up a Discover title on demand. Library enrichment remains persisted
+    /// in CargoState; this cache is intentionally session-only because Discover
+    /// titles are supplied by Chill and may change between catalog refreshes.
+    func fetchDiscoverMetadata(
+        title: String,
+        year: Int?,
+        type: TMDBMetadata.MediaType,
+        imdbID: String?
+    ) async throws -> TMDBMetadata {
+        guard let key = keychain.readTMDBKey(), !key.isEmpty else {
+            throw TMDBClient.ClientError.missingKey
+        }
+        let cacheKey = [type.rawValue, imdbID ?? "", title, year.map(String.init) ?? ""].joined(separator: "|")
+        if let cached = discoverMetadata[cacheKey] { return cached }
+        let client = TMDBClient(apiKey: key)
+        let metadata: TMDBMetadata
+        if let imdbID, imdbID.hasPrefix("tt") {
+            metadata = try await client.find(imdbID: imdbID)
+        } else {
+            metadata = try await client.search(title: title, year: year, type: type)
+        }
+        discoverMetadata[cacheKey] = metadata
+        return metadata
+    }
+
 
     /// Rescans the SSD. Cheap — directory listings only — so it runs every cycle.
     func scanLibrary() {
