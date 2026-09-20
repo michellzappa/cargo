@@ -96,8 +96,9 @@ class PageViewController: NSViewController {
             // Thin control strip above the list: tabs on the left, sort on the right.
             let bar = NSStackView(views: [leading ?? NSView(), NSView(), trailing ?? NSView()])
             bar.orientation = .horizontal
-            bar.edgeInsets = NSEdgeInsets(top: 10, left: 20, bottom: 6, right: 20)
+            bar.edgeInsets = NSEdgeInsets(top: 12, left: 20, bottom: 10, right: 20)
             bar.alignment = .centerY
+            bar.spacing = 12
             bar.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(bar)
             NSLayoutConstraint.activate([
@@ -150,8 +151,39 @@ class PageViewController: NSViewController {
     func barButton(_ title: String, action: Selector) -> NSButton {
         let button = NSButton(title: title, target: self, action: action)
         button.bezelStyle = .rounded
-        button.controlSize = .small
+        button.controlSize = .large
+        button.font = .systemFont(ofSize: 13, weight: .medium)
         return button
+    }
+
+    func modernFilterSegments(labels: [String], action: Selector) -> NSSegmentedControl {
+        let control = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
+        control.controlSize = .large
+        control.segmentStyle = .capsule
+        control.font = .systemFont(ofSize: 13, weight: .medium)
+        control.setContentHuggingPriority(.required, for: .horizontal)
+        control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        for index in 0..<control.segmentCount {
+            control.setWidth(0, forSegment: index)
+        }
+        return control
+    }
+
+    func modernFilterPopup(width: CGFloat? = nil, symbolName: String? = nil) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .large
+        popup.bezelStyle = .rounded
+        popup.font = .systemFont(ofSize: 13, weight: .medium)
+        if let width {
+            popup.widthAnchor.constraint(equalToConstant: width).isActive = true
+        }
+        if let symbolName {
+            popup.image = Theme.symbol(symbolName, pointSize: 13, weight: .medium)
+            popup.imagePosition = .imageLeading
+        }
+        popup.setContentHuggingPriority(.required, for: .horizontal)
+        popup.setContentCompressionResistancePriority(.required, for: .horizontal)
+        return popup
     }
     /// Optional control shown left-aligned above the list (tabs).
     func leadingAccessoryView() -> NSView? { nil }
@@ -335,25 +367,20 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     private var posterGridController: PosterGridViewController?
 
     private lazy var catalogControl: NSSegmentedControl = {
-        let control = NSSegmentedControl(labels: ["Top Movies", "Top Series"], trackingMode: .selectOne, target: self, action: #selector(catalogTabChanged(_:)))
-        control.controlSize = .small
+        let control = modernFilterSegments(labels: ["Top Movies", "Top Series"], action: #selector(catalogTabChanged(_:)))
         control.selectedSegment = catalogTab.rawValue
         return control
     }()
 
     private lazy var catalogFilterPopup: NSPopUpButton = {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.controlSize = .small
-        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        popup.widthAnchor.constraint(equalToConstant: 138).isActive = true
+        let popup = modernFilterPopup(width: 218, symbolName: "line.3.horizontal.decrease.circle")
         popup.target = self
         popup.action = #selector(catalogFilterChanged(_:))
         return popup
     }()
 
     private lazy var viewModeControl: NSSegmentedControl = {
-        let control = NSSegmentedControl(labels: ["List", "Posters"], trackingMode: .selectOne, target: self, action: #selector(viewModeChanged(_:)))
-        control.controlSize = .small
+        let control = modernFilterSegments(labels: ["List", "Posters"], action: #selector(viewModeChanged(_:)))
         control.selectedSegment = viewMode.rawValue
         return control
     }()
@@ -361,8 +388,9 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     private lazy var searchField: NSSearchField = {
         let field = NSSearchField()
         field.placeholderString = "Search Chill…"
-        field.controlSize = .small
-        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        field.controlSize = .large
+        field.font = .systemFont(ofSize: 13)
+        field.widthAnchor.constraint(equalToConstant: 320).isActive = true
         field.target = self
         field.action = #selector(search)
         field.delegate = self
@@ -397,13 +425,13 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     override func leadingAccessoryView() -> NSView? {
         let stack = NSStackView(views: [catalogControl, catalogFilterPopup, searchField, searchButton])
         stack.orientation = .horizontal
-        stack.spacing = 6
+        stack.spacing = 8
         return stack
     }
 
     override func accessoryView() -> NSView? {
         statusLabel.textColor = .secondaryLabelColor
-        statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
         let stack = NSStackView(views: [viewModeControl, statusLabel])
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -975,12 +1003,8 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     override func leadingAccessoryView() -> NSView? {
-        let control = NSSegmentedControl(labels: Filter.allCases.map(\.label), trackingMode: .selectOne, target: self, action: #selector(filterChanged(_:)))
-        control.controlSize = .large
-        control.segmentStyle = .automatic
-        control.font = .systemFont(ofSize: 13, weight: .medium)
+        let control = modernFilterSegments(labels: Filter.allCases.map(\.label), action: #selector(filterChanged(_:)))
         control.selectedSegment = filter.rawValue
-        for index in 0..<control.segmentCount { control.setWidth(0, forSegment: index) }
         return control
     }
 
@@ -991,9 +1015,7 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     private func sortPopup() -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.controlSize = .small
-        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let popup = modernFilterPopup(symbolName: "arrow.up.arrow.down")
         for option in Sort.allCases {
             popup.addItem(withTitle: "Sort by \(option.label)")
             popup.lastItem?.representedObject = option.rawValue
@@ -1190,12 +1212,8 @@ final class LibraryPageViewController: PageViewController {
     }
 
     override func leadingAccessoryView() -> NSView? {
-        let control = NSSegmentedControl(labels: Tab.allCases.map(\.label), trackingMode: .selectOne, target: self, action: #selector(tabChanged(_:)))
-        control.controlSize = .large
-        control.segmentStyle = .automatic
-        control.font = .systemFont(ofSize: 13, weight: .medium)
+        let control = modernFilterSegments(labels: Tab.allCases.map(\.label), action: #selector(tabChanged(_:)))
         control.selectedSegment = tab.rawValue
-        for index in 0..<control.segmentCount { control.setWidth(0, forSegment: index) }
         return control
     }
 
@@ -1234,9 +1252,7 @@ final class LibraryPageViewController: PageViewController {
     }
 
     override func accessoryView() -> NSView? {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-        popup.controlSize = .small
-        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let popup = modernFilterPopup(symbolName: "arrow.up.arrow.down")
         for option in Sort.allCases {
             popup.addItem(withTitle: "Sort by \(option.label)")
             popup.lastItem?.representedObject = option.rawValue
