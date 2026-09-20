@@ -10,9 +10,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var launchAtLoginItem: NSMenuItem!
     private var refreshTask: Task<Void, Never>?
     private let coordinator = CargoCoordinator()
+    private let keychainStore = KeychainStore()
     private let notificationService = CargoNotificationService()
     private lazy var mainWindowController = MainWindowController(coordinator: coordinator)
     private lazy var settingsWindowController = SettingsWindowController.cargo(coordinator: coordinator)
+    private lazy var remoteAPIController = CargoRemoteController(coordinator: coordinator)
+    private var remoteAPIServer: CargoHTTPServer?
 
     static func main() {
         let application = NSApplication.shared
@@ -22,6 +25,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Cargo is resident in the menu bar when it has no UI open. A window
+        // promotes it to a normal foreground app; see MainWindowController.
         NSApplication.shared.setActivationPolicy(.accessory)
         NSApplication.shared.mainMenu = makeMainMenu()
         notificationService.requestAuthorization()
@@ -35,6 +40,11 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             button.imagePosition = .imageOnly
             button.setAccessibilityLabel("Cargo menu")
             button.toolTip = "Cargo"
+        }
+
+        startRemoteAPI()
+        if !coordinator.isChillConnected, coordinator.chillStatus.hasPrefix("Token saved") {
+            Task { await coordinator.verifyChillConnection() }
         }
 
         // House menu: header, the actions, then the shared tail.
@@ -61,7 +71,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = statusMenu
         statusItem.isVisible = true
 
-        mainWindowController.openSettings = { [weak self] in self?.settingsWindowController.show() }
+        mainWindowController.openSettings = { [weak self] in self?.showSettings(nil) }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(coordinatorDidChange),
@@ -77,6 +87,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         refreshTask?.cancel()
+        remoteAPIServer?.stop()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -91,7 +102,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                 }
             case "settings":
-                settingsWindowController.show()
+                showSettings(nil)
             case "open":
                 // cargo://open?page=library
                 let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "page" }?.value
@@ -120,6 +131,20 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Background cycle
+
+    private func startRemoteAPI() {
+        do {
+            let token = try keychainStore.ensureRemoteAPIToken()
+            let router = CargoRemoteAPIRouter(controller: remoteAPIController, token: token)
+            let server = CargoHTTPServer { request in
+                await router.handle(request)
+            }
+            try server.start()
+            remoteAPIServer = server
+        } catch {
+            NSLog("Cargo remote API could not start: %@", error.localizedDescription)
+        }
+    }
 
     private func startBackgroundCycle() {
         refreshTask?.cancel()
@@ -150,7 +175,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide Cargo", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Quit Cargo", action: #selector(quitCargo(_:)), keyEquivalent: "q").target = self
+        appMenu.addItem(withTitle: "Close Cargo", action: #selector(closeToMenuBar(_:)), keyEquivalent: "q").target = self
         mainMenu.addItem(withTitle: "Cargo", action: nil, keyEquivalent: "").submenu = appMenu
 
         let fileMenu = NSMenu(title: "File")
@@ -225,6 +250,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
+        showAsRegularApp()
         settingsWindowController.show()
     }
 
@@ -259,6 +285,21 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc func quitCargo(_ sender: Any?) {
         NSApp.terminate(nil)
+    }
+
+    /// ⌘Q closes the normal app UI but leaves Cargo's background services and
+    /// menu-bar item running. The explicit Quit action in the status menu is
+    /// still a real termination path.
+    @objc private func closeToMenuBar(_ sender: Any?) {
+        for window in NSApp.windows where window.isVisible {
+            window.close()
+        }
+        NSApp.setActivationPolicy(.accessory)
+        NSApp.hide(nil)
+    }
+
+    private func showAsRegularApp() {
+        NSApp.setActivationPolicy(.regular)
     }
 
     // MARK: - Notifications

@@ -225,6 +225,9 @@ final class CargoCoordinator {
             chillSearchStatus = "Enter a title, show, or release"
             return
         }
+        if !isChillConnected, chillStatus.hasPrefix("Token saved") {
+            await verifyChillConnection()
+        }
         guard isChillConnected else {
             chillSearchResults = []
             chillSearchStatus = "Connect Chill in Settings → Chill"
@@ -256,7 +259,7 @@ final class CargoCoordinator {
         chillCatalogStatus = "Loading top movies and series…"
         do {
             async let movies = chillClient.fetchMovies()
-            async let shows = chillClient.fetchTVShows()
+            async let shows = fetchExpandedTVShows()
             chillCatalogMovies = try await movies
             chillCatalogShows = try await shows
             let movieCount = chillCatalogMovies.count
@@ -267,6 +270,37 @@ final class CargoCoordinator {
             chillCatalogShows = []
             chillCatalogStatus = error.localizedDescription
         }
+    }
+
+    /// Chill's aggregated TV catalog is intentionally short. Ask each
+    /// provider for its own catalog in parallel, then keep the first copy of
+    /// each IMDb title so the provider/network filters have a useful tail.
+    private func fetchExpandedTVShows() async throws -> [ChillTVShow] {
+        let client = chillClient
+        let sources = ChillTVCatalogSource.allCases
+        let batches = await withTaskGroup(of: (Int, [ChillTVShow]?).self) { group in
+            for (index, source) in sources.enumerated() {
+                group.addTask {
+                    (index, try? await client.fetchTVShows(source: source))
+                }
+            }
+
+            var results = Array(repeating: [ChillTVShow](), count: sources.count)
+            for await (index, shows) in group {
+                results[index] = shows ?? []
+            }
+            return results
+        }
+
+        var seen = Set<String>()
+        let expanded = batches.flatMap { $0 }.filter { show in
+            seen.insert(show.id).inserted
+        }
+        if !expanded.isEmpty { return expanded }
+
+        // Preserve the previous aggregated behavior if a provider-specific
+        // endpoint is unavailable for this account or API deployment.
+        return try await client.fetchTVShows()
     }
 
     func requestChillSearch(query: String) {

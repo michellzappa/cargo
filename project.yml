@@ -13,6 +13,9 @@ packages:
     path: ../housekit
   EasySubsKit:
     path: ../easysubs
+  SwiftNIO:
+    url: https://github.com/apple/swift-nio.git
+    version: 2.103.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -46,6 +49,11 @@ targets:
         product: HouseKit
       - package: EasySubsKit
         product: EasySubsKit
+      - package: SwiftNIO
+        products:
+          - NIOCore
+          - NIOHTTP1
+          - NIOPosix
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.cargo.Cargo

@@ -21,7 +21,10 @@ local copy is verified, and ambiguous files wait in `_Inbox` for a human.
 ## How it works
 
 The menu bar item shows live status (account, transfers, Inbox count) and the
-actions: Open Cargo ⌘O, Add Transfer… ⌘N, Refresh ⌘R. The dashboard window has
+actions: Open Cargo ⌘O, Add Transfer… ⌘N, Refresh ⌘R. Opening the dashboard
+gives Cargo a normal window and Dock icon. ⌘Q closes the app windows and leaves
+the background service running in the menu bar; choose Quit Cargo from the
+menu-bar menu to terminate it. The dashboard window has
 a sidebar — Discover, Transfers, Files, Inbox, Library, Watchlist, History —
 each a native table. Discover searches Chill and offers an explicit “Send to
 Put.io” action; it also shows Chill's top movies and series as browsable lists,
@@ -124,6 +127,7 @@ AppKit throughout; dependencies are the sibling packages `HouseKit` and `EasySub
 | `Services/SubtitleService` | Put.io subtitle parking + OpenSubtitles via `EasySubsKit` (sibling package `../easysubs`) |
 | `Core/CargoStore` | One JSON state file in Application Support, durable job history |
 | `Core/CargoRemoteControl` | Remote-safe read models and transport-neutral commands for a future resident API |
+| `Services/CargoRemoteAPI`, `CargoHTTPServer` | Authenticated localhost HTTP API v1, backed by SwiftNIO |
 | `UI/MainWindowController`, `Pages`, `ListTableViewController` | Dashboard: sidebar + native tables |
 | `UI/SettingsPages` | The HouseKit settings window with Cargo's pages |
 | `CargoApp` | `NSStatusItem` and its menu — header, actions, then the house tail |
@@ -136,6 +140,27 @@ Put.io/Chill/library/watchlist/history state and explicit commands, while
 keeping Keychain tokens, security-scoped bookmarks, absolute local paths, and
 AppKit inside the resident Cargo process. The network listener and remote
 client are separate follow-up milestones.
+
+### Local API preview
+
+Cargo 0.8.0 starts a read-only API on `127.0.0.1:39817`. It requires the
+bearer token stored in the macOS Keychain and supports state, transfers, files,
+Inbox, library, watchlist, Chill catalog, and Chill search:
+
+```text
+GET  /v1/health
+GET  /v1/state
+GET  /v1/transfers
+GET  /v1/files
+GET  /v1/inbox
+GET  /v1/library
+GET  /v1/watchlist
+GET  /v1/discover/catalog
+POST /v1/discover/search   {"query":"The Bear 2024"}
+```
+
+The listener is loopback-only for now. Token rotation, network scope, and
+remote commands are tracked as the next remote-control issues.
 
 ## Limitations
 

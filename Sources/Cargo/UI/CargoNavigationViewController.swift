@@ -10,6 +10,20 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     private let updatedLabel = Theme.label(style: .caption)
     private let diskLabel = Theme.label(style: .caption)
     private let diskIndicator = NSProgressIndicator()
+    private lazy var emptyTrashMenuItem: NSMenuItem = {
+        let item = NSMenuItem(
+            title: "Empty Put.io Trash…",
+            action: #selector(emptyPutIOTrashFromMenu(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        return item
+    }()
+    private lazy var storageMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.addItem(emptyTrashMenuItem)
+        return menu
+    }()
     private let ssdLabel = Theme.label(style: .caption)
     private let ssdIndicator = NSProgressIndicator()
     private let contentContainer = NSViewController()
@@ -154,6 +168,11 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             indicator.translatesAutoresizingMaskIntoConstraints = false
         }
 
+        // The Put.io storage readout is also the quick path to clearing files
+        // that were manually moved to Put.io's trash.
+        diskLabel.menu = storageMenu
+        diskIndicator.menu = storageMenu
+
         let footer = NSStackView(views: [connectionRow, updatedLabel, diskLabel, diskIndicator, ssdLabel, ssdIndicator])
         footer.orientation = .vertical
         footer.alignment = .leading
@@ -193,9 +212,11 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"
             diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes))"
             diskIndicator.doubleValue = disk.fraction
+            emptyTrashMenuItem.isEnabled = (coordinator.trashSummary?.count ?? 0) > 0
             diskLabel.isHidden = false
             diskIndicator.isHidden = false
         } else {
+            emptyTrashMenuItem.isEnabled = false
             diskLabel.isHidden = true
             diskIndicator.isHidden = true
         }
@@ -212,6 +233,25 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         } else {
             ssdLabel.isHidden = true
             ssdIndicator.isHidden = true
+        }
+    }
+
+    @objc private func emptyPutIOTrashFromMenu(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Empty Put.io trash?"
+        alert.informativeText = "Everything in the trash is deleted for good. This includes files you trashed outside Cargo."
+        alert.addButton(withTitle: "Empty Trash")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await coordinator.emptyPutIOTrash()
+            } catch {
+                NSAlert(error: error).runModal()
+            }
         }
     }
 

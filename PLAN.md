@@ -90,7 +90,9 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
   and credentials.
 - [x] Define a transport-neutral command interface for refresh, discovery,
   transfers, local sync, organization, and watchlist refresh.
-- [ ] Add an authenticated embedded read API bound to the resident Mac.
+- [x] Add an authenticated embedded read API bound to localhost on the resident Mac.
+- [x] Add stable JSON envelopes, request IDs, bounded request bodies, and API
+  contract tests.
 - [ ] Add network scoping and token rotation controls.
 - [ ] Add live status delivery and a remote client.
 

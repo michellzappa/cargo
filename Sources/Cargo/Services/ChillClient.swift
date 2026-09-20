@@ -1,5 +1,34 @@
 import Foundation
 
+/// Chill's provider-specific TV catalog sources. The aggregated request is
+/// intentionally small; fetching these sources gives the Discover page a
+/// useful tail for each provider filter.
+enum ChillTVCatalogSource: String, CaseIterable, Codable, Sendable {
+    case netflix = "TV_SHOWS_SOURCE_NETFLIX"
+    case hboMax = "TV_SHOWS_SOURCE_HBO_MAX"
+    case appleTVPlus = "TV_SHOWS_SOURCE_APPLE_TV_PLUS"
+    case primeVideo = "TV_SHOWS_SOURCE_PRIME_VIDEO"
+    case disneyPlus = "TV_SHOWS_SOURCE_DISNEY_PLUS"
+    case hulu = "TV_SHOWS_SOURCE_HULU"
+    case paramountPlus = "TV_SHOWS_SOURCE_PARAMOUNT_PLUS"
+    case amcPlus = "TV_SHOWS_SOURCE_AMC_PLUS"
+    case peacock = "TV_SHOWS_SOURCE_PEACOCK"
+
+    var displayName: String {
+        switch self {
+        case .netflix: "Netflix"
+        case .hboMax: "HBO Max"
+        case .appleTVPlus: "Apple TV+"
+        case .primeVideo: "Prime Video"
+        case .disneyPlus: "Disney+"
+        case .hulu: "Hulu"
+        case .paramountPlus: "Paramount+"
+        case .amcPlus: "AMC+"
+        case .peacock: "Peacock"
+        }
+    }
+}
+
 /// The user-facing part of chill.institute that Cargo needs: discovery and
 /// sending a selected release to the user's Put.io account.
 protocol ChillClient: Sendable {
@@ -7,6 +36,7 @@ protocol ChillClient: Sendable {
     func search(query: String) async throws -> [ChillSearchResult]
     func fetchMovies() async throws -> [ChillMovie]
     func fetchTVShows() async throws -> [ChillTVShow]
+    func fetchTVShows(source: ChillTVCatalogSource) async throws -> [ChillTVShow]
     func addTransfer(url: String) async throws -> ChillTransferResponse
     func episodeDownload(imdbID: String, season: Int, episode: Int) async throws -> ChillEpisodeDownload?
 }
@@ -16,6 +46,7 @@ extension ChillClient {
     func search(query: String) async throws -> [ChillSearchResult] { throw UnconfiguredChillClient.ClientError.notConfigured }
     func fetchMovies() async throws -> [ChillMovie] { throw UnconfiguredChillClient.ClientError.notConfigured }
     func fetchTVShows() async throws -> [ChillTVShow] { throw UnconfiguredChillClient.ClientError.notConfigured }
+    func fetchTVShows(source: ChillTVCatalogSource) async throws -> [ChillTVShow] { try await fetchTVShows() }
     func addTransfer(url: String) async throws -> ChillTransferResponse { throw UnconfiguredChillClient.ClientError.notConfigured }
     func episodeDownload(imdbID: String, season: Int, episode: Int) async throws -> ChillEpisodeDownload? {
         throw UnconfiguredChillClient.ClientError.notConfigured
@@ -204,6 +235,7 @@ struct ChillTVShow: Codable, Equatable, Identifiable, Sendable {
     let imdbID: String
     let title: String
     let year: Int
+    let source: ChillTVCatalogSource?
     let posterURL: String
     let rating: Double
     let overview: String
@@ -215,7 +247,7 @@ struct ChillTVShow: Codable, Equatable, Identifiable, Sendable {
     var id: String { imdbID.isEmpty ? "\(title)-\(year)" : imdbID }
 
     enum CodingKeys: String, CodingKey {
-        case title, year, rating, overview, networks
+        case title, year, rating, overview, networks, source
         case imdbID = "imdbId"
         case posterURL = "posterUrl"
         case externalURL = "externalUrl"
@@ -228,6 +260,7 @@ struct ChillTVShow: Codable, Equatable, Identifiable, Sendable {
         imdbID = container.decodeString(.imdbID)
         title = container.decodeString(.title)
         year = container.decodeInt(.year)
+        source = container.decodeTVCatalogSource(.source)
         posterURL = container.decodeString(.posterURL)
         rating = container.decodeDouble(.rating)
         overview = container.decodeString(.overview)
@@ -402,6 +435,14 @@ struct ChillAPIClient: ChillClient {
         return response.shows
     }
 
+    func fetchTVShows(source: ChillTVCatalogSource) async throws -> [ChillTVShow] {
+        let response: ChillTVShowsResponse = try await request(
+            path: "chill.v4.UserService/GetTVShows",
+            body: TVShowsRequest(source: source.rawValue)
+        )
+        return response.shows
+    }
+
     func addTransfer(url: String) async throws -> ChillTransferResponse {
         try await request(
             path: "chill.v4.UserService/AddTransfer",
@@ -462,6 +503,7 @@ struct ChillAPIClient: ChillClient {
 
     private struct EmptyRequest: Encodable {}
     private struct SearchRequest: Encodable { let query: String }
+    private struct TVShowsRequest: Encodable { let source: String }
     private struct AddTransferRequest: Encodable { let url: String }
     private struct EpisodeDownloadRequest: Encodable {
         let imdbID: String
@@ -550,6 +592,36 @@ private extension KeyedDecodingContainer {
         case "TV_SHOW_STATUS_IN_PRODUCTION", "IN_PRODUCTION": return 4
         case "TV_SHOW_STATUS_PLANNED", "PLANNED": return 5
         default: return Int(text) ?? 0
+        }
+    }
+
+    func decodeTVCatalogSource(_ key: Key) -> ChillTVCatalogSource? {
+        if let text = try? decode(String.self, forKey: key) {
+            if let source = ChillTVCatalogSource(rawValue: text) { return source }
+            switch text {
+            case "NETFLIX": return .netflix
+            case "HBO_MAX", "HBO MAX": return .hboMax
+            case "APPLE_TV_PLUS", "APPLE TV+": return .appleTVPlus
+            case "PRIME_VIDEO", "PRIME VIDEO": return .primeVideo
+            case "DISNEY_PLUS", "DISNEY+": return .disneyPlus
+            case "HULU": return .hulu
+            case "PARAMOUNT_PLUS", "PARAMOUNT+": return .paramountPlus
+            case "AMC_PLUS", "AMC+": return .amcPlus
+            case "PEACOCK": return .peacock
+            default: return nil
+            }
+        }
+        switch decodeInt(key) {
+        case 1: return .netflix
+        case 2: return .hboMax
+        case 3: return .appleTVPlus
+        case 4: return .primeVideo
+        case 5: return .disneyPlus
+        case 7: return .hulu
+        case 8: return .paramountPlus
+        case 9: return .amcPlus
+        case 10: return .peacock
+        default: return nil
         }
     }
 }

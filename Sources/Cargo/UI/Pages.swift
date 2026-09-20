@@ -325,11 +325,36 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
         case movies, series
     }
 
+    private enum ViewMode: Int {
+        case list, posters
+    }
+
     private var catalogTab = CatalogTab.movies
+    private var viewMode = ViewMode.list
+    private var catalogFilter = ""
+    private var posterGridController: PosterGridViewController?
+
     private lazy var catalogControl: NSSegmentedControl = {
         let control = NSSegmentedControl(labels: ["Top Movies", "Top Series"], trackingMode: .selectOne, target: self, action: #selector(catalogTabChanged(_:)))
         control.controlSize = .small
         control.selectedSegment = catalogTab.rawValue
+        return control
+    }()
+
+    private lazy var catalogFilterPopup: NSPopUpButton = {
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.controlSize = .small
+        popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        popup.widthAnchor.constraint(equalToConstant: 138).isActive = true
+        popup.target = self
+        popup.action = #selector(catalogFilterChanged(_:))
+        return popup
+    }()
+
+    private lazy var viewModeControl: NSSegmentedControl = {
+        let control = NSSegmentedControl(labels: ["List", "Posters"], trackingMode: .selectOne, target: self, action: #selector(viewModeChanged(_:)))
+        control.controlSize = .small
+        control.selectedSegment = viewMode.rawValue
         return control
     }()
 
@@ -370,7 +395,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     override func leadingAccessoryView() -> NSView? {
-        let stack = NSStackView(views: [catalogControl, searchField, searchButton])
+        let stack = NSStackView(views: [catalogControl, catalogFilterPopup, searchField, searchButton])
         stack.orientation = .horizontal
         stack.spacing = 6
         return stack
@@ -379,7 +404,11 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     override func accessoryView() -> NSView? {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        return statusLabel
+        let stack = NSStackView(views: [viewModeControl, statusLabel])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
     }
 
     override func refreshAccessories() {
@@ -388,16 +417,89 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
         }
         catalogControl.selectedSegment = catalogTab.rawValue
         searchButton.isEnabled = coordinator.isChillConnected && !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let showingCatalog = coordinator.chillSearchQuery.isEmpty
+        catalogFilterPopup.isHidden = !showingCatalog
+        viewModeControl.isHidden = !showingCatalog
+        viewModeControl.selectedSegment = viewMode.rawValue
+        updateFilterMenu()
         statusLabel.stringValue = coordinator.chillSearchQuery.isEmpty ? coordinator.chillCatalogStatus : coordinator.chillSearchStatus
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        let grid = PosterGridViewController()
+        posterGridController = grid
+        addChild(grid)
+        grid.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(grid.view)
+        NSLayoutConstraint.activate([
+            grid.view.leadingAnchor.constraint(equalTo: list.view.leadingAnchor),
+            grid.view.trailingAnchor.constraint(equalTo: list.view.trailingAnchor),
+            grid.view.topAnchor.constraint(equalTo: list.view.topAnchor),
+            grid.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
+        ])
+        reload()
         if coordinator.isChillConnected {
             Task { await coordinator.refreshChillCatalog() }
         } else if coordinator.chillStatus.hasPrefix("Token saved") {
             Task { await coordinator.verifyChillConnection() }
         }
+    }
+
+    override func reload() {
+        super.reload()
+        guard let posterGridController else { return }
+        posterGridController.emptyState = emptyState
+        posterGridController.apply(catalogRows())
+        updateCatalogPresentation()
+    }
+
+    private func updateCatalogPresentation() {
+        guard let posterGridController else { return }
+        let showingGrid = coordinator.chillSearchQuery.isEmpty && viewMode == .posters
+        list.view.isHidden = showingGrid
+        posterGridController.view.isHidden = !showingGrid
+    }
+
+    private func catalogRows() -> [ListRow] {
+        guard coordinator.chillSearchQuery.isEmpty else { return [] }
+        return catalogTab == .movies ? movieCatalogSection().rows : seriesCatalogSection().rows
+    }
+
+    private func updateFilterMenu() {
+        let current = catalogFilter
+        let options: [String]
+        let allTitle: String
+        if catalogTab == .movies {
+            allTitle = "All Genres"
+            options = Set(coordinator.chillCatalogMovies.flatMap(\.genres)).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+        } else {
+            allTitle = "All Networks"
+            options = Set(coordinator.chillCatalogShows.flatMap(\.networks)).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+        }
+
+        catalogFilterPopup.removeAllItems()
+        catalogFilterPopup.addItem(withTitle: allTitle)
+        for option in options {
+            catalogFilterPopup.addItem(withTitle: option)
+            catalogFilterPopup.lastItem?.representedObject = option
+        }
+        if options.contains(where: { $0.caseInsensitiveCompare(current) == .orderedSame }) {
+            catalogFilter = options.first { $0.caseInsensitiveCompare(current) == .orderedSame } ?? current
+            catalogFilterPopup.selectItem(withTitle: catalogFilter)
+        } else {
+            catalogFilter = ""
+            catalogFilterPopup.selectItem(at: 0)
+        }
+    }
+
+    private func matchesCatalogFilter(_ values: [String]) -> Bool {
+        catalogFilter.isEmpty || values.contains { $0.caseInsensitiveCompare(catalogFilter) == .orderedSame }
     }
 
     override func listActions() -> [RowAction] {
@@ -455,7 +557,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     private func movieCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogMovies.map { movie -> ListRow in
+        let rows = coordinator.chillCatalogMovies.filter { matchesCatalogFilter($0.genres) }.map { movie -> ListRow in
             let query = movie.year > 0 ? "\(movie.displayTitle) \(movie.year)" : movie.displayTitle
             let search = RowAction(title: "Search Releases") { [weak self] in
                 self?.coordinator.requestChillSearch(query: query)
@@ -492,7 +594,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     private func seriesCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogShows.map { show -> ListRow in
+        let rows = coordinator.chillCatalogShows.filter { matchesCatalogFilter($0.networks) }.map { show -> ListRow in
             let query = show.year > 0 ? "\(show.title) \(show.year)" : show.title
             let search = RowAction(title: "Search Releases") { [weak self] in
                 self?.coordinator.requestChillSearch(query: query)
@@ -519,6 +621,17 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
 
     @objc private func catalogTabChanged(_ sender: NSSegmentedControl) {
         catalogTab = CatalogTab(rawValue: sender.selectedSegment) ?? .movies
+        catalogFilter = ""
+        reload()
+    }
+
+    @objc private func catalogFilterChanged(_ sender: NSPopUpButton) {
+        catalogFilter = sender.selectedItem?.representedObject as? String ?? ""
+        reload()
+    }
+
+    @objc private func viewModeChanged(_ sender: NSSegmentedControl) {
+        viewMode = ViewMode(rawValue: sender.selectedSegment) ?? .list
         reload()
     }
 

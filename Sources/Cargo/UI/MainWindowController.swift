@@ -49,6 +49,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     func show(page: Page? = nil) {
         if let page { navigation.select(page) }
+        NSApp.setActivationPolicy(.regular)
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)

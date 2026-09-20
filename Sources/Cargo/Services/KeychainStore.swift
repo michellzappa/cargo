@@ -7,6 +7,7 @@ final class KeychainStore {
     private let chillAccount = "chill-user-token"
     private let tmdbAccount = "tmdb-api-key"
     private let openSubtitlesAccount = "opensubtitles-password"
+    private let remoteAPIAccount = "remote-api-token"
 
     enum KeychainError: LocalizedError {
         case saveFailure(OSStatus)
@@ -38,6 +39,22 @@ final class KeychainStore {
     func readTMDBKey() -> String? { read(account: tmdbAccount) }
     func saveTMDBKey(_ key: String) throws {
         if key.isEmpty { try delete(account: tmdbAccount) } else { try save(key, account: tmdbAccount) }
+    }
+
+    func readRemoteAPIToken() -> String? { read(account: remoteAPIAccount) }
+
+    func ensureRemoteAPIToken() throws -> String {
+        if let token = readRemoteAPIToken(), !token.isEmpty {
+            return token
+        }
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let token = Data(bytes).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        try save(token, account: remoteAPIAccount)
+        return token
     }
 
     private func read(account: String) -> String? {

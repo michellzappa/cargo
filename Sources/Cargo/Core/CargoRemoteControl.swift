@@ -194,7 +194,7 @@ struct CargoRemoteSearchResult: Codable, Equatable, Identifiable, Sendable {
         id = result.id
         title = result.title
         indexer = result.indexer
-        link = result.link
+        link = CargoRemoteLinkSanitizer.sanitize(result.link)
         imdbID = result.imdbID
         peers = result.peers
         seeders = result.seeders
@@ -226,7 +226,7 @@ struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
         title = movie.title
         year = movie.year
         displayTitle = movie.displayTitle
-        link = movie.link
+        link = CargoRemoteLinkSanitizer.sanitize(movie.link)
         peers = movie.peers
         seeders = movie.seeders
         size = movie.size
@@ -236,6 +236,18 @@ struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
         externalURL = movie.externalURL
         overview = movie.overview
         genres = movie.genres
+    }
+}
+
+private enum CargoRemoteLinkSanitizer {
+    private static let sensitiveQueryNames = Set(["access_token", "download_token", "token"])
+
+    static func sanitize(_ link: String) -> String {
+        guard let components = URLComponents(string: link) else { return link }
+        let containsSensitiveQuery = components.queryItems?.contains { item in
+            sensitiveQueryNames.contains(item.name.lowercased())
+        } == true
+        return containsSensitiveQuery ? "" : link
     }
 }
 

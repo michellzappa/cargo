@@ -289,6 +289,108 @@ final class CargoTests: XCTestCase {
         XCTAssertTrue(json.contains("Movies/Arrival (2016).mkv"))
     }
 
+    @MainActor
+    func testRemoteAPIRequiresBearerTokenAndUsesStableEnvelopes() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoAPITests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var state = store.snapshot()
+        state.settings = CargoSettings(
+            libraryRootBookmark: Data("BOOKMARK".utf8),
+            libraryRootPath: "/Users/example/Library",
+            openSubtitlesAPIKey: "secret"
+        )
+        try store.replace(with: state)
+
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let router = CargoRemoteAPIRouter(controller: controller, token: "test-token")
+
+        let unauthorized = await router.handle(
+            CargoAPIRequest(method: "GET", uri: "/v1/health", headers: [:], body: Data())
+        )
+        XCTAssertEqual(unauthorized.statusCode, 401)
+        XCTAssertTrue(String(decoding: unauthorized.body, as: UTF8.self).contains("\"ok\":false"))
+
+        let health = await router.handle(
+            CargoAPIRequest(
+                method: "GET",
+                uri: "/v1/health",
+                headers: ["authorization": "Bearer test-token"],
+                body: Data()
+            )
+        )
+        XCTAssertEqual(health.statusCode, 200)
+        let healthJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: health.body) as? [String: Any]
+        )
+        XCTAssertEqual(healthJSON["ok"] as? Bool, true)
+        XCTAssertNotNil(healthJSON["requestID"] as? String)
+        XCTAssertEqual(
+            (healthJSON["data"] as? [String: Any])?["apiVersion"] as? String,
+            "v1"
+        )
+
+        let stateResponse = await router.handle(
+            CargoAPIRequest(
+                method: "GET",
+                uri: "/v1/state",
+                headers: ["authorization": "Bearer test-token"],
+                body: Data()
+            )
+        )
+        let stateJSON = String(decoding: stateResponse.body, as: UTF8.self)
+        XCTAssertEqual(stateResponse.statusCode, 200)
+        XCTAssertFalse(stateJSON.contains("BOOKMARK"))
+        XCTAssertFalse(stateJSON.contains("/Users/example/Library"))
+        XCTAssertFalse(stateJSON.contains("secret"))
+
+        let searchBody = try JSONEncoder().encode(CargoAPISearchRequest(query: "Arrival 2016"))
+        let search = await router.handle(
+            CargoAPIRequest(
+                method: "POST",
+                uri: "/v1/discover/search",
+                headers: ["authorization": "Bearer test-token"],
+                body: searchBody
+            )
+        )
+        XCTAssertEqual(search.statusCode, 200)
+        let searchJSON = try XCTUnwrap(
+            try JSONSerialization.jsonObject(with: search.body) as? [String: Any]
+        )
+        XCTAssertEqual(searchJSON["ok"] as? Bool, true)
+        XCTAssertEqual(
+            (searchJSON["data"] as? [String: Any])?["query"] as? String,
+            "Arrival 2016"
+        )
+    }
+
+    func testRemoteProjectionDoesNotExposeTokenizedLinks() throws {
+        let result = try JSONDecoder().decode(
+            ChillSearchResult.self,
+            from: Data(#"{"id":"1","title":"Arrival","indexer":"test","link":"https://api.chill.institute/download/test?download_token=secret","peers":1,"seeders":2,"size":3,"source":"test","uploadedAt":"2026-01-01T00:00:00Z"}"#.utf8)
+        )
+
+        XCTAssertEqual(CargoRemoteSearchResult(result).link, "")
+    }
+
+    func testRemoteHTTPServerStartsAndStopsCleanly() throws {
+        let server = CargoHTTPServer(
+            configuration: .init(host: "127.0.0.1", port: 0)
+        ) { _ in
+            CargoAPIResponse(
+                statusCode: 200,
+                requestID: UUID().uuidString,
+                body: Data(#"{"ok":true}"#.utf8)
+            )
+        }
+        try server.start()
+        XCTAssertNotNil(server.localAddress?.port)
+        server.stop()
+        server.stop()
+    }
+
     func testLibraryOrganizerPreviewsMovieAndTVDestinations() {
         let settings = CargoSettings(
             stagingDirectoryName: ".inbox",
