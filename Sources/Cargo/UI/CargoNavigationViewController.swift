@@ -10,6 +10,7 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     private let updatedLabel = Theme.label(style: .caption)
     private let diskLabel = Theme.label(style: .caption)
     private let diskIndicator = NSProgressIndicator()
+    private var emptyingTrash = false
     private lazy var emptyTrashMenuItem: NSMenuItem = {
         let item = NSMenuItem(
             title: "Empty Put.io Trash…",
@@ -212,7 +213,7 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"
             diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes))"
             diskIndicator.doubleValue = disk.fraction
-            emptyTrashMenuItem.isEnabled = (coordinator.trashSummary?.count ?? 0) > 0
+            emptyTrashMenuItem.isEnabled = (coordinator.trashSummary?.count ?? 0) > 0 && !emptyingTrash
             diskLabel.isHidden = false
             diskIndicator.isHidden = false
         } else {
@@ -237,6 +238,7 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     }
 
     @objc private func emptyPutIOTrashFromMenu(_ sender: Any?) {
+        guard !emptyingTrash else { return }
         let alert = NSAlert()
         alert.messageText = "Empty Put.io trash?"
         alert.informativeText = "Everything in the trash is deleted for good. This includes files you trashed outside Cargo."
@@ -244,9 +246,15 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        emptyingTrash = true
+        emptyTrashMenuItem.isEnabled = false
 
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.emptyingTrash = false
+                self.updateFooter()
+            }
             do {
                 try await coordinator.emptyPutIOTrash()
             } catch {

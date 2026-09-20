@@ -152,6 +152,7 @@ final class PutIOPage: CargoPage {
     private let trashLabel = SettingsForm.label("")
     private lazy var emptyTrashButton = SettingsForm.button("Empty Trash…", target: self, action: #selector(emptyTrash))
     private let intervalPopup = SettingsForm.popup()
+    private var emptyingTrash = false
 
     override func build() {
         section("Account")
@@ -188,7 +189,7 @@ final class PutIOPage: CargoPage {
         }
         if let trash = coordinator.trashSummary {
             trashLabel.stringValue = trash.count == 0 ? "Empty" : "\(trash.count) item\(trash.count == 1 ? "" : "s") · \(Formatters.bytes(trash.bytes))"
-            emptyTrashButton.isEnabled = trash.count > 0
+            emptyTrashButton.isEnabled = trash.count > 0 && !emptyingTrash
         } else {
             trashLabel.stringValue = "—"
             emptyTrashButton.isEnabled = false
@@ -196,6 +197,7 @@ final class PutIOPage: CargoPage {
     }
 
     @objc private func emptyTrash() {
+        guard !emptyingTrash else { return }
         let alert = NSAlert()
         alert.messageText = "Empty Put.io trash?"
         alert.informativeText = "Everything in the trash is deleted for good. This includes files you trashed outside Cargo."
@@ -203,11 +205,18 @@ final class PutIOPage: CargoPage {
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        Task { @MainActor [coordinator, statusLabel] in
+        emptyingTrash = true
+        emptyTrashButton.isEnabled = false
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                self.emptyingTrash = false
+                self.refresh()
+            }
             do {
-                try await coordinator.emptyPutIOTrash()
+                try await self.coordinator.emptyPutIOTrash()
             } catch {
-                statusLabel.stringValue = error.localizedDescription
+                self.statusLabel.stringValue = error.localizedDescription
             }
         }
     }
