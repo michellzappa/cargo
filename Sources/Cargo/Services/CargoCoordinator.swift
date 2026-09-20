@@ -69,15 +69,36 @@ final class CargoCoordinator {
     private let subtitles = SubtitleService()
     private let imdbWatchlistService = IMDbWatchlistService()
     private var putIOClient: PutIOClient
+    private var chillClient: ChillClient
     private var remoteFolderStack: [(id: Int, name: String)] = []
     private var pendingOAuthState: String?
     /// Posted on the main queue, coalesced, whenever state or status text changes.
     static let didChange = Notification.Name("CargoCoordinator.didChange")
+    static let didRequestChillSearch = Notification.Name("CargoCoordinator.didRequestChillSearch")
 
     private(set) var state: CargoState {
         didSet { scheduleChangeNotification() }
     }
     private(set) var putIOStatus = "Not connected yet" {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillStatus = "Not connected yet" {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillSearchQuery = ""
+    private(set) var chillSearchResults: [ChillSearchResult] = [] {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillSearchStatus = "Search Chill for a release" {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillCatalogMovies: [ChillMovie] = [] {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillCatalogShows: [ChillTVShow] = [] {
+        didSet { scheduleChangeNotification() }
+    }
+    private(set) var chillCatalogStatus = "Top movies and series appear here" {
         didSet { scheduleChangeNotification() }
     }
     private(set) var imdbWatchlistStatus = "Not synced yet" {
@@ -98,7 +119,11 @@ final class CargoCoordinator {
         !remoteFolderStack.isEmpty
     }
 
-    init(store: CargoStore = CargoStore(), client: PutIOClient? = nil) {
+    init(
+        store: CargoStore = CargoStore(),
+        client: PutIOClient? = nil,
+        chillClient: ChillClient? = nil
+    ) {
         self.store = store
         if let client {
             self.putIOClient = client
@@ -108,6 +133,15 @@ final class CargoCoordinator {
             self.putIOStatus = "Token saved · not tested"
         } else {
             self.putIOClient = UnconfiguredPutIOClient()
+        }
+        if let chillClient {
+            self.chillClient = chillClient
+            self.chillStatus = "Test client"
+        } else if let token = keychain.readChillToken(), !token.isEmpty {
+            self.chillClient = ChillAPIClient(token: token)
+            self.chillStatus = "Token saved · not tested"
+        } else {
+            self.chillClient = UnconfiguredChillClient()
         }
         self.state = store.snapshot()
         if self.state.settings.stagingDirectoryName == ".cargo-incoming" {
@@ -139,6 +173,140 @@ final class CargoCoordinator {
 
     var isConnected: Bool {
         putIOStatus.hasPrefix("Connected as ")
+    }
+
+    var isChillConnected: Bool {
+        chillStatus.hasPrefix("Connected as ")
+    }
+
+    func saveChillToken(_ token: String) throws {
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedToken.isEmpty else {
+            throw ChillAPIClient.ClientError.missingToken
+        }
+
+        try keychain.saveChillToken(trimmedToken)
+        chillClient = ChillAPIClient(token: trimmedToken)
+        chillStatus = "Token saved · testing…"
+    }
+
+    func verifyChillConnection() async {
+        do {
+            let profile = try await chillClient.fetchProfile()
+            let displayName = profile.username.isEmpty ? profile.userID : profile.username
+            chillStatus = "Connected as \(displayName)"
+            Task { await refreshChillCatalog() }
+        } catch {
+            if chillClient is UnconfiguredChillClient {
+                chillStatus = "Not connected yet"
+            } else {
+                chillStatus = "Chill error · \(error.localizedDescription)"
+            }
+        }
+    }
+
+    func removeChillToken() throws {
+        try keychain.deleteChillToken()
+        chillClient = UnconfiguredChillClient()
+        chillSearchQuery = ""
+        chillSearchResults = []
+        chillSearchStatus = "Search Chill for a release"
+        chillCatalogMovies = []
+        chillCatalogShows = []
+        chillCatalogStatus = "Top movies and series appear here"
+        chillStatus = "Not connected yet"
+    }
+
+    func searchChill(query: String) async {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        chillSearchQuery = trimmedQuery
+        guard !trimmedQuery.isEmpty else {
+            chillSearchResults = []
+            chillSearchStatus = "Enter a title, show, or release"
+            return
+        }
+        guard isChillConnected else {
+            chillSearchResults = []
+            chillSearchStatus = "Connect Chill in Settings → Chill"
+            return
+        }
+
+        chillSearchStatus = "Searching Chill…"
+        do {
+            chillSearchResults = try await chillClient.search(query: trimmedQuery)
+                .sorted {
+                    if $0.seeders != $1.seeders { return $0.seeders > $1.seeders }
+                    return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+                }
+            chillSearchStatus = "\(chillSearchResults.count) result\(chillSearchResults.count == 1 ? "" : "s")"
+        } catch {
+            chillSearchResults = []
+            chillSearchStatus = error.localizedDescription
+        }
+    }
+
+    func refreshChillCatalog() async {
+        guard isChillConnected else {
+            chillCatalogMovies = []
+            chillCatalogShows = []
+            chillCatalogStatus = "Connect Chill in Settings → Chill"
+            return
+        }
+
+        chillCatalogStatus = "Loading top movies and series…"
+        do {
+            async let movies = chillClient.fetchMovies()
+            async let shows = chillClient.fetchTVShows()
+            chillCatalogMovies = try await movies
+            chillCatalogShows = try await shows
+            let movieCount = chillCatalogMovies.count
+            let showCount = chillCatalogShows.count
+            chillCatalogStatus = "\(movieCount) movies · \(showCount) series"
+        } catch {
+            chillCatalogMovies = []
+            chillCatalogShows = []
+            chillCatalogStatus = error.localizedDescription
+        }
+    }
+
+    func requestChillSearch(query: String) {
+        chillSearchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        chillSearchResults = []
+        chillSearchStatus = chillSearchQuery.isEmpty ? "Enter a title, show, or release" : "Ready to search"
+        NotificationCenter.default.post(name: Self.didRequestChillSearch, object: self)
+    }
+
+    func sendChillResult(_ result: ChillSearchResult) async throws {
+        try await sendChillTransfer(url: result.link, title: result.releaseTitle)
+    }
+
+    func sendChillMovie(_ movie: ChillMovie) async throws {
+        try await sendChillTransfer(url: movie.link, title: movie.displayTitle)
+    }
+
+    func sendChillEpisode(imdbID: String, season: Int, episode: Int) async throws {
+        guard let download = try await chillClient.episodeDownload(
+            imdbID: imdbID,
+            season: season,
+            episode: episode
+        ) else {
+            throw ChillAPIClient.ClientError.requestFailed("Chill did not find a download for this episode.")
+        }
+        try await sendChillTransfer(url: download.link, title: download.title)
+    }
+
+    private func sendChillTransfer(url: String, title: String?) async throws {
+        guard isConnected else {
+            throw UnconfiguredPutIOClient.ClientError.notConfigured
+        }
+        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedURL.isEmpty, URL(string: trimmedURL) != nil else {
+            throw SettingsError.invalidTransferURL
+        }
+        let response = try await chillClient.addTransfer(url: trimmedURL)
+        let name = title ?? response.transfer?.name ?? trimmedURL
+        recordHistory(kind: .info, title: "Added via Chill", detail: name)
+        await refreshFromPutIO(force: false)
     }
 
     private func persist() throws {

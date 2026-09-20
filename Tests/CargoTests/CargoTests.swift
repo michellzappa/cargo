@@ -3,6 +3,100 @@ import XCTest
 @testable import Cargo
 
 final class CargoTests: XCTestCase {
+    func testChillModelsDecodeProtoJSONShape() throws {
+        let resultData = Data(#"""
+        {
+          "id": "release-1",
+          "title": "The Bear S03E02 1080p",
+          "indexer": "example",
+          "link": "magnet:?xt=urn:btih:release",
+          "imdbId": "tt14452776",
+          "peers": "3",
+          "seeders": "42",
+          "size": "1234567890",
+          "releaseInfo": {
+            "title": "The Bear",
+            "year": 2024,
+            "season": 3,
+            "episode": 2,
+            "resolution": "1080p",
+            "codec": "x265"
+          }
+        }
+        """#.utf8)
+
+        let result = try JSONDecoder().decode(ChillSearchResult.self, from: resultData)
+        XCTAssertEqual(result.seeders, 42)
+        XCTAssertEqual(result.size, 1_234_567_890)
+        XCTAssertEqual(result.releaseInfo?.season, 3)
+        XCTAssertEqual(result.releaseInfo?.episode, 2)
+        XCTAssertEqual(result.releaseTitle, "The Bear")
+
+        let episodeData = Data(#"""
+        {
+          "title": "The Bear S03E02",
+          "link": "magnet:?xt=urn:btih:episode",
+          "size": "987654321",
+          "seeders": "18",
+          "seasonNumber": 3,
+          "episodeNumber": 2
+        }
+        """#.utf8)
+        let episode = try JSONDecoder().decode(ChillEpisodeDownload.self, from: episodeData)
+        XCTAssertEqual(episode.size, 987_654_321)
+        XCTAssertEqual(episode.seeders, 18)
+        XCTAssertEqual(episode.seasonNumber, 3)
+        XCTAssertEqual(episode.episodeNumber, 2)
+    }
+
+    func testChillCatalogModelsDecodeProtoJSONShape() throws {
+        let movies = Data(#"""
+        {
+          "movies": [{
+            "id": "movie-1",
+            "title": "Arrival",
+            "year": 2016,
+            "titlePretty": "Arrival (2016)",
+            "link": "magnet:?xt=urn:btih:movie",
+            "peers": "12",
+            "seeders": "8",
+            "size": "2345678901",
+            "posterUrl": "https://image.example/poster.jpg",
+            "rating": 7.9,
+            "externalUrl": "https://www.imdb.com/title/tt2543164/",
+            "genres": ["Drama", "Science Fiction"]
+          }]
+        }
+        """#.utf8)
+        let movieResponse = try JSONDecoder().decode(CatalogMoviesEnvelope.self, from: movies)
+        XCTAssertEqual(movieResponse.movies.first?.displayTitle, "Arrival (2016)")
+        XCTAssertEqual(movieResponse.movies.first?.seeders, 8)
+        XCTAssertEqual(movieResponse.movies.first?.size, 2_345_678_901)
+        XCTAssertEqual(movieResponse.movies.first?.genres, ["Drama", "Science Fiction"])
+
+        let shows = Data(#"""
+        {
+          "shows": [{
+            "imdbId": "tt0903747",
+            "title": "Breaking Bad",
+            "year": 2008,
+            "posterUrl": "https://image.example/show.jpg",
+            "rating": 8.9,
+            "seasonCount": 5,
+            "status": 2,
+            "networks": ["AMC"]
+          }]
+        }
+        """#.utf8)
+        let showResponse = try JSONDecoder().decode(CatalogShowsEnvelope.self, from: shows)
+        XCTAssertEqual(showResponse.shows.first?.id, "tt0903747")
+        XCTAssertEqual(showResponse.shows.first?.displayTraits, "2008 · 8.9 ★ · 5 seasons · Ended")
+        XCTAssertEqual(showResponse.shows.first?.networks, ["AMC"])
+    }
+
+    private struct CatalogMoviesEnvelope: Decodable { let movies: [ChillMovie] }
+    private struct CatalogShowsEnvelope: Decodable { let shows: [ChillTVShow] }
+
     func testStateRoundTrip() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CargoTests-\(UUID().uuidString)", isDirectory: true)
@@ -119,6 +213,80 @@ final class CargoTests: XCTestCase {
     func testStatusesHaveHumanReadableNames() {
         XCTAssertEqual(RemoteTransferStatus.downloading.displayName, "Downloading")
         XCTAssertEqual(LocalSyncStatus.needsReview.displayName, "In inbox · awaiting organization")
+    }
+
+    func testRemoteCommandsRoundTripAsStableJSON() throws {
+        let commands: [CargoRemoteCommand] = [
+            .refresh,
+            .refreshChillCatalog,
+            .searchChill(query: "The Bear 2024"),
+            .sendChillResult(id: "release-1"),
+            .sendChillMovie(id: "movie-1"),
+            .addTransfer(url: "magnet:?xt=urn:btih:release"),
+            .cancelTransfer(id: 42),
+            .retryTransfer(id: 43),
+            .enqueueLocalSync(remoteFileID: 99),
+            .organizeLocalJob(id: UUID()),
+            .refreshWatchlist
+        ]
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        for command in commands {
+            let data = try encoder.encode(command)
+            XCTAssertEqual(try decoder.decode(CargoRemoteCommand.self, from: data), command)
+        }
+    }
+
+    @MainActor
+    func testRemoteSnapshotDoesNotExposeLocalSecretsOrAbsolutePaths() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoRemoteTests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        var state = store.snapshot()
+        state.settings = CargoSettings(
+            libraryRootBookmark: Data("SECURITY-SCOPED-BOOKMARK".utf8),
+            libraryRootPath: "/Users/example/Media Library",
+            openSubtitlesUsername: "subtitle-user",
+            openSubtitlesAPIKey: "subtitle-secret"
+        )
+        state.localJobs = [
+            LocalSyncJob(
+                id: UUID(),
+                remoteFileID: 100,
+                name: "Movie.mkv",
+                status: .failed,
+                progress: 0.4,
+                destination: "/Users/example/Media Library/_Inbox/Movie.mkv",
+                errorMessage: "Could not read /Users/example/Media Library/_Inbox/Movie.mkv",
+                updatedAt: Date()
+            )
+        ]
+        state.libraryItems = [
+            LibraryItem(
+                id: "movie:Arrival (2016)",
+                kind: .movie,
+                title: "Arrival",
+                year: 2016,
+                relativePath: "Movies/Arrival (2016).mkv",
+                sizeBytes: 100,
+                addedAt: Date(),
+                episodes: [:]
+            )
+        ]
+        try store.replace(with: state)
+
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let data = try JSONEncoder().encode(controller.snapshot())
+        let json = String(decoding: data, as: UTF8.self)
+
+        XCTAssertFalse(json.contains("SECURITY-SCOPED-BOOKMARK"))
+        XCTAssertFalse(json.contains("/Users/example/Media Library"))
+        XCTAssertFalse(json.contains("subtitle-user"))
+        XCTAssertFalse(json.contains("subtitle-secret"))
+        XCTAssertTrue(json.contains("Movies/Arrival (2016).mkv"))
     }
 
     func testLibraryOrganizerPreviewsMovieAndTVDestinations() {

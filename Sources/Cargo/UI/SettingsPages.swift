@@ -3,10 +3,11 @@ import EasySubsKit
 import HouseKit
 
 extension SettingsWindowController {
-    /// Put.io · Library · Automation · General · About.
+    /// Put.io · Chill · Library · Automation · General · About.
     static func cargo(coordinator: CargoCoordinator) -> SettingsWindowController {
         SettingsWindowController(appName: "Cargo", pages: [
             SettingsPage("Put.io", symbol: "icloud.and.arrow.down", controller: PutIOPage(coordinator: coordinator)),
+            SettingsPage("Chill", symbol: "sparkles", controller: ChillPage(coordinator: coordinator)),
             SettingsPage("Library", symbol: "externaldrive", controller: LibraryPage(coordinator: coordinator)),
             SettingsPage("Automation", symbol: "gearshape.2", controller: AutomationPage(coordinator: coordinator)),
             SettingsPage("General", symbol: "gearshape", controller: GeneralPage(
@@ -22,6 +23,74 @@ extension SettingsWindowController {
                 links: [("GitHub", URL(string: "https://github.com/michellzappa/cargo")!)]
             ))
         ])
+    }
+}
+
+// MARK: - Chill
+
+final class ChillPage: CargoPage, NSTextFieldDelegate {
+    private let accountLabel = SettingsForm.caption("")
+    private let tokenField: NSSecureTextField = {
+        let field = NSSecureTextField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "Paste the token from chill.institute"
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        return field
+    }()
+    private lazy var saveButton = SettingsForm.button("Save & Test", target: self, action: #selector(saveToken))
+    private lazy var disconnectButton = SettingsForm.button("Disconnect", target: self, action: #selector(disconnect))
+
+    override func build() {
+        section("Account")
+        row("Status", accountLabel)
+        row("Token", [tokenField, saveButton, disconnectButton])
+        row(nil, SettingsForm.button("Get a token…", target: self, action: #selector(openTokenPage)))
+        note("Chill searches releases and hands the selected link to Put.io. The token is stored in Keychain; Cargo does not manage indexers or files on Chill.")
+        row(nil, statusLabel)
+        tokenField.delegate = self
+    }
+
+    override func refresh() {
+        accountLabel.stringValue = coordinator.chillStatus
+        disconnectButton.isHidden = !coordinator.isChillConnected
+        if !isEditing(tokenField) {
+            tokenField.stringValue = coordinator.chillStatus.contains("Token saved") || coordinator.isChillConnected
+                ? "••••••••••••••••"
+                : ""
+        }
+    }
+
+    @objc private func openTokenPage() {
+        NSWorkspace.shared.open(URL(string: "https://chill.institute/auth/cli-token")!)
+    }
+
+    @objc private func saveToken() {
+        let value = tokenField.stringValue
+        guard !value.hasPrefix("••") else {
+            Task { await coordinator.verifyChillConnection() }
+            return
+        }
+        do {
+            try coordinator.saveChillToken(value)
+            tokenField.stringValue = "••••••••••••••••"
+            Task { await coordinator.verifyChillConnection() }
+        } catch {
+            statusLabel.stringValue = error.localizedDescription
+        }
+    }
+
+    @objc private func disconnect() {
+        do {
+            try coordinator.removeChillToken()
+        } catch {
+            statusLabel.stringValue = error.localizedDescription
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard notification.object as? NSTextField === tokenField else { return }
+        saveToken()
     }
 }
 

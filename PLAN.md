@@ -79,14 +79,26 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 - [x] Sync a public IMDb Watchlist dynamically as a read-only desired list.
 - [x] Compare watchlist titles with recursive Put.io media and local Cargo jobs.
-- [ ] Show release/availability metadata without making it a downloader.
+- [x] Show Chill release/availability metadata without making Cargo an indexer manager.
+- [x] Show Chill's top movie and series catalogs in Discover, with title/year release search.
+- [x] Send an explicitly selected Chill release URL to Put.io.
 - [ ] Add other list providers only if they solve a real workflow gap.
+
+### 7. Resident remote control
+
+- [x] Define a remote-safe snapshot model that excludes local paths, bookmarks,
+  and credentials.
+- [x] Define a transport-neutral command interface for refresh, discovery,
+  transfers, local sync, organization, and watchlist refresh.
+- [ ] Add an authenticated embedded read API bound to the resident Mac.
+- [ ] Add network scoping and token rotation controls.
+- [ ] Add live status delivery and a remote client.
 
 ## Non-goals for the first release
 
-- indexer management
-- torrent/magnet discovery
-- replacing ShowRSS
+- indexer management (Chill is the provider)
+- implementing torrent/magnet discovery inside Cargo
+- replacing Chill or ShowRSS as a discovery service
 - Plex/Jellyfin server management
 - transcoding
 - multi-user access

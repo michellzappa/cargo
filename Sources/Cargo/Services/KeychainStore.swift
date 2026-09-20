@@ -4,6 +4,7 @@ import Security
 final class KeychainStore {
     private let service = "app.cargo.Cargo"
     private let account = "putio-access-token"
+    private let chillAccount = "chill-user-token"
     private let tmdbAccount = "tmdb-api-key"
     private let openSubtitlesAccount = "opensubtitles-password"
 
@@ -14,9 +15,9 @@ final class KeychainStore {
         var errorDescription: String? {
             switch self {
             case .saveFailure(let status):
-                "Could not save the Put.io token to Keychain (\(status))."
+                "Could not save the credential to Keychain (\(status))."
             case .deleteFailure(let status):
-                "Could not remove the Put.io token from Keychain (\(status))."
+                "Could not remove the credential from Keychain (\(status))."
             }
         }
     }
@@ -24,6 +25,10 @@ final class KeychainStore {
     func readToken() -> String? { read(account: account) }
     func saveToken(_ token: String) throws { try save(token, account: account) }
     func deleteToken() throws { try delete(account: account) }
+
+    func readChillToken() -> String? { read(account: chillAccount) }
+    func saveChillToken(_ token: String) throws { try save(token, account: chillAccount) }
+    func deleteChillToken() throws { try delete(account: chillAccount) }
 
     func readOpenSubtitlesPassword() -> String? { read(account: openSubtitlesAccount) }
     func saveOpenSubtitlesPassword(_ password: String) throws {

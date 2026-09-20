@@ -2,6 +2,7 @@ import AppKit
 
 /// Sidebar destinations. Settings lives in its own window (⌘,).
 enum Page: Int, CaseIterable {
+    case discover
     case transfers
     case files
     case inbox
@@ -11,6 +12,7 @@ enum Page: Int, CaseIterable {
 
     var title: String {
         switch self {
+        case .discover: "Discover"
         case .transfers: "Transfers"
         case .files: "Files"
         case .inbox: "Inbox"
@@ -22,6 +24,7 @@ enum Page: Int, CaseIterable {
 
     var symbolName: String {
         switch self {
+        case .discover: "sparkles"
         case .transfers: "arrow.down.circle"
         case .files: "folder"
         case .inbox: "tray"
@@ -34,6 +37,7 @@ enum Page: Int, CaseIterable {
     @MainActor
     func count(in coordinator: CargoCoordinator) -> Int {
         switch self {
+        case .discover: coordinator.chillSearchResults.count
         case .transfers: coordinator.state.transfers.count
         case .files: coordinator.state.remoteMediaFiles.count
         case .inbox: coordinator.inboxFileURLs().count
@@ -46,6 +50,7 @@ enum Page: Int, CaseIterable {
     @MainActor
     func makeViewController(coordinator: CargoCoordinator) -> PageViewController {
         switch self {
+        case .discover: DiscoverPageViewController(page: self, coordinator: coordinator)
         case .transfers: TransfersPageViewController(page: self, coordinator: coordinator)
         case .files: FilesPageViewController(page: self, coordinator: coordinator)
         case .inbox: InboxPageViewController(page: self, coordinator: coordinator)
@@ -310,6 +315,215 @@ final class TransfersPageViewController: PageViewController {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         let value = field.stringValue
         run { [weak self] in try await self?.coordinator.addTransfer(url: value) }
+    }
+}
+
+// MARK: - Discover
+
+final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegate {
+    private enum CatalogTab: Int {
+        case movies, series
+    }
+
+    private var catalogTab = CatalogTab.movies
+    private lazy var catalogControl: NSSegmentedControl = {
+        let control = NSSegmentedControl(labels: ["Top Movies", "Top Series"], trackingMode: .selectOne, target: self, action: #selector(catalogTabChanged(_:)))
+        control.controlSize = .small
+        control.selectedSegment = catalogTab.rawValue
+        return control
+    }()
+
+    private lazy var searchField: NSSearchField = {
+        let field = NSSearchField()
+        field.placeholderString = "Search Chill…"
+        field.controlSize = .small
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        field.target = self
+        field.action = #selector(search)
+        field.delegate = self
+        return field
+    }()
+    private lazy var searchButton = barButton("Search", action: #selector(search))
+    private let statusLabel = NSTextField(labelWithString: "")
+
+    override var subtitle: String {
+        coordinator.chillSearchQuery.isEmpty ? coordinator.chillCatalogStatus : coordinator.chillSearchStatus
+    }
+
+    override var emptyState: EmptyState {
+        if !coordinator.isChillConnected {
+            return EmptyState(
+                symbol: "sparkles",
+                title: "Connect Chill to discover releases",
+                detail: "Add your Chill token in Settings → Chill."
+            )
+        }
+        if coordinator.chillSearchQuery.isEmpty {
+            let loading = coordinator.chillCatalogStatus.hasPrefix("Loading")
+            return EmptyState(
+                symbol: "sparkles",
+                title: loading ? "Loading top movies and series" : "No top titles available",
+                detail: loading ? coordinator.chillCatalogStatus : "Refresh the list or search by movie, show, or episode."
+            )
+        }
+        return EmptyState(symbol: "sparkles", title: "No Chill results", detail: coordinator.chillSearchStatus)
+    }
+
+    override func leadingAccessoryView() -> NSView? {
+        let stack = NSStackView(views: [catalogControl, searchField, searchButton])
+        stack.orientation = .horizontal
+        stack.spacing = 6
+        return stack
+    }
+
+    override func accessoryView() -> NSView? {
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        return statusLabel
+    }
+
+    override func refreshAccessories() {
+        if searchField.currentEditor() == nil {
+            searchField.stringValue = coordinator.chillSearchQuery
+        }
+        catalogControl.selectedSegment = catalogTab.rawValue
+        searchButton.isEnabled = coordinator.isChillConnected && !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        statusLabel.stringValue = coordinator.chillSearchQuery.isEmpty ? coordinator.chillCatalogStatus : coordinator.chillSearchStatus
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        if coordinator.isChillConnected {
+            Task { await coordinator.refreshChillCatalog() }
+        } else if coordinator.chillStatus.hasPrefix("Token saved") {
+            Task { await coordinator.verifyChillConnection() }
+        }
+    }
+
+    override func listActions() -> [RowAction] {
+        [
+            RowAction(title: "Search") { [weak self] in self?.search() },
+            RowAction(title: "Open Chill in Browser") {
+                NSWorkspace.shared.open(URL(string: "https://chill.institute/search")!)
+            },
+            RowAction(title: "Refresh Top List", isEnabled: coordinator.isChillConnected) { [weak self] in
+                guard let self else { return }
+                Task { await self.coordinator.refreshChillCatalog() }
+            },
+            RowAction(title: "Refresh Results", isEnabled: !coordinator.chillSearchQuery.isEmpty) { [weak self] in
+                guard let self else { return }
+                Task { await self.coordinator.searchChill(query: self.coordinator.chillSearchQuery) }
+            }
+        ]
+    }
+
+    override func sections() -> [ListSection] {
+        if coordinator.chillSearchQuery.isEmpty {
+            return [catalogTab == .movies ? movieCatalogSection() : seriesCatalogSection()]
+        }
+
+        let rows = coordinator.chillSearchResults.map { result -> ListRow in
+            let canSend = coordinator.isChillConnected && coordinator.isConnected && !result.link.isEmpty
+            let send = RowAction(
+                title: "Send to Put.io",
+                isEnabled: canSend,
+                confirmation: .init(
+                    message: "Send “\(result.releaseTitle)” to Put.io?",
+                    detail: "Chill supplies the release link; Cargo will then use its normal Put.io → Inbox → Library pipeline.",
+                    button: "Send"
+                )
+            ) { [weak self] in
+                guard let self else { return }
+                self.run { try await self.coordinator.sendChillResult(result) }
+            }
+            let open = RowAction(title: "Open Release Link", isEnabled: !result.link.isEmpty) {
+                guard let url = URL(string: result.link) else { return }
+                NSWorkspace.shared.open(url)
+            }
+            let copyLink = copyAction("Copy Link", result.link)
+            let details = [result.indexer, result.displayTraits].filter { !$0.isEmpty }.joined(separator: " · ")
+            return ListRow(
+                id: result.id,
+                title: result.releaseTitle,
+                details: [details, result.title == result.releaseTitle ? nil : result.title].compactMap { $0 }.filter { !$0.isEmpty },
+                badge: result.seeders > 0 ? .success("\(result.seeders) seeders") : .neutral("No seeders"),
+                primaryAction: send,
+                menuActions: [send, open, copyLink]
+            )
+        }
+        return [ListSection(rows: rows)]
+    }
+
+    private func movieCatalogSection() -> ListSection {
+        let rows = coordinator.chillCatalogMovies.map { movie -> ListRow in
+            let query = movie.year > 0 ? "\(movie.displayTitle) \(movie.year)" : movie.displayTitle
+            let search = RowAction(title: "Search Releases") { [weak self] in
+                self?.coordinator.requestChillSearch(query: query)
+            }
+            let send = RowAction(
+                title: "Send to Put.io",
+                isEnabled: coordinator.isChillConnected && coordinator.isConnected && !movie.link.isEmpty,
+                confirmation: .init(
+                    message: "Send “\(movie.displayTitle)” to Put.io?",
+                    detail: "This catalog movie has a direct Chill link; Cargo will use the normal Put.io → Inbox → Library pipeline.",
+                    button: "Send"
+                )
+            ) { [weak self] in
+                guard let self else { return }
+                self.run { try await self.coordinator.sendChillMovie(movie) }
+            }
+            var menu = [search, send]
+            if let externalLink = movie.externalLink {
+                menu.append(RowAction(title: "Open Movie Details") { NSWorkspace.shared.open(externalLink) })
+            }
+            menu.append(copyAction("Copy Title", movie.displayTitle))
+            let genreText = movie.genres.joined(separator: ", ")
+            return ListRow(
+                id: movie.id,
+                title: movie.displayTitle,
+                details: [movie.displayTraits, genreText].filter { !$0.isEmpty },
+                badge: movie.seeders > 0 ? .success("\(movie.seeders) seeders") : .neutral("No seeders"),
+                thumbnail: movie.posterLink,
+                primaryAction: search,
+                menuActions: menu
+            )
+        }
+        return ListSection(title: "Top Movies", rows: rows)
+    }
+
+    private func seriesCatalogSection() -> ListSection {
+        let rows = coordinator.chillCatalogShows.map { show -> ListRow in
+            let query = show.year > 0 ? "\(show.title) \(show.year)" : show.title
+            let search = RowAction(title: "Search Releases") { [weak self] in
+                self?.coordinator.requestChillSearch(query: query)
+            }
+            var menu = [search]
+            if let externalLink = show.externalLink {
+                menu.append(RowAction(title: "Open Series Details") { NSWorkspace.shared.open(externalLink) })
+            }
+            menu.append(copyAction("Copy Title", show.title))
+            let networks = show.networks.joined(separator: ", ")
+            let status: StatusBadge? = show.statusLabel.isEmpty ? nil : .neutral(show.statusLabel)
+            return ListRow(
+                id: show.id,
+                title: show.year > 0 ? "\(show.title) (\(show.year))" : show.title,
+                details: [show.displayTraits, networks].filter { !$0.isEmpty },
+                badge: status,
+                thumbnail: show.posterLink,
+                primaryAction: search,
+                menuActions: menu
+            )
+        }
+        return ListSection(title: "Top Series", rows: rows)
+    }
+
+    @objc private func catalogTabChanged(_ sender: NSSegmentedControl) {
+        catalogTab = CatalogTab(rawValue: sender.selectedSegment) ?? .movies
+        reload()
+    }
+
+    @objc private func search() {
+        Task { await coordinator.searchChill(query: searchField.stringValue) }
     }
 }
 
@@ -736,9 +950,13 @@ final class WatchlistPageViewController: PageViewController {
             }
         }
         let rows = sorted(visible, state: state).map { item -> ListRow in
-            let search = RowAction(title: "Search") {
+            let chillQuery = item.year.map { "\(item.title) \($0)" } ?? item.title
+            let search = RowAction(title: "Search in Cargo") {
+                self.coordinator.requestChillSearch(query: chillQuery)
+            }
+            let browserSearch = RowAction(title: "Open Chill in Browser") {
                 var components = URLComponents(string: "https://chill.institute/search")
-                components?.queryItems = [URLQueryItem(name: "q", value: item.title)]
+                components?.queryItems = [URLQueryItem(name: "q", value: chillQuery)]
                 if let url = components?.url { NSWorkspace.shared.open(url) }
             }
             let imdb = RowAction(title: "Open on IMDb", isEnabled: item.id.hasPrefix("tt")) {
@@ -746,7 +964,7 @@ final class WatchlistPageViewController: PageViewController {
             }
             let added = item.addedAt.map { "Added \(Formatters.date.string(from: $0))" } ?? item.id
             let meta = state.metadata[item.id]
-            var menu = [search, imdb]
+            var menu = [search, browserSearch, imdb]
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
             }

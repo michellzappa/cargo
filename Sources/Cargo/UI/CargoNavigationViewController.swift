@@ -52,6 +52,12 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             name: CargoCoordinator.didChange,
             object: coordinator
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(chillSearchRequested),
+            name: CargoCoordinator.didRequestChillSearch,
+            object: coordinator
+        )
         select(.transfers)
         updateFooter()
     }
@@ -93,6 +99,14 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         updateFooter()
         if let controller = pages[selectedPage] {
             onSelectionChange?(selectedPage, controller.subtitle)
+        }
+    }
+
+    @objc private func chillSearchRequested() {
+        select(.discover)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await coordinator.searchChill(query: coordinator.chillSearchQuery)
         }
     }
 
