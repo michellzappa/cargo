@@ -149,6 +149,39 @@ struct LocalSyncJob: Codable, Identifiable, Sendable {
     var destination: String?
     var errorMessage: String?
     var updatedAt: Date
+    /// Download attempts so far; interrupted downloads re-queue themselves
+    /// (resuming from the `.part` file) until this hits the cap.
+    var attempts: Int = 0
+
+    private enum CodingKeys: String, CodingKey {
+        case id, remoteFileID, name, status, progress, destination, errorMessage, updatedAt, attempts
+    }
+
+    init(id: UUID, remoteFileID: Int, name: String, status: LocalSyncStatus, progress: Double,
+         destination: String?, errorMessage: String?, updatedAt: Date, attempts: Int = 0) {
+        self.id = id
+        self.remoteFileID = remoteFileID
+        self.name = name
+        self.status = status
+        self.progress = progress
+        self.destination = destination
+        self.errorMessage = errorMessage
+        self.updatedAt = updatedAt
+        self.attempts = attempts
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        remoteFileID = try c.decode(Int.self, forKey: .remoteFileID)
+        name = try c.decode(String.self, forKey: .name)
+        status = try c.decode(LocalSyncStatus.self, forKey: .status)
+        progress = try c.decode(Double.self, forKey: .progress)
+        destination = try c.decodeIfPresent(String.self, forKey: .destination)
+        errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        attempts = try c.decodeIfPresent(Int.self, forKey: .attempts) ?? 0
+    }
 }
 
 enum CargoHistoryKind: String, Codable, Sendable {

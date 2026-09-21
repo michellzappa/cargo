@@ -1,11 +1,22 @@
 import Foundation
 
+typealias PutIODownloadProgress = @Sendable (_ received: Int64, _ total: Int64?) -> Void
+
+extension PutIOClient {
+    func downloadFile(fileID: Int, to destinationURL: URL) async throws {
+        try await downloadFile(fileID: fileID, to: destinationURL, progress: nil)
+    }
+}
+
 protocol PutIOClient: Sendable {
     func fetchAccount() async throws -> PutIOAccountSummary
     func fetchTransfers() async throws -> [RemoteTransfer]
     /// `types` filters server-side (Put.io names: VIDEO, FOLDER, ARCHIVE…); nil lists everything.
     func fetchFiles(parentID: Int, types: [String]?) async throws -> [RemoteFile]
-    func downloadFile(fileID: Int, to destinationURL: URL) async throws
+    /// Streams into `<destination>.part` and resumes from it when present;
+    /// `progress` gets (bytes on disk, total bytes if known). The final file
+    /// only appears at `destinationURL` once every byte has landed.
+    func downloadFile(fileID: Int, to destinationURL: URL, progress: PutIODownloadProgress?) async throws
     /// `skipTrash` deletes for good; otherwise the file lands in Put.io's trash.
     func deleteFile(fileID: Int, skipTrash: Bool) async throws
 
@@ -117,7 +128,7 @@ struct UnconfiguredPutIOClient: PutIOClient {
         throw ClientError.notConfigured
     }
 
-    func downloadFile(fileID: Int, to destinationURL: URL) async throws {
+    func downloadFile(fileID: Int, to destinationURL: URL, progress: PutIODownloadProgress?) async throws {
         throw ClientError.notConfigured
     }
 
@@ -199,48 +210,119 @@ struct PutIOAPIClient: PutIOClient {
         return envelope.files.map(Self.mapFile)
     }
 
-    func downloadFile(fileID: Int, to destinationURL: URL) async throws {
+    static func partialURL(for destinationURL: URL) -> URL {
+        destinationURL.appendingPathExtension("part")
+    }
+
+    func downloadFile(fileID: Int, to destinationURL: URL, progress: PutIODownloadProgress?) async throws {
         guard !token.isEmpty else { throw ClientError.missingToken }
+        let fileManager = FileManager.default
+        guard !fileManager.fileExists(atPath: destinationURL.path) else {
+            throw ClientError.destinationAlreadyExists
+        }
+        try fileManager.createDirectory(
+            at: destinationURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let partialURL = Self.partialURL(for: destinationURL)
+        var resumeOffset: Int64 = 0
+        if let size = try? fileManager.attributesOfItem(atPath: partialURL.path)[.size] as? NSNumber {
+            resumeOffset = size.int64Value
+        }
 
         let url = baseURL.appendingPathComponent("files/\(fileID)/download")
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.timeoutInterval = 60 * 60
+        request.timeoutInterval = 120
         request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
+        if resumeOffset > 0 {
+            request.setValue("bytes=\(resumeOffset)-", forHTTPHeaderField: "Range")
+        }
 
-        let temporaryURL: URL
+        let bytes: URLSession.AsyncBytes
         let response: URLResponse
         do {
-            (temporaryURL, response) = try await session.download(for: request)
+            (bytes, response) = try await session.bytes(for: request)
         } catch {
             throw ClientError.requestFailed(error.localizedDescription)
         }
-
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ClientError.invalidResponse
         }
 
-        guard (200..<300).contains(httpResponse.statusCode) else {
+        // 206: the server honoured the range, append. 200: it did not (or we
+        // asked for nothing), start over. 416: our partial is already the
+        // whole file. Anything else is a real failure.
+        let handle: FileHandle
+        var received: Int64
+        var total: Int64?
+        switch httpResponse.statusCode {
+        case 206:
+            handle = try FileHandle(forWritingTo: partialURL)
+            try handle.seekToEnd()
+            received = resumeOffset
+            total = Self.totalLength(fromContentRange: httpResponse.value(forHTTPHeaderField: "Content-Range"))
+        case 200..<300:
+            fileManager.createFile(atPath: partialURL.path, contents: nil)
+            handle = try FileHandle(forWritingTo: partialURL)
+            try handle.truncate(atOffset: 0)
+            received = 0
+            total = httpResponse.expectedContentLength > 0 ? httpResponse.expectedContentLength : nil
+        case 416:
+            try fileManager.moveItem(at: partialURL, to: destinationURL)
+            progress?(resumeOffset, resumeOffset)
+            return
+        default:
             throw ClientError.api(statusCode: httpResponse.statusCode, message: "Download failed.")
         }
+        defer { try? handle.close() }
 
-        let fileManager = FileManager.default
-        if fileManager.fileExists(atPath: destinationURL.path) {
-            try? fileManager.removeItem(at: temporaryURL)
-            throw ClientError.destinationAlreadyExists
-        }
-
+        var buffer = Data()
+        buffer.reserveCapacity(1 << 20)
+        var lastReport = Date.distantPast
         do {
-            try fileManager.createDirectory(
-                at: destinationURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try fileManager.moveItem(at: temporaryURL, to: destinationURL)
+            for try await byte in bytes {
+                buffer.append(byte)
+                if buffer.count >= 1 << 20 {
+                    try handle.write(contentsOf: buffer)
+                    received += Int64(buffer.count)
+                    buffer.removeAll(keepingCapacity: true)
+                    if Date().timeIntervalSince(lastReport) > 1 {
+                        lastReport = Date()
+                        progress?(received, total)
+                    }
+                }
+            }
+            if !buffer.isEmpty {
+                try handle.write(contentsOf: buffer)
+                received += Int64(buffer.count)
+            }
         } catch {
-            try? fileManager.removeItem(at: temporaryURL)
+            // Keep the .part, including what was still buffered: the next
+            // attempt continues from here.
+            if !buffer.isEmpty, (try? handle.write(contentsOf: buffer)) != nil {
+                received += Int64(buffer.count)
+            }
+            throw ClientError.requestFailed("Download interrupted at \(received) bytes: \(error.localizedDescription)")
+        }
+        try handle.close()
+        if let total, received != total {
+            throw ClientError.requestFailed("Download ended early at \(received) of \(total) bytes; it will resume.")
+        }
+        progress?(received, total ?? received)
+        do {
+            try fileManager.moveItem(at: partialURL, to: destinationURL)
+        } catch {
             throw ClientError.requestFailed("Could not place the downloaded file on the SSD.")
         }
+    }
+
+    /// `bytes 1000-9999/10000` → 10000.
+    private static func totalLength(fromContentRange header: String?) -> Int64? {
+        guard let header, let slash = header.lastIndex(of: "/") else { return nil }
+        return Int64(header[header.index(after: slash)...].trimmingCharacters(in: .whitespaces))
     }
 
     func deleteFile(fileID: Int, skipTrash: Bool) async throws {

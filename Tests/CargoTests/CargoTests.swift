@@ -1165,7 +1165,7 @@ private struct StubPutIOClient: PutIOClient {
         ]
     }
 
-    func downloadFile(fileID: Int, to destinationURL: URL) async throws {
+    func downloadFile(fileID: Int, to destinationURL: URL, progress: PutIODownloadProgress?) async throws {
         try FileManager.default.createDirectory(
             at: destinationURL.deletingLastPathComponent(),
             withIntermediateDirectories: true

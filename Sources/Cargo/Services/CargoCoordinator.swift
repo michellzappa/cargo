@@ -167,7 +167,8 @@ final class CargoCoordinator {
     }
 
     /// A download in flight when the app quit is gone; the job record isn't.
-    /// The cycle only picks up `queued`, so put them back — they start over.
+    /// The cycle only picks up `queued`, so put them back — the `.part` file
+    /// in `_Inbox` means they continue where they stopped.
     private func requeueInterruptedJobs() {
         var interrupted: [String] = []
         for index in state.localJobs.indices where [.downloading, .importing].contains(state.localJobs[index].status) {
@@ -1458,7 +1459,17 @@ final class CargoCoordinator {
         }
 
         do {
-            try await putIOClient.downloadFile(fileID: remoteFileID, to: destinationURL)
+            let jobID = state.localJobs[jobIndex].id
+            try await putIOClient.downloadFile(fileID: remoteFileID, to: destinationURL) { [weak self] received, total in
+                let fraction = total.map { $0 > 0 ? Double(received) / Double($0) : 0 } ?? 0
+                Task { @MainActor [weak self] in
+                    guard let self, let index = state.localJobs.firstIndex(where: { $0.id == jobID }),
+                          state.localJobs[index].status == .downloading else { return }
+                    state.localJobs[index].progress = min(max(fraction, 0), 0.999)
+                    state.localJobs[index].updatedAt = Date()
+                    scheduleChangeNotification()
+                }
+            }
             try verifyLocalCopy(remoteFileID: remoteFileID, localURL: destinationURL)
             updateLocalJob(
                 at: jobIndex,
@@ -1492,20 +1503,28 @@ final class CargoCoordinator {
                 }
             }
         } catch {
+            // A partial file on disk means the transfer broke, not the job:
+            // queue it again and let the next cycle resume from the .part.
+            let attempts = (state.localJobs.indices.contains(jobIndex) ? state.localJobs[jobIndex].attempts : 0) + 1
+            let partialExists = FileManager.default.fileExists(atPath: PutIOAPIClient.partialURL(for: destinationURL).path)
+            let willResume = partialExists && attempts < Self.maximumDownloadAttempts
+            if state.localJobs.indices.contains(jobIndex) { state.localJobs[jobIndex].attempts = attempts }
             updateLocalJob(
                 at: jobIndex,
-                status: .failed,
-                progress: 0,
+                status: willResume ? .queued : .failed,
+                progress: willResume ? (state.localJobs[jobIndex].progress) : 0,
                 destination: destinationURL.path,
-                errorMessage: error.localizedDescription
+                errorMessage: willResume ? "Interrupted · resumes next cycle (attempt \(attempts))" : error.localizedDescription
             )
             recordHistory(
-                kind: .failure,
-                title: "Download failed",
+                kind: willResume ? .warning : .failure,
+                title: willResume ? "Download interrupted" : "Download failed",
                 detail: "\(jobName): \(error.localizedDescription)"
             )
         }
     }
+
+    private static let maximumDownloadAttempts = 8
 
     private func verifyLocalCopy(remoteFileID: Int, localURL: URL) throws {
         guard FileManager.default.fileExists(atPath: localURL.path) else {
