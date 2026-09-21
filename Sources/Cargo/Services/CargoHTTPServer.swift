@@ -38,6 +38,9 @@ final class CargoHTTPServer: @unchecked Sendable {
 
         let bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 128)
+            // A restart while a client is connected leaves its sockets in
+            // TIME_WAIT; without this the port is unbindable for ~2 minutes.
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
             .childChannelInitializer { [responder] channel in
                 channel.pipeline.configureHTTPServerPipeline(
                     withPipeliningAssistance: false,
