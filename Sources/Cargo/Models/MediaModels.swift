@@ -249,7 +249,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         subtitleLanguage: String = "en",
         openSubtitlesUsername: String = "",
         openSubtitlesAPIKey: String = "",
-        imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
+        imdbWatchlistURL: String = "",
         refreshIntervalMinutes: Int = 1,
         remoteNetworkScope: CargoRemoteNetworkScope = .localhost,
         remoteClientEnabled: Bool = false,
@@ -324,7 +324,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         openSubtitlesUsername = try container.decodeIfPresent(String.self, forKey: .openSubtitlesUsername) ?? ""
         openSubtitlesAPIKey = try container.decodeIfPresent(String.self, forKey: .openSubtitlesAPIKey) ?? ""
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
-            ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
+            ?? ""
         refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1
         remoteNetworkScope = try container.decodeIfPresent(CargoRemoteNetworkScope.self, forKey: .remoteNetworkScope)
             ?? .localhost

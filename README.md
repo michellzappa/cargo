@@ -109,6 +109,18 @@ Keychain and TCC key their grants to the code signature, so an ad-hoc build
 would lose the Put.io token and the folder bookmark on every rebuild. Set your
 own `DEVELOPMENT_TEAM` in `project.yml`.
 
+## A second Mac
+
+One Cargo owns the SSD and Put.io (the *resident*); any other Mac runs the
+same app as a *client* and gets the same dashboard, driven over HTTP. On the
+resident: Settings → Remote Access → **Copy pairing link**. It flips the API
+to local-network scope and copies one `cargo://pair?url=…&token=…` string,
+using the Mac's Tailscale MagicDNS name when Tailscale is running. On the
+client, paste it into *Resident address* and Connect (or just open the link).
+The token lives in Keychain on both sides; the client never sees Put.io,
+Chill or TMDB credentials, or local paths. Search on a client is that
+client's own; everything else is the resident's state, refreshed every 15 s.
+
 ## Configuration
 
 Settings lives in the menu bar item (⌘,): **Put.io** (account, polling
@@ -193,3 +205,7 @@ resident-only.
 - Media identification is heuristic; low-confidence files stay in `_Inbox`.
 - Remote deletion is off by default and stays a separate switch.
 - No indexer management or torrent discovery logic — Chill is the discovery provider; Put.io remains the file manager.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
