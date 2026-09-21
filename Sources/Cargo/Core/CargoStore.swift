@@ -1,7 +1,7 @@
 import Foundation
 
 final class CargoStore {
-    private let stateURL: URL
+    let stateURL: URL
     private var state: CargoState
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder

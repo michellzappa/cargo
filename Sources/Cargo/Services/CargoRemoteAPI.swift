@@ -434,7 +434,9 @@ final class CargoRemoteAPIClient: @unchecked Sendable {
     static func discover(at baseURL: URL, session: URLSession = .shared) async throws -> CargoRemoteDiscovery {
         var request = URLRequest(url: baseURL.appendingPathComponent("v1/discovery"))
         request.httpMethod = "GET"
-        request.timeoutInterval = 0.8
+        // A relayed (DERP) tailnet peer can take a couple of seconds to answer;
+        // offline peers fail fast on their own, so the ceiling costs nothing.
+        request.timeoutInterval = 3
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode < 300 else {
             throw ClientError.invalidResponse
@@ -824,6 +826,7 @@ final class CargoRemoteClientSession {
     private(set) var status = "Not connected"
     private var heartbeatTask: Task<Void, Never>?
     private var eventRevision: UInt64?
+    private lazy var registration = CargoRemotePresenceRegistration(id: clientID, name: defaultClientName, platform: "macOS")
 
     var isConnected: Bool { client != nil && presence != nil }
 
@@ -860,7 +863,7 @@ final class CargoRemoteClientSession {
             let remoteClient = CargoRemoteAPIClient(baseURL: baseURL, token: resolvedToken)
             _ = try await remoteClient.health()
             let resolvedName = clientName?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let registration = CargoRemotePresenceRegistration(
+            registration = CargoRemotePresenceRegistration(
                 id: clientID,
                 name: resolvedName.flatMap { $0.isEmpty ? nil : $0 } ?? defaultClientName,
                 platform: "macOS"
@@ -931,7 +934,14 @@ final class CargoRemoteClientSession {
                 try? await Task.sleep(for: .seconds(15))
                 guard !Task.isCancelled, let self, let client = self.client else { return }
                 do {
-                    self.presence = try await client.heartbeatPresence(clientID: self.clientID)
+                    do {
+                        self.presence = try await client.heartbeatPresence(clientID: self.clientID)
+                    } catch CargoRemoteAPIClient.ClientError.api(let error) where error.code == "presence_peer_not_found" {
+                        // The resident restarted and lost its in-memory registry;
+                        // re-register rather than staying "lost" until re-paired.
+                        self.presence = try await client.registerPresence(self.registration)
+                        self.eventRevision = nil
+                    }
                     let event = try await client.events(since: self.eventRevision)
                     self.eventRevision = event.revision
                     if event.changed {

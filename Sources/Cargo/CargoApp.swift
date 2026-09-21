@@ -296,6 +296,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             ? state.localJobs.filter { $0.status != .completed }.count
             : coordinator.inboxFileURLs().count
         if inboxCount > 0 { parts.append("\(inboxCount) in Inbox") }
+        if coordinator.lastPersistError != nil { parts.append("⚠︎ state not saved") }
         statusHeaderItem.title = parts.joined(separator: " · ")
         launchAtLoginItem.state = state.settings.launchAtLoginEnabled ? .on : .off
     }

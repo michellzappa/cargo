@@ -157,7 +157,7 @@ final class CargoCoordinator {
         )
         if self.state.settings.stagingDirectoryName == ".cargo-incoming" {
             self.state.settings.stagingDirectoryName = "_Inbox"
-            try? store.replace(with: self.state)
+            self.persistQuietly()
         }
         requeueInterruptedJobs()
     }
@@ -178,7 +178,7 @@ final class CargoCoordinator {
             interrupted.append(state.localJobs[index].name)
         }
         guard !interrupted.isEmpty else { return }
-        try? store.replace(with: state)
+        persistQuietly()
         recordHistory(kind: .warning, title: "Resuming interrupted download\(interrupted.count == 1 ? "" : "s")", detail: interrupted.joined(separator: ", "))
     }
 
@@ -492,6 +492,31 @@ final class CargoCoordinator {
     private func persist() throws {
         state.lastUpdated = Date()
         try store.replace(with: state)
+        if lastPersistError != nil {
+            lastPersistError = nil
+            recordHistory(kind: .info, title: "State saving recovered", detail: store.stateURL.path)
+        }
+    }
+
+    /// The last error from a save that nothing was going to catch (SSD gone,
+    /// disk full, permissions). Shown in the menu bar until a save succeeds.
+    private(set) var lastPersistError: String? {
+        didSet { if lastPersistError != oldValue { scheduleChangeNotification() } }
+    }
+
+    /// For the many fire-and-forget saves in the workflow: a failure is logged
+    /// and surfaced once instead of vanishing behind `try?`.
+    private func persistQuietly() {
+        do {
+            try persist()
+        } catch {
+            let message = error.localizedDescription
+            NSLog("Cargo could not save state: %@", message)
+            if lastPersistError != message {
+                lastPersistError = message
+                recordHistory(kind: .warning, title: "Cargo could not save its state", detail: message, persisting: false)
+            }
+        }
     }
 
     private func scheduleChangeNotification() {
@@ -834,7 +859,7 @@ final class CargoCoordinator {
                 break
             }
         }
-        try? persist()
+        persistQuietly()
     }
 
     func requestExtraction(remoteFileID: Int) async throws {
@@ -912,7 +937,7 @@ final class CargoCoordinator {
         let items = LibraryIndex.scan(root: root, settings: state.settings)
         guard items != state.libraryItems else { return }
         state.libraryItems = items
-        try? persist()
+        persistQuietly()
     }
 
     /// Library item for a watchlist entry: by TMDB id when both sides have
@@ -970,7 +995,7 @@ final class CargoCoordinator {
         for item in state.imdbWatchlistItems where budget > 0 && item.id.hasPrefix("tt") && needsLookup(item.id) {
             changed = await store(item.id) { try await client.find(imdbID: item.id) } || changed
         }
-        if changed { try? persist() }
+        if changed { persistQuietly() }
     }
 
     private(set) var tmdbStatus: String? {
@@ -980,7 +1005,7 @@ final class CargoCoordinator {
     /// Forget misses so the next cycle tries them again (after a rename, say).
     func retryMetadataMisses() {
         state.metadataMisses.removeAll()
-        try? persist()
+        persistQuietly()
         Task { await enrichMetadata() }
     }
 
@@ -1044,7 +1069,7 @@ final class CargoCoordinator {
         }
         state.history.removeAll()
         state.lastUpdated = Date()
-        try? persist()
+        persistQuietly()
     }
 
     /// Routine entries older than 30 days go; warnings and failures stay 90.
@@ -1065,7 +1090,7 @@ final class CargoCoordinator {
             return
         }
         state.localJobs.removeAll { $0.status == .failed }
-        try? persist()
+        persistQuietly()
     }
 
     /// "Deleted" markers only matter while the inventory could still show the
@@ -1109,7 +1134,7 @@ final class CargoCoordinator {
             : state.remoteMediaFiles.filter { !previousRemoteMediaFileIDs.contains($0.id) }
         state.seenRemoteMediaFileIDs = state.remoteMediaFiles.map(\.id).sorted()
         state.remoteMediaBaselineEstablished = true
-        try? store.replace(with: state)
+        persistQuietly()
 
         if !newlyDiscoveredMedia.isEmpty {
             summary.discovered = newlyDiscoveredMedia.map(\.displayPath)
@@ -1388,7 +1413,7 @@ final class CargoCoordinator {
                 updatedAt: Date()
             )
         )
-        try? store.replace(with: state)
+        persistQuietly()
     }
 
     func processLocalSync(remoteFileID: Int) async {
@@ -1854,7 +1879,7 @@ final class CargoCoordinator {
         state.localJobs[index].destination = destination
         state.localJobs[index].errorMessage = errorMessage
         state.localJobs[index].updatedAt = Date()
-        try? store.replace(with: state)
+        persistQuietly()
     }
 
     private static func safeFilename(_ name: String) -> String {
@@ -1864,7 +1889,7 @@ final class CargoCoordinator {
         return cleaned.isEmpty ? "untitled-download" : cleaned
     }
 
-    private func recordHistory(kind: CargoHistoryKind, title: String, detail: String) {
+    private func recordHistory(kind: CargoHistoryKind, title: String, detail: String, persisting: Bool = true) {
         state.history.insert(
             CargoHistoryEntry(
                 id: UUID(),
@@ -1877,7 +1902,7 @@ final class CargoCoordinator {
         )
         state.history = Array(state.history.prefix(200))
         state.lastUpdated = Date()
-        try? store.replace(with: state)
+        if persisting { persistQuietly() }
     }
 
     private static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
