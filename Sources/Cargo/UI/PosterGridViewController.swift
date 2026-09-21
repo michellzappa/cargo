@@ -6,10 +6,27 @@ import AppKit
 final class PosterGridViewController: NSViewController, NSCollectionViewDataSource, NSCollectionViewDelegate {
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("PosterGridItem")
 
+    private struct ActionRenderKey: Equatable {
+        let title: String
+        let isDestructive: Bool
+        let isEnabled: Bool
+        let isSeparatorBefore: Bool
+    }
+
+    private struct RowRenderKey: Equatable {
+        let id: String
+        let title: String
+        let detail: String?
+        let thumbnail: URL?
+        let primaryAction: ActionRenderKey?
+        let menuActions: [ActionRenderKey]
+    }
+
     private let scrollView = NSScrollView()
     private let collectionView = NSCollectionView()
     private let emptyLabel = Theme.label(style: .body, color: .secondaryLabelColor, wraps: true)
     private var rows: [ListRow] = []
+    private var renderKey: [RowRenderKey] = []
 
     var emptyState = EmptyState(symbol: "film.stack", title: "Nothing here") {
         didSet { updateEmptyState() }
@@ -60,6 +77,29 @@ final class PosterGridViewController: NSViewController, NSCollectionViewDataSour
 
     func apply(_ rows: [ListRow]) {
         self.rows = rows
+        let newRenderKey = rows.map { row in
+            func key(for action: RowAction) -> ActionRenderKey {
+                ActionRenderKey(
+                    title: action.title,
+                    isDestructive: action.isDestructive,
+                    isEnabled: action.isEnabled,
+                    isSeparatorBefore: action.isSeparatorBefore
+                )
+            }
+            return RowRenderKey(
+                id: row.id,
+                title: row.title,
+                detail: row.details.first,
+                thumbnail: row.thumbnail,
+                primaryAction: row.primaryAction.map(key),
+                menuActions: row.menuActions.map(key)
+            )
+        }
+        guard newRenderKey != renderKey else {
+            updateEmptyState()
+            return
+        }
+        renderKey = newRenderKey
         collectionView.reloadData()
         updateEmptyState()
     }
@@ -87,6 +127,15 @@ final class PosterGridViewController: NSViewController, NSCollectionViewDataSour
         posterItem.configure(with: rows[indexPath.item])
         return posterItem
     }
+
+    // Keep activation at the collection-view level. Poster cards contain an
+    // image view and labels, so handling mouseUp on the card itself can leave
+    // AppKit's selection/context-menu routing bypassed.
+    func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
+        guard let indexPath = indexPaths.first, rows.indices.contains(indexPath.item) else { return }
+        collectionView.deselectItems(at: indexPaths)
+        rows[indexPath.item].primaryAction?.handler()
+    }
 }
 
 @MainActor
@@ -95,12 +144,13 @@ private final class PosterGridItem: NSCollectionViewItem {
     private let titleLabel = Theme.label(style: .rowTitle, wraps: true)
     private let detailLabel = Theme.label(style: .detail, wraps: false)
     private var posterURL: URL?
+    private var posterLoadTask: Task<Void, Never>?
+    private var loadedPosterURL: URL?
     private var action: RowAction?
     private var menuActions: [RowAction] = []
 
     override func loadView() {
         let card = PosterCardView()
-        card.onActivate = { [weak self] in self?.action?.handler() }
         view = card
 
         posterView.imageScaling = .scaleProportionallyUpOrDown
@@ -138,6 +188,7 @@ private final class PosterGridItem: NSCollectionViewItem {
     }
 
     func configure(with row: ListRow) {
+        let previousPosterURL = posterURL
         posterURL = row.thumbnail
         action = row.primaryAction
         menuActions = row.menuActions
@@ -147,12 +198,29 @@ private final class PosterGridItem: NSCollectionViewItem {
         view.toolTip = row.title
         installMenu()
 
-        posterView.image = Theme.symbol("film", pointSize: 28, weight: .light)
-        guard let url = row.thumbnail else { return }
-        Task { @MainActor [weak self] in
+        if previousPosterURL != row.thumbnail {
+            posterLoadTask?.cancel()
+            posterLoadTask = nil
+            loadedPosterURL = nil
+            posterView.image = Theme.symbol("film", pointSize: 28, weight: .light)
+        }
+        guard let url = row.thumbnail,
+              loadedPosterURL != url,
+              posterLoadTask == nil
+        else { return }
+
+        if let cachedImage = PosterCache.shared.cachedImage(for: url) {
+            posterView.image = cachedImage
+            loadedPosterURL = url
+            return
+        }
+
+        posterLoadTask = Task { @MainActor [weak self] in
             let image = await PosterCache.shared.image(for: url)
-            guard let self, self.posterURL == url else { return }
+            guard let self, !Task.isCancelled, self.posterURL == url else { return }
             self.posterView.image = image ?? Theme.symbol("film", pointSize: 28, weight: .light)
+            self.loadedPosterURL = url
+            self.posterLoadTask = nil
         }
     }
 
@@ -169,7 +237,14 @@ private final class PosterGridItem: NSCollectionViewItem {
             }
             menu.addItem(item)
         }
+        installMenu(menu, on: view)
+    }
+
+    private func installMenu(_ menu: NSMenu, on view: NSView) {
         view.menu = menu
+        for subview in view.subviews {
+            installMenu(menu, on: subview)
+        }
     }
 
     @objc private func performMenuAction(_ sender: NSMenuItem) {
@@ -190,17 +265,5 @@ private final class PosterGridItem: NSCollectionViewItem {
 }
 
 private final class PosterCardView: NSView {
-    var onActivate: (() -> Void)?
-
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        super.mouseUp(with: event)
-        guard event.clickCount == 1 else { return }
-        onActivate?()
-    }
 }

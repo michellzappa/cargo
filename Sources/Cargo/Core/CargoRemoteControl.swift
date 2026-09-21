@@ -11,6 +11,131 @@ struct CargoRemoteConnection: Codable, Equatable, Sendable {
     let status: String
 }
 
+/// The identity a Cargo installation presents when it connects to another
+/// Cargo installation. Credentials stay out of this model; authentication is
+/// handled by the resident API bearer token.
+struct CargoRemotePresenceRegistration: Codable, Equatable, Sendable {
+    let id: UUID
+    let name: String
+    let platform: String
+}
+
+struct CargoRemotePresenceHeartbeat: Codable, Equatable, Sendable {
+    let id: UUID
+}
+
+struct CargoRemotePeer: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let name: String
+    let platform: String
+    let connectedAt: Date
+    let lastSeenAt: Date
+}
+
+struct CargoRemotePresence: Codable, Equatable, Sendable {
+    let residentName: String
+    let revision: UInt64
+    let generatedAt: Date
+    let clients: [CargoRemotePeer]
+}
+
+/// Deliberately unauthenticated, low-information response used only to find
+/// Cargo peers before the user has entered the resident bearer token.
+struct CargoRemoteDiscovery: Codable, Equatable, Sendable {
+    let service: String
+    let apiVersion: String
+    let instanceID: UUID
+    let name: String
+    let port: Int
+}
+
+/// In-memory presence for the resident process. A client must heartbeat before
+/// the lease expires; this avoids claiming that a laptop is connected forever
+/// after sleep, termination, or a network change.
+@MainActor
+final class CargoRemotePresenceRegistry {
+    static let didChange = Notification.Name("CargoRemotePresenceRegistry.didChange")
+
+    let residentID: UUID
+    private struct Entry {
+        var peer: CargoRemotePeer
+    }
+
+    private let residentName: String
+    private let leaseDuration: TimeInterval
+    private var entries: [UUID: Entry] = [:]
+    private(set) var revision: UInt64 = 0
+
+    init(
+        residentID: UUID = UUID(),
+        residentName: String = Host.current().localizedName ?? "Cargo",
+        leaseDuration: TimeInterval = 45
+    ) {
+        self.residentID = residentID
+        self.residentName = residentName
+        self.leaseDuration = leaseDuration
+    }
+
+    func register(_ registration: CargoRemotePresenceRegistration, now: Date = Date()) -> CargoRemotePresence {
+        let connectedAt = entries[registration.id]?.peer.connectedAt ?? now
+        entries[registration.id] = Entry(peer: CargoRemotePeer(
+            id: registration.id,
+            name: registration.name,
+            platform: registration.platform,
+            connectedAt: connectedAt,
+            lastSeenAt: now
+        ))
+        revision &+= 1
+        notifyChange()
+        return snapshot(now: now)
+    }
+
+    func heartbeat(_ heartbeat: CargoRemotePresenceHeartbeat, now: Date = Date()) -> CargoRemotePresence? {
+        pruneExpired(now: now)
+        guard var entry = entries[heartbeat.id] else { return nil }
+        entry.peer = CargoRemotePeer(
+            id: entry.peer.id,
+            name: entry.peer.name,
+            platform: entry.peer.platform,
+            connectedAt: entry.peer.connectedAt,
+            lastSeenAt: now
+        )
+        entries[heartbeat.id] = entry
+        revision &+= 1
+        notifyChange()
+        return snapshot(now: now)
+    }
+
+    func unregister(_ heartbeat: CargoRemotePresenceHeartbeat, now: Date = Date()) -> CargoRemotePresence? {
+        pruneExpired(now: now)
+        guard entries.removeValue(forKey: heartbeat.id) != nil else { return nil }
+        revision &+= 1
+        notifyChange()
+        return snapshot(now: now)
+    }
+
+    func snapshot(now: Date = Date()) -> CargoRemotePresence {
+        pruneExpired(now: now)
+        return CargoRemotePresence(
+            residentName: residentName,
+            revision: revision,
+            generatedAt: now,
+            clients: entries.values.map(\.peer).sorted { $0.connectedAt < $1.connectedAt }
+        )
+    }
+
+    private func pruneExpired(now: Date) {
+        let expired = entries.filter { now.timeIntervalSince($0.value.peer.lastSeenAt) > leaseDuration }.map(\.key)
+        guard !expired.isEmpty else { return }
+        for id in expired { entries.removeValue(forKey: id) }
+        revision &+= 1
+    }
+
+    private func notifyChange() {
+        NotificationCenter.default.post(name: Self.didChange, object: self)
+    }
+}
+
 struct CargoRemoteTransfer: Codable, Equatable, Sendable {
     let id: Int
     let name: String
@@ -87,6 +212,7 @@ struct CargoRemoteLibraryItem: Codable, Equatable, Sendable {
     let addedAt: Date
     let seasonCount: Int
     let episodeCount: Int
+    let episodes: [Int: [Int]]
 
     init(_ item: LibraryItem) {
         id = item.id
@@ -98,6 +224,25 @@ struct CargoRemoteLibraryItem: Codable, Equatable, Sendable {
         addedAt = item.addedAt
         seasonCount = item.seasonCount
         episodeCount = item.episodeCount
+        episodes = item.episodes
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, title, year, relativePath, sizeBytes, addedAt, seasonCount, episodeCount, episodes
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        kind = try values.decode(LibraryItem.Kind.self, forKey: .kind)
+        title = try values.decode(String.self, forKey: .title)
+        year = try values.decodeIfPresent(Int.self, forKey: .year)
+        relativePath = try values.decode(String.self, forKey: .relativePath)
+        sizeBytes = try values.decode(Int64.self, forKey: .sizeBytes)
+        addedAt = try values.decode(Date.self, forKey: .addedAt)
+        seasonCount = try values.decodeIfPresent(Int.self, forKey: .seasonCount) ?? 0
+        episodeCount = try values.decodeIfPresent(Int.self, forKey: .episodeCount) ?? 0
+        episodes = try values.decodeIfPresent([Int: [Int]].self, forKey: .episodes) ?? [:]
     }
 }
 
@@ -313,6 +458,157 @@ struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     let watchlistStatus: String
 }
 
+extension CargoRemoteSnapshot {
+    /// Rehydrates the remote-safe projection into the local display models.
+    /// Local settings are deliberately supplied by the client; credentials,
+    /// bookmarks, and absolute paths never cross the remote boundary.
+    func dashboardState(preserving base: CargoState) -> CargoState {
+        var state = base
+        state.transfers = transfers.map {
+            RemoteTransfer(
+                id: $0.id,
+                name: $0.name,
+                status: $0.status,
+                progress: $0.progress,
+                sizeBytes: $0.sizeBytes,
+                updatedAt: $0.updatedAt
+            )
+        }
+        state.remoteFiles = files.map {
+            RemoteFile(
+                id: $0.id,
+                name: $0.name,
+                path: $0.remotePath,
+                type: $0.type,
+                parentID: $0.parentID,
+                sizeBytes: $0.sizeBytes,
+                createdAt: $0.createdAt
+            )
+        }
+        state.remoteMediaFiles = mediaFiles.map {
+            RemoteFile(
+                id: $0.id,
+                name: $0.name,
+                path: $0.remotePath,
+                type: $0.type,
+                parentID: $0.parentID,
+                sizeBytes: $0.sizeBytes,
+                createdAt: $0.createdAt
+            )
+        }
+        state.remoteFolders = state.remoteFiles.filter(\.isFolder)
+        state.remoteArchiveFiles = state.remoteFiles.filter(\.isArchive)
+        state.localJobs = syncJobs.map {
+            LocalSyncJob(
+                id: $0.id,
+                remoteFileID: $0.remoteFileID,
+                name: $0.name,
+                status: $0.status,
+                progress: $0.progress,
+                destination: nil,
+                errorMessage: $0.hasError ? "Remote job failed" : nil,
+                updatedAt: $0.updatedAt
+            )
+        }
+        state.libraryItems = library.map {
+            LibraryItem(
+                id: $0.id,
+                kind: $0.kind,
+                title: $0.title,
+                year: $0.year,
+                relativePath: $0.relativePath,
+                sizeBytes: $0.sizeBytes,
+                addedAt: $0.addedAt,
+                episodes: $0.episodes
+            )
+        }
+        state.imdbWatchlistItems = watchlist.map {
+            IMDbWatchlistItem(id: $0.id, title: $0.title, year: $0.year, titleType: $0.titleType, addedAt: $0.addedAt)
+        }
+        state.history = history.map {
+            CargoHistoryEntry(id: $0.id, date: $0.date, kind: $0.kind, title: $0.title, detail: $0.detail)
+        }
+        state.lastUpdated = lastUpdated
+        return state
+    }
+}
+
+extension ChillReleaseInfo {
+    init(_ remote: CargoRemoteReleaseInfo) {
+        title = remote.title
+        year = remote.year
+        season = remote.season
+        episode = remote.episode
+        episodeEnd = remote.episodeEnd
+        resolution = remote.resolution
+        quality = remote.quality
+        source = remote.source
+        codec = remote.codec
+        hdr = remote.hdr
+        audio = remote.audio
+        group = remote.group
+        container = remote.container
+        language = remote.language
+        region = remote.region
+        size = remote.size
+        bitDepth = remote.bitDepth
+        edition = remote.edition
+        complete = remote.complete
+    }
+}
+
+extension ChillSearchResult {
+    init(_ remote: CargoRemoteSearchResult) {
+        id = remote.id
+        title = remote.title
+        indexer = remote.indexer
+        link = remote.link
+        imdbID = remote.imdbID
+        peers = remote.peers
+        seeders = remote.seeders
+        size = remote.size
+        source = remote.source
+        uploadedAt = remote.uploadedAt
+        releaseInfo = remote.releaseInfo.map(ChillReleaseInfo.init)
+    }
+}
+
+extension ChillMovie {
+    init(_ remote: CargoRemoteMovie) {
+        id = remote.id
+        title = remote.title
+        year = remote.year
+        source = nil
+        titlePretty = remote.displayTitle
+        link = remote.link
+        peers = remote.peers
+        seeders = remote.seeders
+        size = remote.size
+        uploadedAt = remote.uploadedAt
+        posterURL = remote.posterURL
+        rating = remote.rating
+        externalURL = remote.externalURL
+        overview = remote.overview
+        genres = remote.genres
+    }
+}
+
+extension ChillTVShow {
+    init(_ remote: CargoRemoteSeries) {
+        imdbID = remote.imdbID
+        title = remote.title
+        year = remote.year
+        source = nil
+        posterURL = remote.posterURL
+        rating = remote.rating
+        overview = remote.overview
+        externalURL = remote.externalURL
+        seasonCount = remote.seasonCount
+        status = remote.status
+        networks = remote.networks
+    }
+}
+
 /// Commands are transport-neutral. An HTTP adapter can decode this enum
 /// without knowing anything about AppKit, Keychain, or CargoCoordinator.
 enum CargoRemoteCommand: Codable, Equatable, Sendable {
@@ -324,9 +620,14 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case addTransfer(url: String)
     case cancelTransfer(id: Int)
     case retryTransfer(id: Int)
+    case cleanFinishedTransfers
+    case requestExtraction(remoteFileID: Int)
+    case deleteRemoteFile(remoteFileID: Int)
     case enqueueLocalSync(remoteFileID: Int)
     case organizeLocalJob(id: UUID)
     case refreshWatchlist
+    case clearFailedJobs
+    case clearHistory
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -345,9 +646,14 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case addTransfer
         case cancelTransfer
         case retryTransfer
+        case cleanFinishedTransfers
+        case requestExtraction
+        case deleteRemoteFile
         case enqueueLocalSync
         case organizeLocalJob
         case refreshWatchlist
+        case clearFailedJobs
+        case clearHistory
     }
 
     init(from decoder: Decoder) throws {
@@ -369,12 +675,22 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             self = .cancelTransfer(id: try values.decode(Int.self, forKey: .id))
         case .retryTransfer:
             self = .retryTransfer(id: try values.decode(Int.self, forKey: .id))
+        case .cleanFinishedTransfers:
+            self = .cleanFinishedTransfers
+        case .requestExtraction:
+            self = .requestExtraction(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
+        case .deleteRemoteFile:
+            self = .deleteRemoteFile(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
         case .enqueueLocalSync:
             self = .enqueueLocalSync(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
         case .organizeLocalJob:
             self = .organizeLocalJob(id: try values.decode(UUID.self, forKey: .id))
         case .refreshWatchlist:
             self = .refreshWatchlist
+        case .clearFailedJobs:
+            self = .clearFailedJobs
+        case .clearHistory:
+            self = .clearHistory
         }
     }
 
@@ -403,6 +719,14 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case .retryTransfer(let id):
             try values.encode(Kind.retryTransfer, forKey: .type)
             try values.encode(id, forKey: .id)
+        case .cleanFinishedTransfers:
+            try values.encode(Kind.cleanFinishedTransfers, forKey: .type)
+        case .requestExtraction(let remoteFileID):
+            try values.encode(Kind.requestExtraction, forKey: .type)
+            try values.encode(remoteFileID, forKey: .remoteFileID)
+        case .deleteRemoteFile(let remoteFileID):
+            try values.encode(Kind.deleteRemoteFile, forKey: .type)
+            try values.encode(remoteFileID, forKey: .remoteFileID)
         case .enqueueLocalSync(let remoteFileID):
             try values.encode(Kind.enqueueLocalSync, forKey: .type)
             try values.encode(remoteFileID, forKey: .remoteFileID)
@@ -411,6 +735,10 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             try values.encode(id, forKey: .id)
         case .refreshWatchlist:
             try values.encode(Kind.refreshWatchlist, forKey: .type)
+        case .clearFailedJobs:
+            try values.encode(Kind.clearFailedJobs, forKey: .type)
+        case .clearHistory:
+            try values.encode(Kind.clearHistory, forKey: .type)
         }
     }
 }
@@ -496,12 +824,23 @@ final class CargoRemoteController: CargoRemoteControlling {
             try await coordinator.cancelTransfer(id: id)
         case .retryTransfer(let id):
             try await coordinator.retryTransfer(id: id)
+        case .cleanFinishedTransfers:
+            try await coordinator.cleanFinishedTransfers()
+        case .requestExtraction(let remoteFileID):
+            try await coordinator.requestExtraction(remoteFileID: remoteFileID)
+        case .deleteRemoteFile(let remoteFileID):
+            try await coordinator.deleteRemoteFile(remoteFileID: remoteFileID)
         case .enqueueLocalSync(let remoteFileID):
             coordinator.enqueueLocalSync(remoteFileID: remoteFileID)
+            await coordinator.processLocalSync(remoteFileID: remoteFileID)
         case .organizeLocalJob(let id):
             _ = try coordinator.organizeLocalJob(jobID: id)
         case .refreshWatchlist:
             _ = await coordinator.refreshIMDbWatchlist(force: true)
+        case .clearFailedJobs:
+            coordinator.clearFailedJobs()
+        case .clearHistory:
+            coordinator.clearHistory()
         }
         return snapshot()
     }

@@ -225,9 +225,14 @@ final class CargoTests: XCTestCase {
             .addTransfer(url: "magnet:?xt=urn:btih:release"),
             .cancelTransfer(id: 42),
             .retryTransfer(id: 43),
+            .cleanFinishedTransfers,
+            .requestExtraction(remoteFileID: 44),
+            .deleteRemoteFile(remoteFileID: 45),
             .enqueueLocalSync(remoteFileID: 99),
             .organizeLocalJob(id: UUID()),
-            .refreshWatchlist
+            .refreshWatchlist,
+            .clearFailedJobs,
+            .clearHistory
         ]
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
@@ -286,7 +291,7 @@ final class CargoTests: XCTestCase {
         XCTAssertFalse(json.contains("/Users/example/Media Library"))
         XCTAssertFalse(json.contains("subtitle-user"))
         XCTAssertFalse(json.contains("subtitle-secret"))
-        XCTAssertTrue(json.contains("Movies/Arrival (2016).mkv"))
+        XCTAssertTrue(json.replacingOccurrences(of: "\\/", with: "/").contains("Movies/Arrival (2016).mkv"))
     }
 
     @MainActor
@@ -364,6 +369,174 @@ final class CargoTests: XCTestCase {
             (searchJSON["data"] as? [String: Any])?["query"] as? String,
             "Arrival 2016"
         )
+    }
+
+    @MainActor
+    func testRemoteDiscoveryRouteIsPublicAndIdentifiesCargo() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoDiscoveryAPITests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let residentID = UUID()
+        let registry = CargoRemotePresenceRegistry(residentID: residentID, residentName: "Main Cargo")
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let router = CargoRemoteAPIRouter(controller: controller, token: "test-token", presenceRegistry: registry)
+        let response = await router.handle(
+            CargoAPIRequest(method: "GET", uri: "/v1/discovery", headers: [:], body: Data())
+        )
+
+        XCTAssertEqual(response.statusCode, 200)
+        let envelope = try JSONDecoder().decode(CargoAPIEnvelope<CargoRemoteDiscovery>.self, from: response.body)
+        XCTAssertTrue(envelope.ok)
+        XCTAssertEqual(envelope.data?.service, "Cargo")
+        XCTAssertEqual(envelope.data?.instanceID, residentID)
+        XCTAssertEqual(envelope.data?.name, "Main Cargo")
+    }
+
+    func testTailscaleStatusParserReadsPeerNamesAndAddresses() throws {
+        let status = Data(#"""
+        {
+          "Self": {"DNSName":"this.tailnet.ts.net.","HostName":"this","OS":"macOS","Online":true,"TailscaleIPs":["100.64.0.1"]},
+          "Peer": {
+            "node-key:abc": {"DNSName":"cargo.tailnet.ts.net.","HostName":"cargo","OS":"macOS","Online":true,"TailscaleIPs":["100.64.0.2"]}
+          }
+        }
+        """#.utf8)
+
+        let peers = try CargoTailscaleDiscovery.parseStatus(status)
+        XCTAssertEqual(peers.count, 1)
+        XCTAssertEqual(peers.first?.name, "cargo.tailnet.ts.net.")
+        XCTAssertEqual(peers.first?.address, "100.64.0.2")
+        XCTAssertEqual(peers.first?.platform, "macOS")
+    }
+
+    @MainActor
+    func testRemoteAPIExecutesCommandsThroughCommandRoute() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoCommandAPITests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let router = CargoRemoteAPIRouter(controller: controller, token: "test-token")
+        let body = try JSONEncoder().encode(CargoRemoteCommand.refreshChillCatalog)
+
+        let response = await router.handle(
+            CargoAPIRequest(
+                method: "POST",
+                uri: "/v1/commands",
+                headers: ["authorization": "Bearer test-token"],
+                body: body
+            )
+        )
+
+        XCTAssertEqual(response.statusCode, 200)
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+        XCTAssertEqual(json["ok"] as? Bool, true)
+        XCTAssertNotNil((json["data"] as? [String: Any])?["generatedAt"])
+    }
+
+    @MainActor
+    func testRemoteEventsExposeRevisionedChanges() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoEventAPITests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let feed = CargoRemoteEventFeed()
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let router = CargoRemoteAPIRouter(controller: controller, token: "test-token", eventFeed: feed)
+
+        func eventData(_ uri: String) async throws -> [String: Any] {
+            let response = await router.handle(
+                CargoAPIRequest(
+                    method: "GET",
+                    uri: uri,
+                    headers: ["authorization": "Bearer test-token"],
+                    body: Data()
+                )
+            )
+            XCTAssertEqual(response.statusCode, 200)
+            let envelope = try XCTUnwrap(try JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+            return try XCTUnwrap(envelope["data"] as? [String: Any])
+        }
+
+        let initial = try await eventData("/v1/events")
+        XCTAssertEqual(initial["revision"] as? Int, 0)
+        XCTAssertEqual(initial["changed"] as? Bool, true)
+
+        let unchanged = try await eventData("/v1/events?since=0")
+        XCTAssertEqual(unchanged["changed"] as? Bool, false)
+        XCTAssertNil(unchanged["snapshot"])
+
+        feed.publish()
+        let changed = try await eventData("/v1/events?since=0")
+        XCTAssertEqual(changed["revision"] as? Int, 1)
+        XCTAssertEqual(changed["changed"] as? Bool, true)
+        XCTAssertNotNil(changed["snapshot"])
+    }
+
+    @MainActor
+    func testRemoteAPIClientReadsAndCommandsAgainstHTTPServer() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoClientAPITests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let router = CargoRemoteAPIRouter(controller: controller, token: "test-token")
+        let server = CargoHTTPServer(configuration: .init(host: "127.0.0.1", port: 0)) { request in
+            await router.handle(request)
+        }
+        try server.start()
+        defer { server.stop() }
+
+        let port = try XCTUnwrap(server.localAddress?.port)
+        let client = CargoRemoteAPIClient(
+            baseURL: try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)")),
+            token: "test-token"
+        )
+        let health = try await client.health()
+        let snapshot = try await client.snapshot()
+        XCTAssertEqual(health.apiVersion, "v1")
+        XCTAssertEqual(snapshot.remoteFolderID, 0)
+        _ = try await client.execute(.refreshChillCatalog)
+
+        let clientID = UUID()
+        let registered = try await client.registerPresence(
+            CargoRemotePresenceRegistration(id: clientID, name: "Bedroom Cargo", platform: "macOS")
+        )
+        XCTAssertEqual(registered.clients.map(\.id), [clientID])
+        let heartbeat = try await client.heartbeatPresence(clientID: clientID)
+        XCTAssertEqual(heartbeat.clients.first?.name, "Bedroom Cargo")
+        let unregistered = try await client.unregisterPresence(clientID: clientID)
+        XCTAssertTrue(unregistered.clients.isEmpty)
+    }
+
+    @MainActor
+    func testRemotePresenceLeasesExpireAfterMissingHeartbeats() {
+        let registry = CargoRemotePresenceRegistry(residentName: "Main Cargo", leaseDuration: 10)
+        let start = Date(timeIntervalSince1970: 100)
+        let id = UUID()
+
+        _ = registry.register(
+            CargoRemotePresenceRegistration(id: id, name: "Travel Cargo", platform: "macOS"),
+            now: start
+        )
+        XCTAssertEqual(registry.snapshot(now: start.addingTimeInterval(9)).clients.count, 1)
+        XCTAssertTrue(registry.snapshot(now: start.addingTimeInterval(11)).clients.isEmpty)
+    }
+
+    func testRemoteNetworkScopeDefaultsToLoopbackAndPersists() throws {
+        let settings = CargoSettings()
+        XCTAssertEqual(settings.remoteNetworkScope, .localhost)
+        XCTAssertEqual(settings.remoteNetworkScope.bindHost, "127.0.0.1")
+        XCTAssertEqual(CargoHTTPServer.Configuration.localNetwork.host, "0.0.0.0")
+
+        let encoded = try JSONEncoder().encode(CargoSettings(remoteNetworkScope: .localNetwork))
+        let decoded = try JSONDecoder().decode(CargoSettings.self, from: encoded)
+        XCTAssertEqual(decoded.remoteNetworkScope, .localNetwork)
     }
 
     func testRemoteProjectionDoesNotExposeTokenizedLinks() throws {
@@ -557,7 +730,7 @@ final class CargoTests: XCTestCase {
     func testPutIOTransferMappingNormalizesPercentAndStatus() throws {
         let data = Data(
             """
-            {"transfers":[{"id":7,"name":"Episode.mkv","status":"COMPLETED","size":2048,"percent_done":100,"created_at":"2026-09-12T08:00:00Z"}]}
+            {"transfers":[{"id":7,"name":"Episode.mkv","status":"COMPLETED","size":2048,"percent_done":100,"created_at":"2026-09-12T08:00:00.000Z","finished_at":"2026-09-12T09:30:00.123Z"}]}
             """.utf8
         )
         let envelope = try JSONDecoder().decode(PutIOTransferListEnvelope.self, from: data)
@@ -567,6 +740,9 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(transfer.status, .completed)
         XCTAssertEqual(transfer.progress, 1)
         XCTAssertEqual(transfer.sizeBytes, 2048)
+        let expectedDate = ISO8601DateFormatter()
+        expectedDate.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        XCTAssertEqual(transfer.updatedAt, expectedDate.date(from: "2026-09-12T09:30:00.123Z"))
     }
 
     func testPutIOFileMappingPreservesFolderAndSize() throws {

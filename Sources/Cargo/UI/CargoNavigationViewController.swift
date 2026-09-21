@@ -201,13 +201,22 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     }
 
     private func updateFooter() {
-        let connected = coordinator.isConnected
+        let connected = coordinator.dashboardIsConnected
         connectionDot.layer?.backgroundColor = (connected ? NSColor.systemGreen : NSColor.systemGray).cgColor
         connectionLabel.stringValue = connected
-            ? coordinator.putIOStatus.replacingOccurrences(of: "Connected as ", with: "")
-            : coordinator.putIOStatus
-        connectionLabel.toolTip = coordinator.putIOStatus
-        updatedLabel.stringValue = "Updated \(Formatters.time.string(from: coordinator.state.lastUpdated))"
+            ? coordinator.dashboardPutIOStatus.replacingOccurrences(of: "Connected as ", with: "")
+            : coordinator.dashboardPutIOStatus
+        connectionLabel.toolTip = coordinator.dashboardPutIOStatus
+        updatedLabel.stringValue = "Updated \(Formatters.time.string(from: coordinator.dashboardState.lastUpdated))"
+
+        if coordinator.isRemoteClientMode {
+            emptyTrashMenuItem.isEnabled = false
+            diskLabel.isHidden = true
+            diskIndicator.isHidden = true
+            ssdLabel.isHidden = true
+            ssdIndicator.isHidden = true
+            return
+        }
 
         if let disk = coordinator.diskUsage {
             diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"

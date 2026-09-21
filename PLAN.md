@@ -93,8 +93,28 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add an authenticated embedded read API bound to localhost on the resident Mac.
 - [x] Add stable JSON envelopes, request IDs, bounded request bodies, and API
   contract tests.
-- [ ] Add network scoping and token rotation controls.
-- [ ] Add live status delivery and a remote client.
+- [x] Add explicit network scoping (loopback by default or local network) and
+  Keychain-backed token rotation controls.
+- [x] Expose the transport-neutral commands through an authenticated API route.
+- [x] Add a revisioned HTTP event feed and reusable client transport foundation.
+- [x] Make Cargo dual-role: the same app can be the resident server, a remote
+  client, or both.
+- [x] Add same-app client connection settings with a Keychain token, resident
+  URL, presence registration, and heartbeat session.
+- [x] Add low-information discovery and Tailscale peer auto-find; bearer-token
+  pairing remains explicit so discovering a Cargo peer never grants access.
+- [x] Add the authenticated presence contract and resident-side client lease
+  registry; clients can register, heartbeat, query presence, and unregister.
+- [x] Show resident/client connection status and connected-client presence in
+  Remote Access settings.
+- [ ] Add revoke/forget controls for individual client registrations.
+- [x] Make the normal dashboard render the resident snapshot in client mode
+  and route supported dashboard actions through the resident.
+- [x] Reuse the same dashboard UI and command models for multiple client
+  devices per resident.
+- [ ] Add streaming delivery and reconnect/backoff behavior; keep the current
+  revisioned polling feed as the fallback.
+- [ ] Validate the full flow across real Macs and trusted LAN boundaries.
 
 ## Non-goals for the first release
 
@@ -103,7 +123,8 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - replacing Chill or ShowRSS as a discovery service
 - Plex/Jellyfin server management
 - transcoding
-- multi-user access
+- cloud accounts or multi-tenant permissions (multiple trusted companion
+  devices are in scope)
 - cloud backend or account system
 
 ## Design principles

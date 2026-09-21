@@ -37,13 +37,15 @@ enum Page: Int, CaseIterable {
     @MainActor
     func count(in coordinator: CargoCoordinator) -> Int {
         switch self {
-        case .discover: coordinator.chillSearchResults.count
-        case .transfers: coordinator.state.transfers.count
-        case .files: coordinator.state.remoteMediaFiles.count
-        case .inbox: coordinator.inboxFileURLs().count
-        case .library: coordinator.state.libraryItems.count
-        case .watchlist: coordinator.state.imdbWatchlistItems.count
-        case .history: coordinator.state.history.count
+        case .discover: coordinator.dashboardChillSearchResults.count
+        case .transfers: coordinator.dashboardState.transfers.count
+        case .files: coordinator.dashboardState.remoteMediaFiles.count
+        case .inbox: coordinator.isRemoteClientMode
+            ? coordinator.dashboardState.localJobs.filter { $0.status != .completed }.count
+            : coordinator.inboxFileURLs().count
+        case .library: coordinator.dashboardState.libraryItems.count
+        case .watchlist: coordinator.dashboardState.imdbWatchlistItems.count
+        case .history: coordinator.dashboardState.history.count
         }
     }
 
@@ -58,6 +60,131 @@ enum Page: Int, CaseIterable {
         case .watchlist: WatchlistPageViewController(page: self, coordinator: coordinator)
         case .history: HistoryPageViewController(page: self, coordinator: coordinator)
         }
+    }
+}
+
+/// A segmented control with the separated, soft capsules used by the page toolbars.
+/// It keeps NSSegmentedControl's target/action API so the pages can share one control
+/// without changing their existing filtering behavior.
+@MainActor
+final class ModernPillControl: NSSegmentedControl {
+    private let segmentGap: CGFloat = 6
+    private let horizontalPadding: CGFloat = 18
+    private let controlHeight: CGFloat = 36
+
+    override var selectedSegment: Int {
+        didSet { needsDisplay = true }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: segmentWidths.reduce(0, +) + CGFloat(max(segmentCount - 1, 0)) * segmentGap,
+               height: controlHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let font = self.font ?? .systemFont(ofSize: 14, weight: .medium)
+        let rects = segmentRects(font: font)
+
+        for (index, rect) in rects.enumerated() {
+            let isSelected = index == selectedSegment
+            let fillColor = isSelected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.12)
+                : NSColor.controlBackgroundColor.withAlphaComponent(0.58)
+            let borderColor = isSelected
+                ? NSColor.controlAccentColor.withAlphaComponent(0.30)
+                : NSColor.separatorColor.withAlphaComponent(0.30)
+
+            fillColor.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2).fill()
+            borderColor.setStroke()
+            let border = NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5),
+                                      xRadius: rect.height / 2,
+                                      yRadius: rect.height / 2)
+            border.lineWidth = 1
+            border.stroke()
+
+            let title = label(forSegment: index) ?? ""
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: isSelected ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+            ]
+            let titleSize = title.size(withAttributes: attributes)
+            title.draw(at: NSPoint(x: rect.midX - titleSize.width / 2,
+                                   y: rect.midY - titleSize.height / 2 + 1),
+                       withAttributes: attributes)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let rects = segmentRects(font: font ?? .systemFont(ofSize: 14, weight: .medium))
+        guard let index = rects.firstIndex(where: { $0.contains(point) }) else { return }
+        selectedSegment = index
+        sendAction(action, to: target)
+    }
+
+    private var segmentWidths: [CGFloat] {
+        let font = self.font ?? .systemFont(ofSize: 14, weight: .medium)
+        return (0..<segmentCount).map { index in
+            max(52, (label(forSegment: index) ?? "").size(withAttributes: [.font: font]).width + horizontalPadding * 2)
+        }
+    }
+
+    private func segmentRects(font: NSFont) -> [NSRect] {
+        var x: CGFloat = 0
+        let height = min(controlHeight, bounds.height)
+        let y = bounds.midY - height / 2
+        return segmentWidths.map { width in
+            defer { x += width + segmentGap }
+            return NSRect(x: x, y: y, width: width, height: height)
+        }
+    }
+}
+
+/// A popup button that preserves AppKit menus while drawing a larger, quieter capsule.
+@MainActor
+final class ModernPillPopupButton: NSPopUpButton {
+    private let controlHeight: CGFloat = 36
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 180, height: controlHeight)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 0.5, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: rect.height / 2, yRadius: rect.height / 2)
+        (isEnabled ? NSColor.controlBackgroundColor.withAlphaComponent(0.62) : NSColor.controlBackgroundColor.withAlphaComponent(0.40)).setFill()
+        path.fill()
+        NSColor.separatorColor.withAlphaComponent(isEnabled ? 0.32 : 0.20).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        let font = self.font ?? .systemFont(ofSize: 14, weight: .medium)
+        let textColor = isEnabled ? NSColor.labelColor : NSColor.secondaryLabelColor
+        let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColor]
+        let currentTitle = selectedItem?.title ?? self.title
+        var textRect = rect.insetBy(dx: 14, dy: 0)
+
+        if let image {
+            let imageRect = NSRect(x: textRect.minX,
+                                   y: rect.midY - 8,
+                                   width: 16,
+                                   height: 16)
+            image.draw(in: imageRect)
+            textRect.origin.x += 23
+            textRect.size.width -= 23
+        }
+
+        let chevron = Theme.symbol("chevron.down", pointSize: 11, weight: .semibold)
+        if let chevron {
+            chevron.draw(in: NSRect(x: rect.maxX - 27, y: rect.midY - 6, width: 12, height: 12))
+        }
+        textRect.size.width -= 22
+        let titleSize = currentTitle.size(withAttributes: attributes)
+        currentTitle.draw(at: NSPoint(x: textRect.minX,
+                                     y: rect.midY - titleSize.height / 2 + 1),
+                          withAttributes: attributes)
     }
 }
 
@@ -157,26 +284,23 @@ class PageViewController: NSViewController {
     }
 
     func modernFilterSegments(labels: [String], action: Selector) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
+        let control = ModernPillControl(labels: labels, trackingMode: .selectOne, target: self, action: action)
         control.controlSize = .large
         control.segmentStyle = .capsule
-        control.font = .systemFont(ofSize: 13, weight: .medium)
+        control.font = .systemFont(ofSize: 14, weight: .medium)
         control.setContentHuggingPriority(.required, for: .horizontal)
         control.setContentCompressionResistancePriority(.required, for: .horizontal)
-        for index in 0..<control.segmentCount {
-            control.setWidth(0, forSegment: index)
-        }
         return control
     }
 
     func modernFilterPopup(width: CGFloat? = nil, symbolName: String? = nil) -> NSPopUpButton {
-        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        let popup = ModernPillPopupButton(frame: .zero, pullsDown: false)
         popup.controlSize = .large
         popup.bezelStyle = .rounded
-        popup.font = .systemFont(ofSize: 13, weight: .medium)
-        if let width {
-            popup.widthAnchor.constraint(equalToConstant: width).isActive = true
-        }
+        popup.focusRingType = .none
+        popup.isBordered = false
+        popup.font = .systemFont(ofSize: 14, weight: .medium)
+        popup.widthAnchor.constraint(equalToConstant: width ?? 180).isActive = true
         if let symbolName {
             popup.image = Theme.symbol(symbolName, pointSize: 13, weight: .medium)
             popup.imagePosition = .imageLeading
@@ -279,7 +403,7 @@ final class TransfersPageViewController: PageViewController {
     override func accessoryView() -> NSView? { clearFinishedButton }
 
     override func refreshAccessories() {
-        clearFinishedButton.isEnabled = coordinator.state.transfers.contains { [.completed, .seeding].contains($0.status) }
+        clearFinishedButton.isEnabled = coordinator.dashboardState.transfers.contains { [.completed, .seeding].contains($0.status) }
     }
 
     @objc private func clearFinished() {
@@ -287,7 +411,7 @@ final class TransfersPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let rows = coordinator.state.transfers.map { transfer -> ListRow in
+        let rows = coordinator.dashboardState.transfers.map { transfer -> ListRow in
             let isActive = transfer.status == .downloading || transfer.status == .waiting
             var actions: [RowAction] = []
             if transfer.status == .failed {
@@ -312,7 +436,10 @@ final class TransfersPageViewController: PageViewController {
             return ListRow(
                 id: String(transfer.id),
                 title: transfer.name,
-                details: ["\(Formatters.percent(transfer.progress)) · \(Formatters.bytes(transfer.sizeBytes))"],
+                details: [
+                    "\(Formatters.percent(transfer.progress)) · \(Formatters.bytes(transfer.sizeBytes))",
+                    "\(isActive ? "Started" : "Transferred") \(Formatters.dateTime.string(from: transfer.updatedAt))"
+                ],
                 badge: Self.badge(for: transfer.status),
                 progress: isActive ? transfer.progress : nil,
                 primaryAction: transfer.status == .failed ? actions.first : nil,
@@ -365,6 +492,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     private var viewMode = ViewMode.posters
     private var catalogFilter = ""
     private var posterGridController: PosterGridViewController?
+    private var detailController: DiscoverDetailViewController?
 
     private lazy var catalogControl: NSSegmentedControl = {
         let control = modernFilterSegments(labels: ["Top Movies", "Top Series"], action: #selector(catalogTabChanged(_:)))
@@ -397,29 +525,28 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
         return field
     }()
     private lazy var searchButton = barButton("Search", action: #selector(search))
-    private let statusLabel = NSTextField(labelWithString: "")
 
     override var subtitle: String {
-        coordinator.chillSearchQuery.isEmpty ? coordinator.chillCatalogStatus : coordinator.chillSearchStatus
+        coordinator.dashboardChillSearchQuery.isEmpty ? coordinator.dashboardChillCatalogStatus : coordinator.dashboardChillSearchStatus
     }
 
     override var emptyState: EmptyState {
-        if !coordinator.isChillConnected {
+        if !coordinator.dashboardIsChillConnected {
             return EmptyState(
                 symbol: "sparkles",
                 title: "Connect Chill to discover releases",
                 detail: "Add your Chill token in Settings → Chill."
             )
         }
-        if coordinator.chillSearchQuery.isEmpty {
-            let loading = coordinator.chillCatalogStatus.hasPrefix("Loading")
+        if coordinator.dashboardChillSearchQuery.isEmpty {
+            let loading = coordinator.dashboardChillCatalogStatus.hasPrefix("Loading")
             return EmptyState(
                 symbol: "sparkles",
                 title: loading ? "Loading top movies and series" : "No top titles available",
-                detail: loading ? coordinator.chillCatalogStatus : "Refresh the list or search by movie, show, or episode."
+                detail: loading ? coordinator.dashboardChillCatalogStatus : "Refresh the list or search by movie, show, or episode."
             )
         }
-        return EmptyState(symbol: "sparkles", title: "No Chill results", detail: coordinator.chillSearchStatus)
+        return EmptyState(symbol: "sparkles", title: "No Chill results", detail: coordinator.dashboardChillSearchStatus)
     }
 
     override func leadingAccessoryView() -> NSView? {
@@ -430,27 +557,20 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
     }
 
     override func accessoryView() -> NSView? {
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        let stack = NSStackView(views: [viewModeControl, statusLabel])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = 10
-        return stack
+        viewModeControl
     }
 
     override func refreshAccessories() {
         if searchField.currentEditor() == nil {
-            searchField.stringValue = coordinator.chillSearchQuery
+            searchField.stringValue = coordinator.dashboardChillSearchQuery
         }
         catalogControl.selectedSegment = catalogTab.rawValue
-        searchButton.isEnabled = coordinator.isChillConnected && !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let showingCatalog = coordinator.chillSearchQuery.isEmpty
+        searchButton.isEnabled = coordinator.dashboardIsChillConnected && !searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let showingCatalog = coordinator.dashboardChillSearchQuery.isEmpty
         catalogFilterPopup.isHidden = !showingCatalog
         viewModeControl.isHidden = !showingCatalog
         viewModeControl.selectedSegment = viewMode.rawValue
         updateFilterMenu()
-        statusLabel.stringValue = coordinator.chillSearchQuery.isEmpty ? coordinator.chillCatalogStatus : coordinator.chillSearchStatus
     }
 
     override func viewDidLoad() {
@@ -468,61 +588,174 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
             grid.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
         ])
         reload()
-        if coordinator.isChillConnected {
+        if coordinator.dashboardIsChillConnected {
             Task { await coordinator.refreshChillCatalog() }
-        } else if coordinator.chillStatus.hasPrefix("Token saved") {
+        } else if coordinator.dashboardChillStatus.hasPrefix("Token saved") {
             Task { await coordinator.verifyChillConnection() }
         }
     }
 
     override func reload() {
-        super.reload()
-        guard let posterGridController else { return }
+        guard let posterGridController else {
+            super.reload()
+            return
+        }
+
+        // Only render the presentation that is currently active. Rebuilding
+        // both controls on every coordinator notification makes the hidden
+        // view invalidate its layout while the visible view is being swapped,
+        // which is the source of the poster/list flash.
+        let showingGrid = coordinator.dashboardChillSearchQuery.isEmpty && viewMode == .posters
+        list.emptyState = emptyState
         posterGridController.emptyState = emptyState
-        posterGridController.apply(catalogRows())
+        if showingGrid {
+            posterGridController.apply(catalogRows())
+        } else {
+            list.apply(sections())
+        }
+        refreshAccessories()
         updateCatalogPresentation()
     }
 
     private func updateCatalogPresentation() {
         guard let posterGridController else { return }
-        let showingGrid = coordinator.chillSearchQuery.isEmpty && viewMode == .posters
-        list.view.isHidden = showingGrid
-        posterGridController.view.isHidden = !showingGrid
+        if detailController != nil {
+            setHidden(true, for: list.view)
+            setHidden(true, for: posterGridController.view)
+            return
+        }
+        let showingGrid = coordinator.dashboardChillSearchQuery.isEmpty && viewMode == .posters
+        setHidden(showingGrid, for: list.view)
+        setHidden(!showingGrid, for: posterGridController.view)
+    }
+
+    private func setHidden(_ hidden: Bool, for view: NSView) {
+        guard view.isHidden != hidden else { return }
+        view.isHidden = hidden
+    }
+
+    private func showDetail(_ title: DiscoverTitle, onSend: (() -> Void)? = nil) {
+        guard detailController == nil else { return }
+        let detail = DiscoverDetailViewController(
+            seed: title,
+            coordinator: coordinator,
+            onBack: { [weak self] in self?.hideDetail() },
+            onSend: onSend
+        )
+        detailController = detail
+        addChild(detail)
+        detail.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(detail.view)
+        NSLayoutConstraint.activate([
+            detail.view.leadingAnchor.constraint(equalTo: list.view.leadingAnchor),
+            detail.view.trailingAnchor.constraint(equalTo: list.view.trailingAnchor),
+            detail.view.topAnchor.constraint(equalTo: list.view.topAnchor),
+            detail.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
+        ])
+        updateCatalogPresentation()
+    }
+
+    private func hideDetail() {
+        guard let detail = detailController else { return }
+        detail.view.removeFromSuperview()
+        detail.removeFromParent()
+        detailController = nil
+        updateCatalogPresentation()
+    }
+
+    private func movieTitle(_ movie: ChillMovie) -> DiscoverTitle {
+        DiscoverTitle(
+            id: movie.id,
+            title: movie.title,
+            year: movie.year > 0 ? movie.year : nil,
+            kind: .movie,
+            posterURL: movie.posterLink,
+            overview: movie.overview.isEmpty ? nil : movie.overview,
+            rating: movie.rating > 0 ? movie.rating : nil,
+            genres: movie.genres,
+            networks: [],
+            imdbID: Self.imdbID(from: movie.externalLink),
+            externalURL: movie.externalLink,
+            searchQuery: movie.year > 0 ? movie.displayTitle + " " + String(movie.year) : movie.displayTitle
+        )
+    }
+
+    private func showTitle(_ show: ChillTVShow) -> DiscoverTitle {
+        DiscoverTitle(
+            id: show.id,
+            title: show.title,
+            year: show.year > 0 ? show.year : nil,
+            kind: .series,
+            posterURL: show.posterLink,
+            overview: show.overview.isEmpty ? nil : show.overview,
+            rating: show.rating > 0 ? show.rating : nil,
+            genres: [],
+            networks: show.networks,
+            imdbID: show.imdbID.isEmpty ? nil : show.imdbID,
+            externalURL: show.externalLink,
+            searchQuery: show.year > 0 ? show.title + " " + String(show.year) : show.title
+        )
+    }
+
+    private static func imdbID(from url: URL?) -> String? {
+        guard let value = url?.absoluteString,
+              let range = value.range(of: "tt[0-9]+", options: .regularExpression)
+        else { return nil }
+        return String(value[range])
     }
 
     private func catalogRows() -> [ListRow] {
-        guard coordinator.chillSearchQuery.isEmpty else { return [] }
+        guard coordinator.dashboardChillSearchQuery.isEmpty else { return [] }
         return catalogTab == .movies ? movieCatalogSection().rows : seriesCatalogSection().rows
     }
 
     private func updateFilterMenu() {
         let current = catalogFilter
-        let options: [String]
+        let lists: [String]
+        let genres: [String]
         let allTitle: String
         if catalogTab == .movies {
-            allTitle = "All Sources & Genres"
-            let sources = coordinator.chillCatalogMovies.compactMap { $0.source?.displayName }
-            let values = sources + coordinator.chillCatalogMovies.flatMap(\.genres)
-            options = Set(values).sorted {
+            allTitle = "All Lists & Genres"
+            lists = Set(coordinator.dashboardChillCatalogMovies.compactMap { $0.source?.displayName }).sorted {
+                $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+            genres = Set(coordinator.dashboardChillCatalogMovies.flatMap(\.genres)).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
             }
         } else {
-            allTitle = "All Providers"
-            let providers = coordinator.chillCatalogShows.compactMap { $0.source?.displayName }
-            let values = providers.isEmpty ? coordinator.chillCatalogShows.flatMap(\.networks) : providers
-            options = Set(values).sorted {
+            allTitle = "All Lists"
+            let providers = coordinator.dashboardChillCatalogShows.compactMap { $0.source?.displayName }
+            lists = Set(providers.isEmpty ? coordinator.dashboardChillCatalogShows.flatMap(\.networks) : providers).sorted {
                 $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+            }
+            genres = []
+        }
+
+        let menu = NSMenu()
+        let allItem = NSMenuItem(title: allTitle, action: nil, keyEquivalent: "")
+        allItem.representedObject = ""
+        menu.addItem(allItem)
+
+        func addSection(_ title: String, options: [String]) {
+            guard !options.isEmpty else { return }
+            if menu.items.count > 1 { menu.addItem(.separator()) }
+            let heading = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            heading.isEnabled = false
+            menu.addItem(heading)
+            for option in options {
+                let item = NSMenuItem(title: option, action: nil, keyEquivalent: "")
+                item.representedObject = option
+                menu.addItem(item)
             }
         }
 
-        catalogFilterPopup.removeAllItems()
-        catalogFilterPopup.addItem(withTitle: allTitle)
-        for option in options {
-            catalogFilterPopup.addItem(withTitle: option)
-            catalogFilterPopup.lastItem?.representedObject = option
-        }
-        if options.contains(where: { $0.caseInsensitiveCompare(current) == .orderedSame }) {
-            catalogFilter = options.first { $0.caseInsensitiveCompare(current) == .orderedSame } ?? current
+        addSection("Lists", options: lists)
+        addSection("Genres", options: genres)
+        catalogFilterPopup.menu = menu
+
+        let available = lists + genres
+        if available.contains(where: { $0.caseInsensitiveCompare(current) == .orderedSame }) {
+            catalogFilter = available.first { $0.caseInsensitiveCompare(current) == .orderedSame } ?? current
             catalogFilterPopup.selectItem(withTitle: catalogFilter)
         } else {
             catalogFilter = ""
@@ -540,24 +773,24 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
             RowAction(title: "Open Chill in Browser") {
                 NSWorkspace.shared.open(URL(string: "https://chill.institute/search")!)
             },
-            RowAction(title: "Refresh Top List", isEnabled: coordinator.isChillConnected) { [weak self] in
+            RowAction(title: "Refresh Top List", isEnabled: coordinator.dashboardIsChillConnected) { [weak self] in
                 guard let self else { return }
                 Task { await self.coordinator.refreshChillCatalog() }
             },
-            RowAction(title: "Refresh Results", isEnabled: !coordinator.chillSearchQuery.isEmpty) { [weak self] in
+            RowAction(title: "Refresh Results", isEnabled: !coordinator.dashboardChillSearchQuery.isEmpty) { [weak self] in
                 guard let self else { return }
-                Task { await self.coordinator.searchChill(query: self.coordinator.chillSearchQuery) }
+                Task { await self.coordinator.searchChill(query: self.coordinator.dashboardChillSearchQuery) }
             }
         ]
     }
 
     override func sections() -> [ListSection] {
-        if coordinator.chillSearchQuery.isEmpty {
+        if coordinator.dashboardChillSearchQuery.isEmpty {
             return [catalogTab == .movies ? movieCatalogSection() : seriesCatalogSection()]
         }
 
-        let rows = coordinator.chillSearchResults.map { result -> ListRow in
-            let canSend = coordinator.isChillConnected && coordinator.isConnected && !result.link.isEmpty
+        let rows = coordinator.dashboardChillSearchResults.map { result -> ListRow in
+            let canSend = coordinator.dashboardIsChillConnected && coordinator.dashboardIsConnected && !result.link.isEmpty
             let send = RowAction(
                 title: "Send to Put.io",
                 isEnabled: canSend,
@@ -574,6 +807,27 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 guard let url = URL(string: result.link) else { return }
                 NSWorkspace.shared.open(url)
             }
+            let kind: DiscoverTitle.Kind = (result.releaseInfo?.season != nil || result.releaseInfo?.episode != nil) ? .series : .movie
+            let title = result.releaseTitle
+            let year = result.releaseInfo?.year
+            let detail = RowAction(title: "View Details") { [weak self] in
+                guard let self else { return }
+                let seed = DiscoverTitle(
+                    id: result.id,
+                    title: title,
+                    year: year,
+                    kind: kind,
+                    posterURL: nil,
+                    overview: nil,
+                    rating: nil,
+                    genres: [],
+                    networks: [],
+                    imdbID: result.imdbID,
+                    externalURL: nil,
+                    searchQuery: year.map { "\(title) \($0)" } ?? title
+                )
+                self.showDetail(seed, onSend: canSend ? { send.handler() } : nil)
+            }
             let copyLink = copyAction("Copy Link", result.link)
             let details = [result.indexer, result.displayTraits].filter { !$0.isEmpty }.joined(separator: " · ")
             return ListRow(
@@ -581,15 +835,15 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 title: result.releaseTitle,
                 details: [details, result.title == result.releaseTitle ? nil : result.title].compactMap { $0 }.filter { !$0.isEmpty },
                 badge: result.seeders > 0 ? .success("\(result.seeders) seeders") : .neutral("No seeders"),
-                primaryAction: send,
-                menuActions: [send, open, copyLink]
+                primaryAction: detail,
+                menuActions: [detail, send, open, copyLink]
             )
         }
         return [ListSection(rows: rows)]
     }
 
     private func movieCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogMovies.filter { movie in
+        let rows = coordinator.dashboardChillCatalogMovies.filter { movie in
             let values = [movie.source?.displayName].compactMap { $0 } + movie.genres
             return matchesCatalogFilter(values)
         }.map { movie -> ListRow in
@@ -599,7 +853,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
             }
             let send = RowAction(
                 title: "Send to Put.io",
-                isEnabled: coordinator.isChillConnected && coordinator.isConnected && !movie.link.isEmpty,
+                isEnabled: coordinator.dashboardIsChillConnected && coordinator.dashboardIsConnected && !movie.link.isEmpty,
                 confirmation: .init(
                     message: "Send “\(movie.displayTitle)” to Put.io?",
                     detail: "This catalog movie has a direct Chill link; Cargo will use the normal Put.io → Inbox → Library pipeline.",
@@ -610,6 +864,10 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 self.run { try await self.coordinator.sendChillMovie(movie) }
             }
             var menu = [search, send]
+            let openDetail = RowAction(title: "View Details") { [weak self] in
+                guard let self else { return }
+                self.showDetail(self.movieTitle(movie), onSend: { send.handler() })
+            }
             if let externalLink = movie.externalLink {
                 menu.append(RowAction(title: "Open Movie Details") { NSWorkspace.shared.open(externalLink) })
             }
@@ -621,15 +879,15 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 details: [movie.displayTraits, genreText].filter { !$0.isEmpty },
                 badge: movie.seeders > 0 ? .success("\(movie.seeders) seeders") : .neutral("No seeders"),
                 thumbnail: movie.posterLink,
-                primaryAction: search,
-                menuActions: menu
+                primaryAction: openDetail,
+                menuActions: [openDetail] + menu
             )
         }
         return ListSection(title: "Top Movies", rows: rows)
     }
 
     private func seriesCatalogSection() -> ListSection {
-        let rows = coordinator.chillCatalogShows.filter { show in
+        let rows = coordinator.dashboardChillCatalogShows.filter { show in
             let values = [show.source?.displayName].compactMap { $0 } + show.networks
             return matchesCatalogFilter(values)
         }.map { show -> ListRow in
@@ -637,7 +895,11 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
             let search = RowAction(title: "Search Releases") { [weak self] in
                 self?.coordinator.requestChillSearch(query: query)
             }
-            var menu = [search]
+            let openDetail = RowAction(title: "View Details") { [weak self] in
+                guard let self else { return }
+                self.showDetail(self.showTitle(show))
+            }
+            var menu = [openDetail, search]
             if let externalLink = show.externalLink {
                 menu.append(RowAction(title: "Open Series Details") { NSWorkspace.shared.open(externalLink) })
             }
@@ -650,7 +912,7 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
                 details: [show.displayTraits, networks].filter { !$0.isEmpty },
                 badge: status,
                 thumbnail: show.posterLink,
-                primaryAction: search,
+                primaryAction: openDetail,
                 menuActions: menu
             )
         }
@@ -682,11 +944,11 @@ final class DiscoverPageViewController: PageViewController, NSSearchFieldDelegat
 
 final class FilesPageViewController: PageViewController {
     override var emptyState: EmptyState {
-        EmptyState(symbol: "folder", title: "No video files in Put.io", detail: coordinator.isConnected ? nil : coordinator.putIOStatus)
+        EmptyState(symbol: "folder", title: "No video files in Put.io", detail: coordinator.dashboardIsConnected ? nil : coordinator.dashboardPutIOStatus)
     }
 
     override func sections() -> [ListSection] {
-        let state = coordinator.state
+        let state = coordinator.dashboardState
         let rows = state.remoteMediaFiles.map { file -> ListRow in
             let job = state.localJobs
                 .filter { $0.remoteFileID == file.id }
@@ -703,8 +965,12 @@ final class FilesPageViewController: PageViewController {
 
             let sync = RowAction(title: job == nil ? "Sync" : "Downloaded", isEnabled: job == nil && !deleted) { [weak self] in
                 guard let self else { return }
-                coordinator.enqueueLocalSync(remoteFileID: file.id)
-                Task { await self.coordinator.processLocalSync(remoteFileID: file.id) }
+                if coordinator.isRemoteClientMode {
+                    self.run { try await self.coordinator.executeRemoteCommand(.enqueueLocalSync(remoteFileID: file.id)) }
+                } else {
+                    coordinator.enqueueLocalSync(remoteFileID: file.id)
+                    Task { await self.coordinator.processLocalSync(remoteFileID: file.id) }
+                }
             }
             let delete = RowAction(
                 title: "Delete from Put.io…",
@@ -720,10 +986,10 @@ final class FilesPageViewController: PageViewController {
             ) { [weak self] in
                 self?.run { try await self?.coordinator.deleteRemoteFile(remoteFileID: file.id) }
             }
-            let subtitles = RowAction(title: "Download Subtitles…", isEnabled: !deleted) { [weak self] in
+            let subtitles = RowAction(title: "Download Subtitles…", isEnabled: !deleted && !coordinator.isRemoteClientMode) { [weak self] in
                 self?.chooseSubtitle(for: file)
             }
-            let copyLink = RowAction(title: "Copy Download Link", isEnabled: !deleted) { [weak self] in
+            let copyLink = RowAction(title: "Copy Download Link", isEnabled: !deleted && !coordinator.isRemoteClientMode) { [weak self] in
                 self?.run {
                     guard let url = try await self?.coordinator.downloadURL(remoteFileID: file.id) else { return }
                     NSPasteboard.general.clearContents()
@@ -824,7 +1090,9 @@ final class InboxPageViewController: PageViewController {
         EmptyState(
             symbol: "tray",
             title: "Nothing waiting for organization",
-            detail: "Synced files land in \(coordinator.state.settings.stagingDirectoryName) and show up here."
+            detail: coordinator.isRemoteClientMode
+                ? "Downloads and organization happen on the resident Cargo Mac."
+                : "Synced files land in \(coordinator.state.settings.stagingDirectoryName) and show up here."
         )
     }
 
@@ -833,7 +1101,7 @@ final class InboxPageViewController: PageViewController {
     override func accessoryView() -> NSView? { clearFailedButton }
 
     override func refreshAccessories() {
-        clearFailedButton.isEnabled = coordinator.state.localJobs.contains { $0.status == .failed }
+        clearFailedButton.isEnabled = coordinator.dashboardState.localJobs.contains { $0.status == .failed }
     }
 
     @objc private func clearFailed() {
@@ -841,14 +1109,14 @@ final class InboxPageViewController: PageViewController {
     }
 
     override func listActions() -> [RowAction] {
-        let inbox = coordinator.libraryRootURL()?
+        let inbox = coordinator.isRemoteClientMode ? nil : coordinator.libraryRootURL()?
             .appendingPathComponent(coordinator.state.settings.stagingDirectoryName, isDirectory: true)
         return [
             RowAction(title: "Open Inbox in Finder", isEnabled: inbox != nil) {
                 guard let inbox else { return }
                 NSWorkspace.shared.open(inbox)
             },
-            RowAction(title: "Clear Failed", isEnabled: coordinator.state.localJobs.contains { $0.status == .failed }) { [weak self] in
+            RowAction(title: "Clear Failed", isEnabled: coordinator.dashboardState.localJobs.contains { $0.status == .failed }) { [weak self] in
                 self?.coordinator.clearFailedJobs()
             },
             refreshAction()
@@ -856,10 +1124,10 @@ final class InboxPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let state = coordinator.state
+        let state = coordinator.dashboardState
 
         let downloading = state.localJobs
-            .filter { [.queued, .downloading, .importing, .failed].contains($0.status) }
+            .filter { coordinator.isRemoteClientMode ? $0.status != .completed : [.queued, .downloading, .importing, .failed].contains($0.status) }
             .map { job in
                 ListRow(
                     id: job.id.uuidString,
@@ -870,6 +1138,10 @@ final class InboxPageViewController: PageViewController {
                     menuActions: [copyAction("Copy Name", job.name), revealAction(job.destination)]
                 )
             }
+
+        if coordinator.isRemoteClientMode {
+            return [ListSection(title: "Resident downloads", rows: downloading)]
+        }
 
         let pendingByDestination = state.localJobs
             .filter { $0.status == .needsReview }
@@ -961,6 +1233,28 @@ final class InboxPageViewController: PageViewController {
 // MARK: - Watchlist
 
 final class WatchlistPageViewController: PageViewController {
+    private enum ViewMode: Int {
+        case list, posters
+    }
+
+    private var viewMode = ViewMode.posters
+    private var posterGridController: PosterGridViewController?
+    private var searchQuery = ""
+
+    private lazy var clearSearchButton: NSButton = {
+        let button = NSButton(image: Theme.symbol("xmark.circle.fill", pointSize: 15, weight: .medium) ?? NSImage(), target: self, action: #selector(clearSearch))
+        button.isBordered = false
+        button.toolTip = "Clear search"
+        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        return button
+    }()
+
+    private lazy var viewModeControl: NSSegmentedControl = {
+        let control = modernFilterSegments(labels: ["List", "Posters"], action: #selector(viewModeChanged(_:)))
+        control.selectedSegment = viewMode.rawValue
+        return control
+    }()
+
     enum Sort: String, CaseIterable {
         case added, year, title, status
         var label: String {
@@ -1005,10 +1299,47 @@ final class WatchlistPageViewController: PageViewController {
     override func leadingAccessoryView() -> NSView? {
         let control = modernFilterSegments(labels: Filter.allCases.map(\.label), action: #selector(filterChanged(_:)))
         control.selectedSegment = filter.rawValue
-        return control
+        let stack = NSStackView(views: [clearSearchButton, control])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        clearSearchButton.isHidden = searchQuery.isEmpty
+        return stack
     }
 
-    override func accessoryView() -> NSView? { sortPopup() }
+    override func accessoryView() -> NSView? {
+        let stack = NSStackView(views: [viewModeControl, sortPopup()])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
+    }
+
+    override func refreshAccessories() {
+        viewModeControl.selectedSegment = viewMode.rawValue
+        clearSearchButton.isHidden = searchQuery.isEmpty
+    }
+
+    @objc private func clearSearch() {
+        searchQuery = ""
+        reload()
+    }
+
+    func focusSearchResult(id: String) {
+        guard let item = coordinator.dashboardState.imdbWatchlistItems.first(where: { $0.id == id }) else { return }
+        if filter != .all { filter = .all }
+        searchQuery = item.title
+        reload()
+    }
+
+    func openSearchResult(id: String) {
+        guard let item = coordinator.dashboardState.imdbWatchlistItems.first(where: { $0.id == id }) else { return }
+        guard item.id.hasPrefix("tt"), let url = URL(string: "https://www.imdb.com/title/\(item.id)/") else {
+            focusSearchResult(id: id)
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
 
     @objc private func filterChanged(_ sender: NSSegmentedControl) {
         filter = Filter(rawValue: sender.selectedSegment) ?? .all
@@ -1029,6 +1360,62 @@ final class WatchlistPageViewController: PageViewController {
     @objc private func sortChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String, let next = Sort(rawValue: raw) else { return }
         sort = next
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        let grid = PosterGridViewController()
+        posterGridController = grid
+        addChild(grid)
+        grid.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(grid.view)
+        NSLayoutConstraint.activate([
+            grid.view.leadingAnchor.constraint(equalTo: list.view.leadingAnchor),
+            grid.view.trailingAnchor.constraint(equalTo: list.view.trailingAnchor),
+            grid.view.topAnchor.constraint(equalTo: list.view.topAnchor),
+            grid.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
+        ])
+        reload()
+    }
+
+    override func reload() {
+        guard let posterGridController else {
+            super.reload()
+            return
+        }
+
+        let showingGrid = viewMode == .posters
+        list.emptyState = emptyState
+        posterGridController.emptyState = emptyState
+        if showingGrid {
+            posterGridController.apply(posterRows())
+        } else {
+            list.apply(sections())
+        }
+        refreshAccessories()
+        updateWatchlistPresentation()
+    }
+
+    private func posterRows() -> [ListRow] {
+        sections().flatMap(\.rows)
+    }
+
+    private func updateWatchlistPresentation() {
+        guard let posterGridController else { return }
+        let showingGrid = viewMode == .posters
+        setHidden(showingGrid, for: list.view)
+        setHidden(!showingGrid, for: posterGridController.view)
+    }
+
+    private func setHidden(_ hidden: Bool, for view: NSView) {
+        guard view.isHidden != hidden else { return }
+        view.isHidden = hidden
+    }
+
+    @objc private func viewModeChanged(_ sender: NSSegmentedControl) {
+        viewMode = ViewMode(rawValue: sender.selectedSegment) ?? .list
+        reload()
     }
 
     private func sorted(_ items: [IMDbWatchlistItem], state: CargoState) -> [IMDbWatchlistItem] {
@@ -1054,8 +1441,8 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     override var subtitle: String {
-        let state = coordinator.state
-        guard !state.imdbWatchlistItems.isEmpty else { return coordinator.imdbWatchlistStatus }
+        let state = coordinator.dashboardState
+        guard !state.imdbWatchlistItems.isEmpty else { return coordinator.dashboardWatchlistStatus }
         let counts = state.imdbWatchlistItems.reduce(into: [String: Int]()) { counts, item in
             counts[Self.status(for: item, state: state).text, default: 0] += 1
         }
@@ -1067,7 +1454,7 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     override var emptyState: EmptyState {
-        EmptyState(symbol: "star", title: "No Watchlist titles yet", detail: coordinator.imdbWatchlistStatus)
+        EmptyState(symbol: "star", title: "No Watchlist titles yet", detail: coordinator.dashboardWatchlistStatus)
     }
 
     override func listActions() -> [RowAction] {
@@ -1084,14 +1471,15 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let state = coordinator.state
+        let state = coordinator.dashboardState
         let visible = state.imdbWatchlistItems.filter { item in
+            let matchesSearch = searchQuery.isEmpty || Self.matchesSearch(searchQuery, item: item)
             let status = Self.status(for: item, state: state).text
             switch filter {
-            case .all: return true
-            case .wanted: return status == "Wanted"
-            case .onPutIO: return ["Available", "Queued", "In Inbox"].contains(status)
-            case .inLibrary: return status == "Organized"
+            case .all: return matchesSearch
+            case .wanted: return matchesSearch && status == "Wanted"
+            case .onPutIO: return matchesSearch && ["Available", "Queued", "In Inbox"].contains(status)
+            case .inLibrary: return matchesSearch && status == "Organized"
             }
         }
         let rows = sorted(visible, state: state).map { item -> ListRow in
@@ -1165,11 +1553,39 @@ final class WatchlistPageViewController: PageViewController {
             .split(separator: " ")
             .joined(separator: " ")
     }
+
+    private static func matchesSearch(_ query: String, item: IMDbWatchlistItem) -> Bool {
+        let haystack = normalize([item.title, item.id, item.year.map(String.init) ?? ""].joined(separator: " "))
+        return normalize(query).split(separator: " ").allSatisfy { haystack.contains($0) }
+    }
 }
 
 // MARK: - Library
 
 final class LibraryPageViewController: PageViewController {
+    private enum ViewMode: Int {
+        case list, posters
+    }
+
+    private var viewMode = ViewMode.posters
+    private var posterGridController: PosterGridViewController?
+    private var detailController: DiscoverDetailViewController?
+    private var searchQuery = ""
+
+    private lazy var clearSearchButton: NSButton = {
+        let button = NSButton(image: Theme.symbol("xmark.circle.fill", pointSize: 15, weight: .medium) ?? NSImage(), target: self, action: #selector(clearSearch))
+        button.isBordered = false
+        button.toolTip = "Clear search"
+        button.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        return button
+    }()
+
+    private lazy var viewModeControl: NSSegmentedControl = {
+        let control = modernFilterSegments(labels: ["List", "Posters"], action: #selector(viewModeChanged(_:)))
+        control.selectedSegment = viewMode.rawValue
+        return control
+    }()
+
     enum Sort: String, CaseIterable {
         case added, title, size
         var label: String {
@@ -1214,7 +1630,30 @@ final class LibraryPageViewController: PageViewController {
     override func leadingAccessoryView() -> NSView? {
         let control = modernFilterSegments(labels: Tab.allCases.map(\.label), action: #selector(tabChanged(_:)))
         control.selectedSegment = tab.rawValue
-        return control
+        let stack = NSStackView(views: [clearSearchButton, control])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        clearSearchButton.isHidden = searchQuery.isEmpty
+        return stack
+    }
+
+    @objc private func clearSearch() {
+        searchQuery = ""
+        reload()
+    }
+
+    func focusSearchResult(id: String) {
+        guard let item = coordinator.dashboardState.libraryItems.first(where: { $0.id == id }) else { return }
+        if tab != .all { tab = .all }
+        searchQuery = item.title
+        reload()
+    }
+
+    func openSearchResult(id: String) {
+        guard let item = coordinator.dashboardState.libraryItems.first(where: { $0.id == id }) else { return }
+        if detailController != nil { hideDetail() }
+        showDetail(for: item, metadata: coordinator.dashboardState.metadata[item.id])
     }
 
     @objc private func tabChanged(_ sender: NSSegmentedControl) {
@@ -1222,7 +1661,7 @@ final class LibraryPageViewController: PageViewController {
     }
 
     override var subtitle: String {
-        let items = coordinator.state.libraryItems
+        let items = coordinator.dashboardState.libraryItems
         guard !items.isEmpty else { return "" }
         let movies = items.filter { $0.kind == .movie }.count
         let shows = items.filter { $0.kind == .show }
@@ -1232,7 +1671,14 @@ final class LibraryPageViewController: PageViewController {
     }
 
     override var emptyState: EmptyState {
-        EmptyState(
+        if coordinator.isRemoteClientMode {
+            return EmptyState(
+                symbol: "film.stack",
+                title: "No resident library items yet",
+                detail: "The resident’s organized library appears here."
+            )
+        }
+        return EmptyState(
             symbol: "film.stack",
             title: coordinator.state.settings.hasLibraryRoot ? "Nothing in the library yet" : "No library folder",
             detail: coordinator.state.settings.hasLibraryRoot
@@ -1243,8 +1689,8 @@ final class LibraryPageViewController: PageViewController {
 
     override func listActions() -> [RowAction] {
         [
-            RowAction(title: "Rescan Library") { [weak self] in self?.coordinator.scanLibrary() },
-            RowAction(title: "Open Library in Finder", isEnabled: coordinator.libraryRootURL() != nil) { [weak self] in
+            RowAction(title: "Rescan Library", isEnabled: !coordinator.isRemoteClientMode) { [weak self] in self?.coordinator.scanLibrary() },
+            RowAction(title: "Open Library in Finder", isEnabled: !coordinator.isRemoteClientMode && coordinator.libraryRootURL() != nil) { [weak self] in
                 guard let url = self?.coordinator.libraryRootURL() else { return }
                 NSWorkspace.shared.open(url)
             }
@@ -1260,12 +1706,124 @@ final class LibraryPageViewController: PageViewController {
         popup.selectItem(at: Sort.allCases.firstIndex(of: sort) ?? 0)
         popup.target = self
         popup.action = #selector(sortChanged(_:))
-        return popup
+        let stack = NSStackView(views: [viewModeControl, popup])
+        stack.orientation = .horizontal
+        stack.alignment = .centerY
+        stack.spacing = 10
+        return stack
+    }
+
+    override func refreshAccessories() {
+        viewModeControl.selectedSegment = viewMode.rawValue
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+
+        let grid = PosterGridViewController()
+        posterGridController = grid
+        addChild(grid)
+        grid.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(grid.view)
+        NSLayoutConstraint.activate([
+            grid.view.leadingAnchor.constraint(equalTo: list.view.leadingAnchor),
+            grid.view.trailingAnchor.constraint(equalTo: list.view.trailingAnchor),
+            grid.view.topAnchor.constraint(equalTo: list.view.topAnchor),
+            grid.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
+        ])
+        reload()
+    }
+
+    override func reload() {
+        guard let posterGridController else {
+            super.reload()
+            return
+        }
+
+        let showingGrid = viewMode == .posters
+        list.emptyState = emptyState
+        posterGridController.emptyState = emptyState
+        if showingGrid {
+            posterGridController.apply(posterRows())
+        } else {
+            list.apply(sections())
+        }
+        refreshAccessories()
+        updateLibraryPresentation()
+    }
+
+    private func posterRows() -> [ListRow] {
+        sections().flatMap(\.rows)
+    }
+
+    private func updateLibraryPresentation() {
+        guard let posterGridController else { return }
+        if detailController != nil {
+            setHidden(true, for: list.view)
+            setHidden(true, for: posterGridController.view)
+            return
+        }
+        let showingGrid = viewMode == .posters
+        setHidden(showingGrid, for: list.view)
+        setHidden(!showingGrid, for: posterGridController.view)
+    }
+
+    private func setHidden(_ hidden: Bool, for view: NSView) {
+        guard view.isHidden != hidden else { return }
+        view.isHidden = hidden
+    }
+
+    private func showDetail(for item: LibraryItem, metadata: TMDBMetadata?) {
+        guard detailController == nil else { return }
+        let title = DiscoverTitle(
+            id: item.id,
+            title: item.title,
+            year: item.year,
+            kind: item.kind == .movie ? .movie : .series,
+            posterURL: metadata?.posterURL,
+            overview: nil,
+            rating: nil,
+            genres: [],
+            networks: [],
+            imdbID: nil,
+            externalURL: nil,
+            searchQuery: item.year.map { "\(item.title) \($0)" } ?? item.title
+        )
+        let detail = DiscoverDetailViewController(
+            seed: title,
+            coordinator: coordinator,
+            onBack: { [weak self] in self?.hideDetail() },
+            backButtonTitle: "Back to Library"
+        )
+        detailController = detail
+        addChild(detail)
+        detail.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(detail.view)
+        NSLayoutConstraint.activate([
+            detail.view.leadingAnchor.constraint(equalTo: list.view.leadingAnchor),
+            detail.view.trailingAnchor.constraint(equalTo: list.view.trailingAnchor),
+            detail.view.topAnchor.constraint(equalTo: list.view.topAnchor),
+            detail.view.bottomAnchor.constraint(equalTo: list.view.bottomAnchor)
+        ])
+        updateLibraryPresentation()
+    }
+
+    private func hideDetail() {
+        guard let detail = detailController else { return }
+        detail.view.removeFromSuperview()
+        detail.removeFromParent()
+        detailController = nil
+        updateLibraryPresentation()
     }
 
     @objc private func sortChanged(_ sender: NSPopUpButton) {
         guard let raw = sender.selectedItem?.representedObject as? String, let next = Sort(rawValue: raw) else { return }
         sort = next
+    }
+
+    @objc private func viewModeChanged(_ sender: NSSegmentedControl) {
+        viewMode = ViewMode(rawValue: sender.selectedSegment) ?? .list
+        reload()
     }
 
     private func sorted(_ items: [LibraryItem]) -> [LibraryItem] {
@@ -1277,7 +1835,10 @@ final class LibraryPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let state = coordinator.state
+        let state = coordinator.dashboardState
+        if coordinator.isRemoteClientMode {
+            return remoteSections(state: state)
+        }
         guard let root = coordinator.libraryRootURL() else { return [] }
         func row(_ item: LibraryItem) -> ListRow {
             let meta = state.metadata[item.id]
@@ -1317,7 +1878,11 @@ final class LibraryPageViewController: PageViewController {
                 components?.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
                 if let infuse = components?.url { NSWorkspace.shared.open(infuse) }
             }
+            let openDetail = RowAction(title: "View Details") { [weak self] in
+                self?.showDetail(for: item, metadata: meta)
+            }
             var menu = [reveal, play]
+            menu.insert(openDetail, at: 0)
             if let primary { menu.insert(primary, at: 0) }
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
@@ -1354,17 +1919,19 @@ final class LibraryPageViewController: PageViewController {
                 details: details,
                 badge: badge,
                 thumbnail: meta?.posterURL,
-                primaryAction: primary ?? reveal,
+                primaryAction: openDetail,
                 menuActions: menu
             )
         }
         let visible = state.libraryItems.filter { item in
+            let matchesSearch = searchQuery.isEmpty || Self.matchesSearch(searchQuery, item: item)
+            guard matchesSearch else { return false }
             switch tab {
-            case .all: true
-            case .movies: item.kind == .movie
-            case .shows: item.kind == .show
-            case .incomplete: !coordinator.missingEpisodes(for: item).isEmpty
-            case .unmatched: state.metadata[item.id] == nil
+            case .all: return true
+            case .movies: return item.kind == .movie
+            case .shows: return item.kind == .show
+            case .incomplete: return !coordinator.missingEpisodes(for: item).isEmpty
+            case .unmatched: return state.metadata[item.id] == nil
             }
         }
         let movies = sorted(visible.filter { $0.kind == .movie }).map(row)
@@ -1373,6 +1940,48 @@ final class LibraryPageViewController: PageViewController {
         if tab == .shows || tab == .incomplete { return [ListSection(rows: shows)] }
         if tab == .unmatched, movies.isEmpty || shows.isEmpty { return [ListSection(rows: movies + shows)] }
         return [ListSection(title: "Movies", rows: movies), ListSection(title: "TV Shows", rows: shows)]
+    }
+
+    private func remoteSections(state: CargoState) -> [ListSection] {
+        let visible = state.libraryItems.filter { item in
+            let matchesSearch = searchQuery.isEmpty || Self.matchesSearch(searchQuery, item: item)
+            guard matchesSearch else { return false }
+            switch tab {
+            case .all: return true
+            case .movies: return item.kind == .movie
+            case .shows, .incomplete: return item.kind == .show
+            case .unmatched: return false
+            }
+        }
+        let rows = sorted(visible).map { item in
+            let detail = item.kind == .movie
+                ? "Movie · \(Formatters.bytes(item.sizeBytes)) · \(item.relativePath)"
+                : "TV show · \(item.seasonCount) season\(item.seasonCount == 1 ? "" : "s") · \(item.episodeCount) episode\(item.episodeCount == 1 ? "" : "s") · \(item.relativePath)"
+            return ListRow(
+                id: item.id,
+                title: item.displayTitle,
+                details: [detail],
+                badge: item.kind == .show ? .neutral("Resident library") : nil,
+                primaryAction: copyAction("Copy Relative Path", item.relativePath),
+                menuActions: [copyAction("Copy Relative Path", item.relativePath)]
+            )
+        }
+        return [ListSection(rows: rows)]
+    }
+
+    private static func matchesSearch(_ query: String, item: LibraryItem) -> Bool {
+        let normalizedQuery = normalizeSearch(query)
+        guard !normalizedQuery.isEmpty else { return true }
+        let haystack = normalizeSearch([item.title, item.displayTitle, item.relativePath, item.year.map(String.init) ?? ""].joined(separator: " "))
+        return normalizedQuery.split(separator: " ").allSatisfy { haystack.contains($0) }
+    }
+
+    private static func normalizeSearch(_ value: String) -> String {
+        value.lowercased()
+            .folding(options: .diacriticInsensitive, locale: nil)
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .joined(separator: " ")
     }
 
     private func findMissing(for item: LibraryItem) {
@@ -1401,7 +2010,7 @@ final class HistoryPageViewController: PageViewController {
 
     override func listActions() -> [RowAction] {
         [
-            RowAction(title: "Clear History", isDestructive: true, isEnabled: !coordinator.state.history.isEmpty) { [weak self] in
+            RowAction(title: "Clear History", isDestructive: true, isEnabled: !coordinator.dashboardState.history.isEmpty) { [weak self] in
                 guard let self, confirm("Clear the history?", detail: "Routine entries expire after 30 days on their own; warnings and failures after 90.", button: "Clear") else { return }
                 coordinator.clearHistory()
             },
@@ -1414,7 +2023,7 @@ final class HistoryPageViewController: PageViewController {
     override func accessoryView() -> NSView? { clearHistoryButton }
 
     override func refreshAccessories() {
-        clearHistoryButton.isEnabled = !coordinator.state.history.isEmpty
+        clearHistoryButton.isEnabled = !coordinator.dashboardState.history.isEmpty
     }
 
     @objc private func clearHistory() {
@@ -1423,7 +2032,7 @@ final class HistoryPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let rows = coordinator.state.history.prefix(200).map { entry in
+        let rows = coordinator.dashboardState.history.prefix(200).map { entry in
             ListRow(
                 id: entry.id.uuidString,
                 title: entry.title,

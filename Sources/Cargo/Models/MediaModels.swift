@@ -166,6 +166,38 @@ struct CargoHistoryEntry: Codable, Identifiable, Sendable {
     let detail: String
 }
 
+enum CargoRemoteNetworkScope: String, Codable, CaseIterable, Equatable, Sendable {
+    case localhost
+    case localNetwork
+
+    var displayName: String {
+        switch self {
+        case .localhost:
+            "This Mac only"
+        case .localNetwork:
+            "Local network"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .localhost:
+            "Loopback only"
+        case .localNetwork:
+            "All local IPv4 interfaces"
+        }
+    }
+
+    var bindHost: String {
+        switch self {
+        case .localhost:
+            "127.0.0.1"
+        case .localNetwork:
+            "0.0.0.0"
+        }
+    }
+}
+
 struct CargoSettings: Codable, Equatable, Sendable {
     var libraryRootBookmark: Data?
     var libraryRootPath: String?
@@ -190,6 +222,12 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var imdbWatchlistURL: String
     /// How often the background cycle polls Put.io and the watchlist.
     var refreshIntervalMinutes: Int
+    /// Scope of the resident HTTP API. Loopback is the safe default.
+    var remoteNetworkScope: CargoRemoteNetworkScope
+    /// Whether this installation should also connect to a resident Cargo.
+    var remoteClientEnabled: Bool
+    /// URL of the resident Cargo API; its token lives in Keychain.
+    var remoteServerURL: String
 
     static let refreshIntervalChoices = [1, 5, 10, 30]
 
@@ -212,7 +250,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         openSubtitlesUsername: String = "",
         openSubtitlesAPIKey: String = "",
         imdbWatchlistURL: String = "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/",
-        refreshIntervalMinutes: Int = 1
+        refreshIntervalMinutes: Int = 1,
+        remoteNetworkScope: CargoRemoteNetworkScope = .localhost,
+        remoteClientEnabled: Bool = false,
+        remoteServerURL: String = ""
     ) {
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
@@ -233,6 +274,9 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.openSubtitlesAPIKey = openSubtitlesAPIKey
         self.imdbWatchlistURL = imdbWatchlistURL
         self.refreshIntervalMinutes = refreshIntervalMinutes
+        self.remoteNetworkScope = remoteNetworkScope
+        self.remoteClientEnabled = remoteClientEnabled
+        self.remoteServerURL = remoteServerURL
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -255,6 +299,9 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case openSubtitlesAPIKey
         case imdbWatchlistURL
         case refreshIntervalMinutes
+        case remoteNetworkScope
+        case remoteClientEnabled
+        case remoteServerURL
     }
 
     init(from decoder: Decoder) throws {
@@ -279,6 +326,10 @@ struct CargoSettings: Codable, Equatable, Sendable {
         imdbWatchlistURL = try container.decodeIfPresent(String.self, forKey: .imdbWatchlistURL)
             ?? "https://www.imdb.com/user/p.cmhfeyepnnf4jl2m4wk7q2qz3q/watchlist/"
         refreshIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .refreshIntervalMinutes) ?? 1
+        remoteNetworkScope = try container.decodeIfPresent(CargoRemoteNetworkScope.self, forKey: .remoteNetworkScope)
+            ?? .localhost
+        remoteClientEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteClientEnabled) ?? false
+        remoteServerURL = try container.decodeIfPresent(String.self, forKey: .remoteServerURL) ?? ""
     }
 
     static let `default` = CargoSettings()

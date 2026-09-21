@@ -58,6 +58,33 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
         case row(ListRow)
     }
 
+    /// The parts of a row that are visible in the table. Row actions contain
+    /// closures, so comparing ListRow values directly is not possible. Keeping
+    /// this small render key lets coordinator notifications update the model
+    /// without tearing down an unchanged table (and its loaded thumbnails).
+    private struct ActionRenderKey: Equatable {
+        let title: String
+        let isDestructive: Bool
+        let isEnabled: Bool
+        let isSeparatorBefore: Bool
+    }
+
+    private struct RowRenderKey: Equatable {
+        let id: String
+        let title: String
+        let details: [String]
+        let badge: StatusBadge?
+        let progress: Double?
+        let thumbnail: URL?
+        let primaryAction: ActionRenderKey?
+        let menuActions: [ActionRenderKey]
+    }
+
+    private enum ItemRenderKey: Equatable {
+        case header(String)
+        case row(RowRenderKey)
+    }
+
     private let tableView = ListTableView()
     private let scrollView = NSScrollView()
     private let emptyStateView = NSStackView()
@@ -66,6 +93,7 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
     private let emptyDetailLabel = Theme.label(style: .detail, wraps: true)
     private let contextMenu = NSMenu()
     private var items: [Item] = []
+    private var renderKey: [ItemRenderKey] = []
     private var menuActions: [RowAction] = []
 
     var emptyState = EmptyState(symbol: "tray", title: "Nothing here") {
@@ -139,13 +167,24 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
 
     func apply(_ sections: [ListSection]) {
         let selectedID = selectedRow?.id
-        items = sections.flatMap { section -> [Item] in
+        let newItems = sections.flatMap { section -> [Item] in
             guard !section.rows.isEmpty else { return [] }
             var result: [Item] = []
             if let title = section.title { result.append(.header(title)) }
             result.append(contentsOf: section.rows.map(Item.row))
             return result
         }
+        let newRenderKey = newItems.map(renderKey(for:))
+        items = newItems
+
+        // A coordinator update is often unrelated to this page. Avoid
+        // reloadData in that case; rebuilding the table causes a visible flash
+        // and clears the window in which poster thumbnails are displayed.
+        guard newRenderKey != renderKey else {
+            updateEmptyState()
+            return
+        }
+        renderKey = newRenderKey
         tableView.reloadData()
         if let selectedID, let index = items.firstIndex(where: {
             if case .row(let row) = $0 { return row.id == selectedID }
@@ -154,6 +193,32 @@ final class ListTableViewController: NSViewController, NSTableViewDataSource, NS
             tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         }
         updateEmptyState()
+    }
+
+    private func renderKey(for item: Item) -> ItemRenderKey {
+        switch item {
+        case .header(let title):
+            return .header(title)
+        case .row(let row):
+            func key(for action: RowAction) -> ActionRenderKey {
+                ActionRenderKey(
+                    title: action.title,
+                    isDestructive: action.isDestructive,
+                    isEnabled: action.isEnabled,
+                    isSeparatorBefore: action.isSeparatorBefore
+                )
+            }
+            return .row(RowRenderKey(
+                id: row.id,
+                title: row.title,
+                details: row.details,
+                badge: row.badge,
+                progress: row.progress,
+                thumbnail: row.thumbnail,
+                primaryAction: row.primaryAction.map(key),
+                menuActions: row.menuActions.map(key)
+            ))
+        }
     }
 
     private var selectedRow: ListRow? {
@@ -420,23 +485,29 @@ private final class ListCellView: NSTableCellView {
     required init?(coder: NSCoder) { fatalError() }
 
     func configure(with row: ListRow) {
+        let previousThumbnailURL = thumbnailURL
         thumbnailURL = row.thumbnail
         if let url = row.thumbnail {
             thumbnailWidth.constant = 40
             thumbnailHeight.constant = 60
             thumbnailLeading.constant = 10
             thumbnailView.isHidden = false
-            thumbnailView.image = nil
-            Task { @MainActor [weak self] in
-                let image = await PosterCache.shared.image(for: url)
-                guard let self, self.thumbnailURL == url else { return }
-                self.thumbnailView.image = image
+            if previousThumbnailURL != url {
+                thumbnailView.image = PosterCache.shared.cachedImage(for: url)
+            }
+            if previousThumbnailURL != url || thumbnailView.image == nil {
+                Task { @MainActor [weak self] in
+                    let image = await PosterCache.shared.image(for: url)
+                    guard let self, self.thumbnailURL == url else { return }
+                    self.thumbnailView.image = image
+                }
             }
         } else {
             thumbnailWidth.constant = 0
             thumbnailHeight.constant = 0
             thumbnailLeading.constant = 0
             thumbnailView.isHidden = true
+            thumbnailView.image = nil
         }
         titleLabel.stringValue = row.title
         titleLabel.textColor = row.titleColor ?? Theme.LabelStyle.rowTitle.color

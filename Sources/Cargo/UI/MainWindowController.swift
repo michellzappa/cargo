@@ -13,6 +13,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     let navigation: CargoNavigationViewController
     private let refreshItem = NSToolbarItem(itemIdentifier: ToolbarID.refresh)
     private var refreshing = false
+    private var searchWindowController: CargoSearchWindowController?
     var openSettings: (() -> Void)?
 
     init(coordinator: CargoCoordinator) {
@@ -127,6 +128,34 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
 
     @objc func showSettings(_ sender: Any?) {
         openSettings?()
+    }
+
+    @objc func showSearch(_ sender: Any?) {
+        show()
+        if searchWindowController == nil {
+            searchWindowController = CargoSearchWindowController(
+                coordinator: coordinator,
+                onSelect: { [weak self] result in
+                    self?.openSearchResult(result)
+                }
+            )
+        }
+        searchWindowController?.show(relativeTo: window)
+    }
+
+    private func openSearchResult(_ result: CargoSearchResult) {
+        searchWindowController?.close()
+
+        switch result.destination {
+        case .discover(let query):
+            coordinator.requestChillSearch(query: query)
+        case .library(let id):
+            navigation.select(.library)
+            (navigation.currentPage as? LibraryPageViewController)?.openSearchResult(id: id)
+        case .watchlist(let id):
+            navigation.select(.watchlist)
+            (navigation.currentPage as? WatchlistPageViewController)?.openSearchResult(id: id)
+        }
     }
 
     @objc func selectPage(_ sender: NSMenuItem) {

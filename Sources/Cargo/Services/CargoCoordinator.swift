@@ -66,6 +66,8 @@ final class CargoCoordinator {
 
     private let store: CargoStore
     private let keychain = KeychainStore()
+    let remoteClientSession = CargoRemoteClientSession()
+    let remotePresenceRegistry = CargoRemotePresenceRegistry()
     private let subtitles = SubtitleService()
     private let imdbWatchlistService = IMDbWatchlistService()
     private var putIOClient: PutIOClient
@@ -144,11 +146,21 @@ final class CargoCoordinator {
             self.chillClient = UnconfiguredChillClient()
         }
         self.state = store.snapshot()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(remoteClientDidChange),
+            name: CargoRemoteClientSession.didChange,
+            object: remoteClientSession
+        )
         if self.state.settings.stagingDirectoryName == ".cargo-incoming" {
             self.state.settings.stagingDirectoryName = "_Inbox"
             try? store.replace(with: self.state)
         }
         requeueInterruptedJobs()
+    }
+
+    @objc private func remoteClientDidChange() {
+        scheduleChangeNotification()
     }
 
     /// A download in flight when the app quit is gone; the job record isn't.
@@ -177,6 +189,87 @@ final class CargoCoordinator {
 
     var isChillConnected: Bool {
         chillStatus.hasPrefix("Connected as ")
+    }
+
+    var isRemoteClientMode: Bool {
+        remoteClientSession.isConnected && remoteClientSession.snapshot != nil
+    }
+
+    var dashboardState: CargoState {
+        guard let snapshot = remoteClientSession.snapshot else { return state }
+        return snapshot.dashboardState(preserving: state)
+    }
+
+    var dashboardIsConnected: Bool {
+        remoteClientSession.snapshot?.putIO.connected ?? isConnected
+    }
+
+    var dashboardPutIOStatus: String {
+        remoteClientSession.snapshot?.putIO.status ?? putIOStatus
+    }
+
+    var dashboardIsChillConnected: Bool {
+        remoteClientSession.snapshot?.chill.connected ?? isChillConnected
+    }
+
+    var dashboardChillStatus: String {
+        remoteClientSession.snapshot?.chill.status ?? chillStatus
+    }
+
+    var dashboardChillSearchQuery: String {
+        remoteClientSession.snapshot?.chillSearch.query ?? chillSearchQuery
+    }
+
+    var dashboardChillSearchResults: [ChillSearchResult] {
+        remoteClientSession.snapshot?.chillSearch.results.map(ChillSearchResult.init) ?? chillSearchResults
+    }
+
+    var dashboardChillSearchStatus: String {
+        remoteClientSession.snapshot?.chillSearch.status ?? chillSearchStatus
+    }
+
+    var dashboardChillCatalogMovies: [ChillMovie] {
+        remoteClientSession.snapshot?.chillCatalog.movies.map(ChillMovie.init) ?? chillCatalogMovies
+    }
+
+    var dashboardChillCatalogShows: [ChillTVShow] {
+        remoteClientSession.snapshot?.chillCatalog.series.map(ChillTVShow.init) ?? chillCatalogShows
+    }
+
+    var dashboardChillCatalogStatus: String {
+        remoteClientSession.snapshot?.chillCatalog.status ?? chillCatalogStatus
+    }
+
+    var dashboardWatchlistStatus: String {
+        remoteClientSession.snapshot?.watchlistStatus ?? imdbWatchlistStatus
+    }
+
+    /// Executes a command on the resident when this installation is acting as
+    /// a client. Provider credentials and local filesystem paths stay resident-side.
+    func executeRemoteCommand(_ command: CargoRemoteCommand) async throws {
+        guard isRemoteClientMode else { return }
+        _ = try await remoteClientSession.execute(command)
+    }
+
+    private func executeRemoteIfNeeded(_ command: CargoRemoteCommand) async throws -> Bool {
+        guard isRemoteClientMode else { return false }
+        _ = try await remoteClientSession.execute(command)
+        return true
+    }
+
+    var remoteAPITokenExists: Bool {
+        guard let token = keychain.readRemoteAPIToken() else { return false }
+        return !token.isEmpty
+    }
+
+    func ensureRemoteAPIToken() throws -> String {
+        try keychain.ensureRemoteAPIToken()
+    }
+
+    func rotateRemoteAPIToken() throws -> String {
+        let token = try keychain.rotateRemoteAPIToken()
+        scheduleChangeNotification()
+        return token
     }
 
     func saveChillToken(_ token: String) throws {
@@ -219,6 +312,10 @@ final class CargoCoordinator {
 
     func searchChill(query: String) async {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isRemoteClientMode {
+            _ = try? await remoteClientSession.execute(.searchChill(query: trimmedQuery))
+            return
+        }
         chillSearchQuery = trimmedQuery
         guard !trimmedQuery.isEmpty else {
             chillSearchResults = []
@@ -249,6 +346,10 @@ final class CargoCoordinator {
     }
 
     func refreshChillCatalog() async {
+        if isRemoteClientMode {
+            _ = try? await remoteClientSession.execute(.refreshChillCatalog)
+            return
+        }
         guard isChillConnected else {
             chillCatalogMovies = []
             chillCatalogShows = []
@@ -348,10 +449,12 @@ final class CargoCoordinator {
     }
 
     func sendChillResult(_ result: ChillSearchResult) async throws {
+        if try await executeRemoteIfNeeded(.sendChillResult(id: result.id)) { return }
         try await sendChillTransfer(url: result.link, title: result.releaseTitle)
     }
 
     func sendChillMovie(_ movie: ChillMovie) async throws {
+        if try await executeRemoteIfNeeded(.sendChillMovie(id: movie.id)) { return }
         try await sendChillTransfer(url: movie.link, title: movie.displayTitle)
     }
 
@@ -476,6 +579,10 @@ final class CargoCoordinator {
     }
 
     func refreshIMDbWatchlist(force: Bool = true) async -> [String] {
+        if isRemoteClientMode {
+            _ = try? await remoteClientSession.execute(.refreshWatchlist)
+            return []
+        }
         guard !state.settings.imdbWatchlistURL.isEmpty else {
             imdbWatchlistStatus = "No Watchlist URL"
             return []
@@ -725,6 +832,7 @@ final class CargoCoordinator {
     }
 
     func requestExtraction(remoteFileID: Int) async throws {
+        if try await executeRemoteIfNeeded(.requestExtraction(remoteFileID: remoteFileID)) { return }
         guard let archive = state.remoteArchiveFiles.first(where: { $0.id == remoteFileID }) else {
             throw SettingsError.remoteFileMissing
         }
@@ -739,11 +847,18 @@ final class CargoCoordinator {
     // MARK: - Library
 
     var hasTMDBKey: Bool { !(keychain.readTMDBKey() ?? "").isEmpty }
+    var hasOMDBKey: Bool { !(keychain.readOMDBKey() ?? "").isEmpty }
     private var discoverMetadata: [String: TMDBMetadata] = [:]
+    private let discoverRatingsCache = OMDBRatingsCache()
 
     func saveTMDBKey(_ key: String) throws {
         try keychain.saveTMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
         discoverMetadata.removeAll()
+        scheduleChangeNotification()
+    }
+
+    func saveOMDBKey(_ key: String) throws {
+        try keychain.saveOMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
         scheduleChangeNotification()
     }
 
@@ -770,6 +885,16 @@ final class CargoCoordinator {
         }
         discoverMetadata[cacheKey] = metadata
         return metadata
+    }
+
+    func fetchDiscoverRatings(imdbID: String) async throws -> OMDBRatings {
+        guard let key = keychain.readOMDBKey(), !key.isEmpty else {
+            throw OMDBClient.ClientError.missingKey
+        }
+        if let cached = discoverRatingsCache.ratings(for: imdbID) { return cached }
+        let ratings = try await OMDBClient(apiKey: key).ratings(imdbID: imdbID)
+        discoverRatingsCache.store(ratings, for: imdbID)
+        return ratings
     }
 
 
@@ -907,6 +1032,10 @@ final class CargoCoordinator {
     // MARK: - Clearing
 
     func clearHistory() {
+        if isRemoteClientMode {
+            Task { try? await remoteClientSession.execute(.clearHistory) }
+            return
+        }
         state.history.removeAll()
         state.lastUpdated = Date()
         try? persist()
@@ -925,6 +1054,10 @@ final class CargoCoordinator {
     }
 
     func clearFailedJobs() {
+        if isRemoteClientMode {
+            Task { try? await remoteClientSession.execute(.clearFailedJobs) }
+            return
+        }
         state.localJobs.removeAll { $0.status == .failed }
         try? persist()
     }
@@ -945,6 +1078,15 @@ final class CargoCoordinator {
     }
 
     func runBackgroundCycle() async -> CargoBackgroundCycleSummary {
+        if isRemoteClientMode {
+            var summary = CargoBackgroundCycleSummary()
+            do {
+                _ = try await remoteClientSession.execute(.refresh)
+            } catch {
+                summary.failures = [error.localizedDescription]
+            }
+            return summary
+        }
         var summary = CargoBackgroundCycleSummary()
         await refreshFromPutIO(force: false)
         await reconcileArchives(summary: &summary)
@@ -1106,6 +1248,7 @@ final class CargoCoordinator {
     // MARK: - Transfers
 
     func addTransfer(url: String) async throws {
+        if try await executeRemoteIfNeeded(.addTransfer(url: url)) { return }
         let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw SettingsError.invalidTransferURL }
         let transfer = try await putIOClient.addTransfer(url: trimmed)
@@ -1117,6 +1260,7 @@ final class CargoCoordinator {
     }
 
     func cancelTransfer(id: Int) async throws {
+        if try await executeRemoteIfNeeded(.cancelTransfer(id: id)) { return }
         let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
         try await putIOClient.cancelTransfers(ids: [id])
         state.transfers.removeAll { $0.id == id }
@@ -1125,6 +1269,7 @@ final class CargoCoordinator {
     }
 
     func retryTransfer(id: Int) async throws {
+        if try await executeRemoteIfNeeded(.retryTransfer(id: id)) { return }
         let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
         try await putIOClient.retryTransfer(id: id)
         recordHistory(kind: .info, title: "Retried transfer", detail: name)
@@ -1132,6 +1277,7 @@ final class CargoCoordinator {
     }
 
     func cleanFinishedTransfers() async throws {
+        if try await executeRemoteIfNeeded(.cleanFinishedTransfers) { return }
         try await putIOClient.cleanFinishedTransfers()
         state.transfers.removeAll { $0.status == .completed || $0.status == .seeding }
         try persist()
@@ -1356,6 +1502,14 @@ final class CargoCoordinator {
     /// after a verified local copy skips the trash — otherwise the quota is
     /// only freed when someone remembers to empty it.
     func deleteRemoteFile(remoteFileID: Int, reason: String? = nil, skipTrash: Bool = false) async throws -> RemoteFile {
+        if isRemoteClientMode {
+            let remoteState = dashboardState
+            guard let file = remoteState.remoteFiles.first(where: { $0.id == remoteFileID }) else {
+                throw SettingsError.remoteFileMissing
+            }
+            _ = try await remoteClientSession.execute(.deleteRemoteFile(remoteFileID: remoteFileID))
+            return file
+        }
         guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
             ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
             throw SettingsError.remoteFileMissing

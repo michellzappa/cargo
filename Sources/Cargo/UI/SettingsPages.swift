@@ -10,6 +10,7 @@ extension SettingsWindowController {
             SettingsPage("Chill", symbol: "sparkles", controller: ChillPage(coordinator: coordinator)),
             SettingsPage("Library", symbol: "externaldrive", controller: LibraryPage(coordinator: coordinator)),
             SettingsPage("Automation", symbol: "gearshape.2", controller: AutomationPage(coordinator: coordinator)),
+            SettingsPage("Remote Access", symbol: "network", controller: RemoteAccessPage(coordinator: coordinator)),
             SettingsPage("General", symbol: "gearshape", controller: GeneralPage(
                 launchAtLogin: (
                     get: { coordinator.state.settings.launchAtLoginEnabled },
@@ -24,6 +25,232 @@ extension SettingsWindowController {
             ))
         ])
     }
+}
+
+// MARK: - Remote Access
+
+final class RemoteAccessPage: CargoPage {
+    private let scopePopup = SettingsForm.popup()
+    private let endpointLabel = SettingsForm.caption("")
+    private let tokenLabel = SettingsForm.caption("")
+    private let serverURLField = SettingsForm.textField(
+        placeholder: "http://192.168.1.20:39817",
+        width: 300
+    )
+    private let clientNameField = SettingsForm.textField(
+        placeholder: "This device",
+        width: 180
+    )
+    private let remoteTokenField: NSSecureTextField = {
+        let field = NSSecureTextField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "Paste the resident token"
+        field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        return field
+    }()
+    private let clientStatusLabel = SettingsForm.caption("")
+    private let clientsLabel = SettingsForm.caption("")
+    private let tailscalePopup = SettingsForm.popup()
+    private lazy var copyTokenButton = SettingsForm.button("Copy token", target: self, action: #selector(copyToken))
+    private lazy var rotateTokenButton = SettingsForm.button("Rotate…", target: self, action: #selector(rotateToken))
+    private lazy var connectClientButton = SettingsForm.button("Connect", target: self, action: #selector(connectClient))
+    private lazy var disconnectClientButton = SettingsForm.button("Disconnect", target: self, action: #selector(disconnectClient))
+    private lazy var findTailscaleButton = SettingsForm.button("Find servers", target: self, action: #selector(findTailscaleServers))
+    private var discoveredTailscaleServers: [CargoTailscaleServer] = []
+
+    override func build() {
+        section("Resident API")
+        for scope in CargoRemoteNetworkScope.allCases {
+            scopePopup.addItem(withTitle: scope.displayName)
+            scopePopup.lastItem?.representedObject = scope.rawValue
+        }
+        scopePopup.target = self
+        scopePopup.action = #selector(scopeChanged)
+        row("Network", scopePopup)
+        row("Endpoint", endpointLabel)
+        row("Token", [tokenLabel, copyTokenButton, rotateTokenButton])
+        note("Loopback is the safe default. Local network mode listens on all local IPv4 interfaces; keep it behind your Mac firewall and rotate the token if another device has seen it.")
+
+        section("Connect to another Cargo")
+        tailscalePopup.addItem(withTitle: "Tailscale servers…")
+        tailscalePopup.target = self
+        tailscalePopup.action = #selector(tailscaleServerSelected)
+        row("Auto-find", [tailscalePopup, findTailscaleButton])
+        row("Resident address", serverURLField)
+        row("Client name", clientNameField)
+        row("Token", [remoteTokenField, connectClientButton, disconnectClientButton])
+        row("Status", clientStatusLabel)
+        row("Clients", clientsLabel)
+        note("This is the same Cargo app in client mode. The resident remains the source of truth and holds Put.io, Chill, metadata, subtitle, and library credentials. This device only needs the resident token and network access; use one resident and as many trusted client devices as needed.")
+        row(nil, statusLabel)
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(remoteSessionDidChange(_:)),
+            name: CargoRemoteClientSession.didChange,
+            object: coordinator.remoteClientSession
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(remotePresenceDidChange(_:)),
+            name: CargoRemotePresenceRegistry.didChange,
+            object: coordinator.remotePresenceRegistry
+        )
+    }
+
+    override func refresh() {
+        let settings = coordinator.state.settings
+        if let index = scopePopup.itemArray.firstIndex(where: {
+            ($0.representedObject as? String) == settings.remoteNetworkScope.rawValue
+        }) {
+            scopePopup.selectItem(at: index)
+        }
+        endpointLabel.stringValue = settings.remoteNetworkScope == .localhost
+            ? "http://127.0.0.1:\(CargoHTTPServer.Configuration.defaultPort)"
+            : "http://<this Mac's local address>:\(CargoHTTPServer.Configuration.defaultPort)"
+        tokenLabel.stringValue = coordinator.remoteAPITokenExists ? "Saved in Keychain" : "Not created yet"
+        if !isEditing(serverURLField) {
+            serverURLField.stringValue = settings.remoteServerURL
+        }
+        if !isEditing(clientNameField), clientNameField.stringValue.isEmpty {
+            clientNameField.stringValue = coordinator.remoteClientSession.defaultClientName
+        }
+        if !isEditing(remoteTokenField) {
+            remoteTokenField.stringValue = coordinator.remoteClientSession.isConnected || coordinator.remoteClientSession.status != "Not connected"
+                ? "••••••••••••••••"
+                : ""
+        }
+        clientStatusLabel.stringValue = coordinator.remoteClientSession.status
+        disconnectClientButton.isEnabled = coordinator.remoteClientSession.isConnected
+
+        let localPresence = coordinator.remotePresenceRegistry.snapshot()
+        if let remotePresence = coordinator.remoteClientSession.presence {
+            let names = remotePresence.clients.map(\.name).joined(separator: ", ")
+            clientsLabel.stringValue = names.isEmpty
+                ? "Connected to \(remotePresence.residentName); no clients listed"
+                : "\(remotePresence.residentName): \(names)"
+        } else if localPresence.clients.isEmpty {
+            clientsLabel.stringValue = "No remote clients connected"
+        } else {
+            clientsLabel.stringValue = localPresence.clients.map(\.name).joined(separator: ", ")
+        }
+    }
+
+    @objc private func scopeChanged() {
+        guard let raw = scopePopup.selectedItem?.representedObject as? String,
+              let scope = CargoRemoteNetworkScope(rawValue: raw) else { return }
+        save { $0.remoteNetworkScope = scope }
+    }
+
+    @objc private func copyToken() {
+        do {
+            let token = try coordinator.ensureRemoteAPIToken()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(token, forType: .string)
+            statusLabel.stringValue = "Token copied to the clipboard"
+            refresh()
+        } catch {
+            statusLabel.stringValue = error.localizedDescription
+        }
+    }
+
+    @objc private func rotateToken() {
+        let alert = NSAlert()
+        alert.messageText = "Rotate remote-access token?"
+        alert.informativeText = "Any remote client using the current token will stop working. Cargo will generate a new token and copy it to the clipboard."
+        alert.addButton(withTitle: "Rotate and Copy")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        do {
+            let token = try coordinator.rotateRemoteAPIToken()
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(token, forType: .string)
+            statusLabel.stringValue = "New token copied to the clipboard"
+            refresh()
+        } catch {
+            statusLabel.stringValue = error.localizedDescription
+        }
+    }
+
+    @objc private func connectClient() {
+        let address = serverURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else {
+            statusLabel.stringValue = "Enter the resident Cargo address"
+            return
+        }
+
+        do {
+            try coordinator.updateSettings {
+                $0.remoteClientEnabled = true
+                $0.remoteServerURL = address
+            }
+        } catch {
+            statusLabel.stringValue = error.localizedDescription
+            return
+        }
+
+        let token = remoteTokenField.stringValue.hasPrefix("••") ? "" : remoteTokenField.stringValue
+        let name = clientNameField.stringValue
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await coordinator.remoteClientSession.connect(
+                baseURLString: address,
+                token: token,
+                clientName: name
+            )
+            refresh()
+        }
+    }
+
+    @objc private func disconnectClient() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await coordinator.remoteClientSession.disconnect()
+            try? coordinator.updateSettings { $0.remoteClientEnabled = false }
+            refresh()
+        }
+    }
+
+    @objc private func findTailscaleServers() {
+        findTailscaleButton.isEnabled = false
+        statusLabel.stringValue = "Looking for Cargo servers on Tailscale…"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { findTailscaleButton.isEnabled = true }
+            do {
+                let servers = try await CargoTailscaleDiscovery().findServers()
+                discoveredTailscaleServers = servers
+                tailscalePopup.removeAllItems()
+                if servers.isEmpty {
+                    tailscalePopup.addItem(withTitle: "No Cargo servers found")
+                    statusLabel.stringValue = "No reachable Cargo servers found on Tailscale"
+                } else {
+                    for server in servers {
+                        tailscalePopup.addItem(withTitle: server.displayName)
+                        tailscalePopup.lastItem?.representedObject = server.address
+                    }
+                    tailscalePopup.selectItem(at: 0)
+                    serverURLField.stringValue = servers[0].address
+                    statusLabel.stringValue = "Found \(servers.count) Cargo server\(servers.count == 1 ? "" : "s")"
+                }
+            } catch {
+                tailscalePopup.removeAllItems()
+                tailscalePopup.addItem(withTitle: "Tailscale unavailable")
+                statusLabel.stringValue = error.localizedDescription
+            }
+        }
+    }
+
+    @objc private func tailscaleServerSelected() {
+        guard let address = tailscalePopup.selectedItem?.representedObject as? String else { return }
+        serverURLField.stringValue = address
+    }
+
+    @objc private func remoteSessionDidChange(_ notification: Notification) { refresh() }
+    @objc private func remotePresenceDidChange(_ notification: Notification) { refresh() }
 }
 
 // MARK: - Chill
@@ -261,6 +488,15 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         return field
     }()
     private let tmdbStatusLabel = SettingsForm.caption("")
+    private let omdbKeyField: NSSecureTextField = {
+        let field = NSSecureTextField()
+        field.controlSize = .small
+        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        field.placeholderString = "OMDb API key (optional)"
+        field.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        return field
+    }()
+    private let omdbStatusLabel = SettingsForm.caption("")
     private let languagePopup = SettingsForm.popup()
     private let osUsernameField = SettingsForm.textField(placeholder: "username", width: 180)
     private let osAPIKeyField = SettingsForm.textField(placeholder: "API key", width: 300)
@@ -306,6 +542,13 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         row(nil, [tmdbStatusLabel, SettingsForm.button("Retry Misses", target: self, action: #selector(retryMisses))])
         note("Posters, years and episode counts for the Library and Watchlist. Paste the v3 API key (32 hex characters), not the read access token. Free for personal use; the key lives in Keychain.")
 
+        section("Additional ratings")
+        omdbKeyField.delegate = self
+        let getOMDBKey = SettingsForm.button("Get a key…", target: self, action: #selector(openOMDBSignup))
+        row("OMDb API key", [omdbKeyField, getOMDBKey])
+        row(nil, omdbStatusLabel)
+        note("Optional. OMDb supplies IMDb, Rotten Tomatoes and Metacritic scores when a title has an IMDb id. The key is stored in Keychain.")
+
         section("Subtitles")
         for language in SubtitleLanguage.common {
             languagePopup.addItem(withTitle: language.name)
@@ -342,6 +585,10 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         NSWorkspace.shared.open(URL(string: "https://www.themoviedb.org/settings/api")!)
     }
 
+    @objc private func openOMDBSignup() {
+        NSWorkspace.shared.open(URL(string: "https://www.omdbapi.com/apikey.aspx")!)
+    }
+
     override func refresh() {
         let settings = coordinator.state.settings
         libraryPath.url = settings.libraryRootPath.map { URL(fileURLWithPath: $0) }
@@ -359,6 +606,9 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
         if misses > 0 { status += " · \(misses) not found" }
         if let error = coordinator.tmdbStatus { status += " · \(error)" }
         tmdbStatusLabel.stringValue = status
+        let hasOMDBKey = coordinator.hasOMDBKey
+        if !isEditing(omdbKeyField) { omdbKeyField.stringValue = hasOMDBKey ? "••••••••••••••••" : "" }
+        omdbStatusLabel.stringValue = hasOMDBKey ? "Key saved" : "No key · optional"
         if let index = languagePopup.itemArray.firstIndex(where: { ($0.representedObject as? String) == settings.subtitleLanguage }) {
             languagePopup.selectItem(at: index)
         }
@@ -433,6 +683,15 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
                 try coordinator.saveTMDBKey(value)
                 statusLabel.stringValue = "Saved \(Formatters.time.string(from: Date()))"
                 Task { await coordinator.enrichMetadata() }
+            } catch {
+                statusLabel.stringValue = error.localizedDescription
+            }
+        } else if field === omdbKeyField {
+            let value = omdbKeyField.stringValue
+            guard !value.hasPrefix("••") else { return }
+            do {
+                try coordinator.saveOMDBKey(value)
+                statusLabel.stringValue = "Saved \(Formatters.time.string(from: Date()))"
             } catch {
                 statusLabel.stringValue = error.localizedDescription
             }

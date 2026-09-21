@@ -10,7 +10,9 @@ final class CargoHTTPServer: @unchecked Sendable {
         let host: String
         let port: Int
 
-        static let localhost = Self(host: "127.0.0.1", port: 39817)
+        static let defaultPort = 39817
+        static let localhost = Self(host: "127.0.0.1", port: defaultPort)
+        static let localNetwork = Self(host: "0.0.0.0", port: defaultPort)
     }
 
     typealias Responder = @Sendable (CargoAPIRequest) async -> CargoAPIResponse
@@ -185,6 +187,7 @@ private final class CargoHTTPHandler: ChannelInboundHandler, @unchecked Sendable
         case 401: .unauthorized
         case 404: .notFound
         case 405: .methodNotAllowed
+        case 409: .conflict
         case 413: .payloadTooLarge
         default: .internalServerError
         }

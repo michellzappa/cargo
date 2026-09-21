@@ -12,6 +12,9 @@ struct TMDBMetadata: Codable, Sendable, Equatable {
     var year: Int?
     var posterPath: String?
     var overview: String?
+    var voteAverage: Double?
+    var voteCount: Int?
+    var imdbID: String?
     /// Season number → episode count, for shows.
     var episodeCounts: [Int: Int]
     var fetchedAt: Date
@@ -92,6 +95,7 @@ struct TMDBClient: Sendable {
                 counts[season.seasonNumber] = season.episodeCount
             }
         }
+        let externalIDs: ExternalIDs? = try? await get("\(type.rawValue)/\(result.id)/external_ids", [:])
         let date = result.releaseDate ?? result.firstAirDate
         return TMDBMetadata(
             tmdbID: result.id,
@@ -100,6 +104,9 @@ struct TMDBClient: Sendable {
             year: date.flatMap { Int($0.prefix(4)) },
             posterPath: result.posterPath,
             overview: result.overview,
+            voteAverage: result.voteAverage,
+            voteCount: result.voteCount,
+            imdbID: externalIDs?.imdbID,
             episodeCounts: counts,
             fetchedAt: Date()
         )
@@ -134,6 +141,8 @@ struct TMDBClient: Sendable {
         let originalName: String?
         let posterPath: String?
         let overview: String?
+        let voteAverage: Double?
+        let voteCount: Int?
         let releaseDate: String?
         let firstAirDate: String?
         enum CodingKeys: String, CodingKey {
@@ -143,7 +152,13 @@ struct TMDBClient: Sendable {
             case posterPath = "poster_path"
             case releaseDate = "release_date"
             case firstAirDate = "first_air_date"
+            case voteAverage = "vote_average"
+            case voteCount = "vote_count"
         }
+    }
+    private struct ExternalIDs: Decodable {
+        let imdbID: String?
+        enum CodingKeys: String, CodingKey { case imdbID = "imdb_id" }
     }
     private struct ShowDetails: Decodable {
         let seasons: [Season]
@@ -171,6 +186,10 @@ final class PosterCache {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }()
+
+    func cachedImage(for url: URL) -> NSImage? {
+        memory[url]
+    }
 
     func image(for url: URL) async -> NSImage? {
         if let cached = memory[url] { return cached }

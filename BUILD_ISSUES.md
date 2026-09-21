@@ -34,6 +34,27 @@ Deleting from Put.io is irreversible from Cargo's perspective. It should be disa
 
 The app should run in the user's GUI session rather than relying on a detached shell job. Launch-at-login, sleep/wake, and removable-volume behavior need explicit testing on a real Mac.
 
+## Remote control
+
+The resident API is loopback-only by default. Settings can explicitly widen it
+to the local network, where the Mac firewall and the Keychain-backed bearer
+token remain part of the security boundary. The API has a command route for the
+existing transport-neutral command model and a revisioned event feed.
+
+The client should be another instance of the same Cargo app, not a separate
+product: one installation owns the resident state, while any number of trusted
+installations can connect as remote clients. Pairing should register each
+client with the resident, show connected clients on the resident, show the
+connected resident on each client, and support revoke/forget. Manual URL/token
+connection, Keychain storage, presence registration, heartbeat, and status
+display in Remote Access settings are now in place, along with Tailscale peer
+auto-find, the same-app remote dashboard, and supported resident-side commands.
+The client only needs the resident URL and bearer token; provider credentials
+and local filesystem paths remain resident-side. Streaming delivery,
+revoke/forget controls, and real-device network testing are still pending.
+Network-scope changes and token rotation also need real-device testing before
+treating remote access as production-ready.
+
 ## EasySubs contract
 
 Settled: EasySubs is `michellzappa/easysubs`, and its engine is the `EasySubsKit` Swift package Cargo depends on as a sibling (`../easysubs`). Cargo fetches subtitles after organizing — Put.io's own first, OpenSubtitles second. Credentials live in Settings → Library (password in Keychain).

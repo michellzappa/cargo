@@ -6,8 +6,11 @@ final class KeychainStore {
     private let account = "putio-access-token"
     private let chillAccount = "chill-user-token"
     private let tmdbAccount = "tmdb-api-key"
+    private let omdbAccount = "omdb-api-key"
     private let openSubtitlesAccount = "opensubtitles-password"
     private let remoteAPIAccount = "remote-api-token"
+    private let remoteClientTokenAccount = "remote-client-token"
+    private let remoteClientIDAccount = "remote-client-id"
 
     enum KeychainError: LocalizedError {
         case saveFailure(OSStatus)
@@ -41,12 +44,38 @@ final class KeychainStore {
         if key.isEmpty { try delete(account: tmdbAccount) } else { try save(key, account: tmdbAccount) }
     }
 
+    func readOMDBKey() -> String? { read(account: omdbAccount) }
+    func saveOMDBKey(_ key: String) throws {
+        if key.isEmpty { try delete(account: omdbAccount) } else { try save(key, account: omdbAccount) }
+    }
+
+
     func readRemoteAPIToken() -> String? { read(account: remoteAPIAccount) }
+
+    func readRemoteClientToken() -> String? { read(account: remoteClientTokenAccount) }
+    func saveRemoteClientToken(_ token: String) throws { try save(token, account: remoteClientTokenAccount) }
+    func deleteRemoteClientToken() throws { try delete(account: remoteClientTokenAccount) }
+
+    func ensureRemoteClientID() throws -> UUID {
+        if let value = read(account: remoteClientIDAccount), let id = UUID(uuidString: value) {
+            return id
+        }
+        let id = UUID()
+        try save(id.uuidString.lowercased(), account: remoteClientIDAccount)
+        return id
+    }
 
     func ensureRemoteAPIToken() throws -> String {
         if let token = readRemoteAPIToken(), !token.isEmpty {
             return token
         }
+        return try rotateRemoteAPIToken()
+    }
+
+    /// Replaces the resident API credential. The new value is returned so a
+    /// deliberate user action can copy it to a remote client without ever
+    /// persisting it in Cargo's JSON state or logging it.
+    func rotateRemoteAPIToken() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         let token = Data(bytes).base64EncodedString()

@@ -22,6 +22,14 @@ xcodebuild -project Cargo.xcodeproj -scheme Cargo -configuration "$config" \
   CODE_SIGNING_ALLOWED=NO -quiet build
 app="build/DerivedData/Build/Products/$config/Cargo.app"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" "$app/Contents/Info.plist"
+# Xcode's Debug product is an executable shim that loads Cargo.debug.dylib at
+# launch. Sign nested code first, otherwise the outer app can carry a stable
+# Team ID while dyld rejects the debug dylib's linker/adhoc signature.
+setopt null_glob
+for nested in "$app/Contents/MacOS"/*.dylib "$app/Contents/Frameworks"/*.dylib; do
+  [[ -e "$nested" ]] || continue
+  codesign --force --sign "Apple Development" --options runtime "$nested"
+done
 codesign --force --sign "Apple Development" --entitlements Resources/Cargo.entitlements --options runtime "$app"
 
 target=/Applications/Cargo.app

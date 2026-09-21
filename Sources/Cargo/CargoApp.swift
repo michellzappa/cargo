@@ -15,7 +15,10 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var mainWindowController = MainWindowController(coordinator: coordinator)
     private lazy var settingsWindowController = SettingsWindowController.cargo(coordinator: coordinator)
     private lazy var remoteAPIController = CargoRemoteController(coordinator: coordinator)
+    private let remoteAPIEventFeed = CargoRemoteEventFeed()
     private var remoteAPIServer: CargoHTTPServer?
+    private var remoteAPIToken: String?
+    private var remoteAPIScope: CargoRemoteNetworkScope?
 
     static func main() {
         let application = NSApplication.shared
@@ -43,6 +46,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         startRemoteAPI()
+        startRemoteClientIfConfigured()
         if !coordinator.isChillConnected, coordinator.chillStatus.hasPrefix("Token saved") {
             Task { await coordinator.verifyChillConnection() }
         }
@@ -88,6 +92,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         refreshTask?.cancel()
         remoteAPIServer?.stop()
+        Task { await coordinator.remoteClientSession.disconnect() }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -133,16 +138,53 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Background cycle
 
     private func startRemoteAPI() {
+        remoteAPIServer?.stop()
+        remoteAPIServer = nil
         do {
             let token = try keychainStore.ensureRemoteAPIToken()
-            let router = CargoRemoteAPIRouter(controller: remoteAPIController, token: token)
-            let server = CargoHTTPServer { request in
+            let scope = coordinator.state.settings.remoteNetworkScope
+            let router = CargoRemoteAPIRouter(
+                controller: remoteAPIController,
+                token: token,
+                eventFeed: remoteAPIEventFeed,
+                presenceRegistry: coordinator.remotePresenceRegistry
+            )
+            let configuration = CargoHTTPServer.Configuration(
+                host: scope.bindHost,
+                port: CargoHTTPServer.Configuration.defaultPort
+            )
+            let server = CargoHTTPServer(configuration: configuration) { request in
                 await router.handle(request)
             }
             try server.start()
             remoteAPIServer = server
+            remoteAPIToken = token
+            remoteAPIScope = scope
         } catch {
+            remoteAPIToken = nil
+            remoteAPIScope = nil
             NSLog("Cargo remote API could not start: %@", error.localizedDescription)
+        }
+    }
+
+    private func startRemoteClientIfConfigured() {
+        let settings = coordinator.state.settings
+        guard settings.remoteClientEnabled, !settings.remoteServerURL.isEmpty else { return }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await coordinator.remoteClientSession.connect(
+                baseURLString: settings.remoteServerURL,
+                token: keychainStore.readRemoteClientToken() ?? ""
+            )
+        }
+    }
+
+    private func restartRemoteAPIIfNeeded() {
+        let scope = coordinator.state.settings.remoteNetworkScope
+        let token = keychainStore.readRemoteAPIToken()
+        guard remoteAPIScope == scope, remoteAPIToken != nil, remoteAPIToken == token else {
+            startRemoteAPI()
+            return
         }
     }
 
@@ -160,6 +202,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func coordinatorDidChange() {
+        remoteAPIEventFeed.publish()
+        restartRemoteAPIIfNeeded()
         updateStatusMenu()
     }
 
@@ -198,6 +242,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Search Cargo…", action: #selector(MainWindowController.showSearch(_:)), keyEquivalent: "k").target = mainWindowController
         mainMenu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = editMenu
 
         let viewMenu = NSMenu(title: "View")
@@ -231,13 +277,15 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusMenu() {
         guard statusMenu != nil else { return }
-        let state = coordinator.state
+        let state = coordinator.dashboardState
         var parts: [String] = []
-        parts.append(coordinator.isConnected
-            ? coordinator.putIOStatus.replacingOccurrences(of: "Connected as ", with: "")
+        parts.append(coordinator.dashboardIsConnected
+            ? coordinator.dashboardPutIOStatus.replacingOccurrences(of: "Connected as ", with: "")
             : "Not connected")
         if !state.transfers.isEmpty { parts.append("\(state.transfers.count) transfers") }
-        let inboxCount = coordinator.inboxFileURLs().count
+        let inboxCount = coordinator.isRemoteClientMode
+            ? state.localJobs.filter { $0.status != .completed }.count
+            : coordinator.inboxFileURLs().count
         if inboxCount > 0 { parts.append("\(inboxCount) in Inbox") }
         statusHeaderItem.title = parts.joined(separator: " · ")
         launchAtLoginItem.state = state.settings.launchAtLoginEnabled ? .on : .off

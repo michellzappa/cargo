@@ -31,6 +31,11 @@ Put.io” action; it also shows Chill's top movies and series as browsable lists
 where selecting a title searches releases with its year. Put.io remains the file
 manager and Cargo's download source.
 
+Press ⌘K (Edit → Search Cargo…) to search the cached Library and Watchlist by
+title, year, path, or IMDb id. The same palette can hand the query to Discover;
+selecting a Library result opens its detail view and a Watchlist result opens its
+IMDb permalink.
+
 **Library** is the SSD itself, rescanned every cycle from the folder layout
 the organizer writes: Movies and TV Shows with seasons, episode counts, size
 and date added. With a TMDB API key (Settings → Library, free for personal
@@ -126,8 +131,8 @@ AppKit throughout; dependencies are the sibling packages `HouseKit` and `EasySub
 | `Services/LibraryIndex`, `TMDBClient` | Disk scan of the library layout; TMDB find/search/season counts, poster cache |
 | `Services/SubtitleService` | Put.io subtitle parking + OpenSubtitles via `EasySubsKit` (sibling package `../easysubs`) |
 | `Core/CargoStore` | One JSON state file in Application Support, durable job history |
-| `Core/CargoRemoteControl` | Remote-safe read models and transport-neutral commands for a future resident API |
-| `Services/CargoRemoteAPI`, `CargoHTTPServer` | Authenticated localhost HTTP API v1, backed by SwiftNIO |
+| `Core/CargoRemoteControl` | Remote-safe read models, transport-neutral commands, and same-app client/resident control |
+| `Services/CargoRemoteAPI`, `CargoHTTPServer` | Authenticated HTTP API v1 plus low-information discovery, backed by SwiftNIO |
 | `UI/MainWindowController`, `Pages`, `ListTableViewController` | Dashboard: sidebar + native tables |
 | `UI/SettingsPages` | The HouseKit settings window with Cargo's pages |
 | `CargoApp` | `NSStatusItem` and its menu — header, actions, then the house tail |
@@ -135,32 +140,52 @@ AppKit throughout; dependencies are the sibling packages `HouseKit` and `EasySub
 See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
 for known risks.
 
-The remote-control boundary is intentionally local-first: it exposes cached
-Put.io/Chill/library/watchlist/history state and explicit commands, while
-keeping Keychain tokens, security-scoped bookmarks, absolute local paths, and
-AppKit inside the resident Cargo process. The network listener and remote
-client are separate follow-up milestones.
+The remote-control boundary is intentionally resident-first: it exposes
+remote-safe Put.io/Chill/library/watchlist/history state and explicit commands,
+while keeping provider Keychain tokens, security-scoped bookmarks, absolute
+local paths, and AppKit actions inside the resident Cargo process. A connected
+client renders the same dashboard from the resident snapshot and sends
+supported actions back to the resident; it does not need its own Put.io, Chill,
+TMDB, OMDb, or subtitle credentials. Remote Access keeps the listener
+loopback-only by default, offers an explicit local-network scope, supports
+Tailscale peer auto-find, and can rotate the bearer token stored in Keychain.
 
 ### Local API preview
 
-Cargo 0.8.0 starts a read-only API on `127.0.0.1:39817`. It requires the
-bearer token stored in the macOS Keychain and supports state, transfers, files,
-Inbox, library, watchlist, Chill catalog, and Chill search:
+Cargo 0.8.0 starts an authenticated API on `127.0.0.1:39817` by default. It
+requires the bearer token stored in the macOS Keychain and supports state,
+transfers, files, Inbox, library, watchlist, Chill catalog, Chill search, and
+explicit remote commands:
 
 ```text
 GET  /v1/health
+GET  /v1/discovery                 (unauthenticated, low-information)
 GET  /v1/state
 GET  /v1/transfers
 GET  /v1/files
 GET  /v1/inbox
 GET  /v1/library
 GET  /v1/watchlist
+GET  /v1/events?since=12
+GET  /v1/presence
+POST /v1/presence/register
+POST /v1/presence/heartbeat
+POST /v1/presence/unregister
 GET  /v1/discover/catalog
 POST /v1/discover/search   {"query":"The Bear 2024"}
+POST /v1/commands          {"type":"refresh"}
 ```
 
-The listener is loopback-only for now. Token rotation, network scope, and
-remote commands are tracked as the next remote-control issues.
+The `/v1/commands` body is a `CargoRemoteCommand` such as `refresh`,
+`addTransfer`, `cancelTransfer`, `retryTransfer`, `cleanFinishedTransfers`,
+`requestExtraction`, `deleteRemoteFile`, `enqueueLocalSync`,
+`refreshWatchlist`, `clearFailedJobs`, or `clearHistory`. The token can be
+copied or rotated from Settings → Remote Access. The intended remote
+experience is another instance of the same Cargo app: one Cargo acts as the
+resident server and any number of trusted Cargo installations act as clients.
+The client dashboard consumes the revisioned event feed by polling. Local
+filesystem-only actions, such as Finder reveals and library rescans, remain
+resident-only.
 
 ## Limitations
 

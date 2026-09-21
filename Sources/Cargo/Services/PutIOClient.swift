@@ -483,7 +483,34 @@ struct PutIOAPIClient: PutIOClient {
 
     private static func date(from value: String?) -> Date {
         guard let value, !value.isEmpty else { return Date() }
-        return ISO8601DateFormatter().date(from: value) ?? Date()
+
+        // Put.io normally returns RFC 3339 timestamps, sometimes with fractional
+        // seconds. ISO8601DateFormatter requires the fractional-seconds option to
+        // be enabled for the latter form, so try both variants before falling back.
+        let fractionalFormatter = ISO8601DateFormatter()
+        fractionalFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractionalFormatter.date(from: value) {
+            return date
+        }
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: value) {
+            return date
+        }
+
+        // Keep compatibility with older responses that use a space instead of T.
+        let legacyFormatter = DateFormatter()
+        legacyFormatter.locale = Locale(identifier: "en_US_POSIX")
+        legacyFormatter.timeZone = TimeZone(secondsFromGMT: 0)
+        for format in ["yyyy-MM-dd HH:mm:ss.SSSXXXXX", "yyyy-MM-dd HH:mm:ssXXXXX", "yyyy-MM-dd HH:mm:ss"] {
+            legacyFormatter.dateFormat = format
+            if let date = legacyFormatter.date(from: value) {
+                return date
+            }
+        }
+
+        return Date()
     }
 
     private static func apiErrorMessage(from data: Data) -> String? {
