@@ -575,30 +575,12 @@ enum CargoTailscaleDiscoveryError: LocalizedError, Equatable {
 /// preferred, with the peer's 100.x address as a fallback.
 @MainActor
 final class CargoTailscaleDiscovery {
-    private struct Status: Decodable {
-        let selfNode: Node?
-        let peers: [String: Node]?
-
-        enum CodingKeys: String, CodingKey {
-            case selfNode = "Self"
-            case peers = "Peer"
-        }
-    }
-
-    private struct Node: Decodable {
-        let dnsName: String?
-        let hostName: String?
-        let operatingSystem: String?
+    private struct Peer: Sendable {
+        let name: String
+        let normalizedName: String
+        let platform: String
         let online: Bool?
-        let tailscaleIPs: [String]?
-
-        enum CodingKeys: String, CodingKey {
-            case dnsName = "DNSName"
-            case hostName = "HostName"
-            case operatingSystem = "OS"
-            case online = "Online"
-            case tailscaleIPs = "TailscaleIPs"
-        }
+        let addresses: [String]
     }
 
     private let session: URLSession
@@ -609,30 +591,17 @@ final class CargoTailscaleDiscovery {
 
     func findServers() async throws -> [CargoTailscaleServer] {
         let data = try await Self.runStatus()
-        let status: Status
-        do {
-            status = try JSONDecoder().decode(Status.self, from: data)
-        } catch {
-            throw CargoTailscaleDiscoveryError.invalidStatus
-        }
-
-        let selfNames = Set([
-            status.selfNode?.dnsName,
-            status.selfNode?.hostName
-        ].compactMap { $0?.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased() })
-        let candidates = (status.peers ?? [:]).compactMap { _, node -> (String, Node)? in
-            guard node.online != false else { return nil }
-            let dnsName = node.dnsName?.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            let hostName = node.hostName?.trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            guard let host = dnsName ?? hostName,
-                  !selfNames.contains(host.lowercased()) else { return nil }
-            return (host, node)
+        let parsed = try Self.parsePeers(data)
+        let candidates = parsed.peers.compactMap { peer -> (String, Peer)? in
+            guard peer.online != false,
+                  !parsed.selfNames.contains(peer.normalizedName) else { return nil }
+            return (peer.name, peer)
         }
 
         return await withTaskGroup(of: CargoTailscaleServer?.self) { group in
             for (host, node) in candidates {
                 group.addTask { [session] in
-                    let hosts = [host] + (node.tailscaleIPs ?? []).filter { $0 != host }
+                    let hosts = [host] + node.addresses.filter { $0 != host }
                     for candidate in hosts {
                         guard let url = URL(string: "http://\(candidate):\(CargoHTTPServer.Configuration.defaultPort)") else { continue }
                         guard let discovery = try? await CargoRemoteAPIClient.discover(at: url, session: session) else { continue }
@@ -640,7 +609,7 @@ final class CargoTailscaleDiscovery {
                             id: discovery.instanceID,
                             name: discovery.name,
                             address: "http://\(candidate):\(discovery.port)",
-                            platform: node.operatingSystem ?? "Tailscale peer"
+                            platform: node.platform
                         )
                     }
                     return nil
@@ -658,17 +627,61 @@ final class CargoTailscaleDiscovery {
     }
 
     nonisolated static func parseStatus(_ data: Data) throws -> [(name: String, address: String, platform: String)] {
-        let status: Status
+        try parsePeers(data).peers.compactMap { peer in
+            guard let address = peer.addresses.first else { return nil }
+            return (name: peer.name, address: address, platform: peer.platform)
+        }
+    }
+
+    private nonisolated static func parsePeers(_ data: Data) throws -> (selfNames: Set<String>, peers: [Peer]) {
+        let root: [String: Any]
         do {
-            status = try JSONDecoder().decode(Status.self, from: data)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CargoTailscaleDiscoveryError.invalidStatus
+            }
+            root = object
+        } catch let error as CargoTailscaleDiscoveryError {
+            throw error
         } catch {
             throw CargoTailscaleDiscoveryError.invalidStatus
         }
-        return (status.peers ?? [:]).compactMap { _, node in
-            guard let name = node.dnsName ?? node.hostName,
-                  let address = node.tailscaleIPs?.first else { return nil }
-            return (name: name, address: address, platform: node.operatingSystem ?? "")
+
+        func normalized(_ value: String?) -> String? {
+            guard let value else { return nil }
+            let whitespaceTrimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = whitespaceTrimmed.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            return trimmed.isEmpty ? nil : trimmed.lowercased()
         }
+
+        func name(from node: [String: Any]) -> String? {
+            guard let value = (node["DNSName"] as? String) ?? (node["HostName"] as? String) else {
+                return nil
+            }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
+        let selfNode = root["Self"] as? [String: Any]
+        let selfNames = Set([
+            normalized(selfNode?["DNSName"] as? String),
+            normalized(selfNode?["HostName"] as? String)
+        ].compactMap { $0 })
+
+        guard let rawPeers = root["Peer"] as? [String: Any] else {
+            throw CargoTailscaleDiscoveryError.invalidStatus
+        }
+        let peers = rawPeers.values.compactMap { raw -> Peer? in
+            guard let node = raw as? [String: Any], let name = name(from: node) else { return nil }
+            let addresses = (node["TailscaleIPs"] as? [Any] ?? []).compactMap { $0 as? String }
+            return Peer(
+                name: name,
+                normalizedName: normalized(name) ?? name.lowercased(),
+                platform: node["OS"] as? String ?? "Tailscale peer",
+                online: node["Online"] as? Bool,
+                addresses: addresses
+            )
+        }
+        return (selfNames: selfNames, peers: peers)
     }
 
     private static func runStatus() async throws -> Data {
@@ -686,12 +699,13 @@ final class CargoTailscaleDiscovery {
                 process.standardError = Pipe()
                 do {
                     try process.run()
+                    let data = output.fileHandleForReading.readDataToEndOfFile()
                     process.waitUntilExit()
                     guard process.terminationStatus == 0 else {
                         continuation.resume(throwing: CargoTailscaleDiscoveryError.unavailable)
                         return
                     }
-                    continuation.resume(returning: output.fileHandleForReading.readDataToEndOfFile())
+                    continuation.resume(returning: data)
                 } catch {
                     continuation.resume(throwing: CargoTailscaleDiscoveryError.commandFailed)
                 }
