@@ -411,6 +411,16 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(peers.first?.platform, "macOS")
     }
 
+    func testTailscaleStatusParserAcceptsEmptyAndArrayPeerLists() throws {
+        let emptyStatus = Data(#"{"Self":{"DNSName":"this.tailnet.ts.net."},"Peer":null}"#.utf8)
+        XCTAssertTrue(try CargoTailscaleDiscovery.parseStatus(emptyStatus).isEmpty)
+
+        let arrayStatus = Data(#"{"Self":{"DNSName":"this.tailnet.ts.net."},"Peer":[{"DNSName":"cargo.tailnet.ts.net.","TailscaleIPs":["100.64.0.2"]}]}"#.utf8)
+        let peers = try CargoTailscaleDiscovery.parseStatus(arrayStatus)
+        XCTAssertEqual(peers.first?.name, "cargo.tailnet.ts.net.")
+        XCTAssertEqual(peers.first?.address, "100.64.0.2")
+    }
+
     @MainActor
     func testRemoteAPIExecutesCommandsThroughCommandRoute() async throws {
         let directory = FileManager.default.temporaryDirectory

@@ -667,10 +667,18 @@ final class CargoTailscaleDiscovery {
             normalized(selfNode?["HostName"] as? String)
         ].compactMap { $0 })
 
-        guard let rawPeers = root["Peer"] as? [String: Any] else {
+        let rawPeerValues: [Any]
+        switch root["Peer"] {
+        case nil, is NSNull:
+            rawPeerValues = []
+        case let rawPeers as [String: Any]:
+            rawPeerValues = Array(rawPeers.values)
+        case let rawPeers as [Any]:
+            rawPeerValues = rawPeers
+        default:
             throw CargoTailscaleDiscoveryError.invalidStatus
         }
-        let peers = rawPeers.values.compactMap { raw -> Peer? in
+        let peers = rawPeerValues.compactMap { raw -> Peer? in
             guard let node = raw as? [String: Any], let name = name(from: node) else { return nil }
             let addresses = (node["TailscaleIPs"] as? [Any] ?? []).compactMap { $0 as? String }
             return Peer(
