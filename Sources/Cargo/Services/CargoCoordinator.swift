@@ -67,58 +67,65 @@ final class CargoCoordinator {
         }
     }
 
-    private let store: CargoStore
-    private let keychain = KeychainStore()
+    let store: CargoStore
+    let keychain = KeychainStore()
     let remoteClientSession = CargoRemoteClientSession()
     let remotePresenceRegistry = CargoRemotePresenceRegistry()
-    private let subtitles = SubtitleService()
-    private let imdbWatchlistService = IMDbWatchlistService()
-    private var putIOClient: PutIOClient
-    private var chillClient: ChillClient
-    private var remoteFolderStack: [(id: Int, name: String)] = []
-    private var pendingOAuthState: String?
+    let subtitles = SubtitleService()
+    let imdbWatchlistService = IMDbWatchlistService()
+    var putIOClient: PutIOClient
+    var chillClient: ChillClient
+    var remoteFolderStack: [(id: Int, name: String)] = []
+    var pendingOAuthState: String?
     /// Posted on the main queue, coalesced, whenever state or status text changes.
     static let didChange = Notification.Name("CargoCoordinator.didChange")
     static let didRequestChillSearch = Notification.Name("CargoCoordinator.didRequestChillSearch")
 
-    private(set) var state: CargoState {
+    // Setters are module-internal so the CargoCoordinator+*.swift extensions
+    // can mutate; UI code only reads these.
+    var state: CargoState {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var putIOStatus = "Not connected yet" {
+    var putIOStatus = "Not connected yet" {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillStatus = "Not connected yet" {
+    var chillStatus = "Not connected yet" {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillSearchQuery = ""
-    private(set) var chillSearchResults: [ChillSearchResult] = [] {
+    var chillSearchQuery = ""
+    var chillSearchResults: [ChillSearchResult] = [] {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillSearchStatus = "Search Chill for a release" {
+    var chillSearchStatus = "Search Chill for a release" {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillCatalogMovies: [ChillMovie] = [] {
+    var chillCatalogMovies: [ChillMovie] = [] {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillCatalogShows: [ChillTVShow] = [] {
+    var chillCatalogShows: [ChillTVShow] = [] {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var chillCatalogStatus = "Top movies and series appear here" {
+    var chillCatalogStatus = "Top movies and series appear here" {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var imdbWatchlistStatus = "Not synced yet" {
+    var imdbWatchlistStatus = "Not synced yet" {
         didSet { scheduleChangeNotification() }
     }
     private var changeNotificationScheduled = false
-    private(set) var diskUsage: PutIODiskUsage? {
+    var tmdbStatus: String? {
+        didSet { scheduleChangeNotification() }
+    }
+    var discoverMetadata: [String: TMDBMetadata] = [:]
+    let discoverRatingsCache = OMDBRatingsCache()
+    var diskUsage: PutIODiskUsage? {
         didSet { scheduleChangeNotification() }
     }
     /// What is sitting in Put.io's trash, refreshed with the account.
-    private(set) var trashSummary: PutIOTrashSummary? {
+    var trashSummary: PutIOTrashSummary? {
         didSet { scheduleChangeNotification() }
     }
-    private(set) var remoteFolderID = 0
-    private(set) var remoteFolderName = "Put.io root"
+    var remoteFolderID = 0
+    var remoteFolderName = "Put.io root"
 
     var canGoBackRemoteFolder: Bool {
         !remoteFolderStack.isEmpty
@@ -249,7 +256,7 @@ final class CargoCoordinator {
         _ = try await remoteClientSession.execute(command)
     }
 
-    private func executeRemoteIfNeeded(_ command: CargoRemoteCommand) async throws -> Bool {
+    func executeRemoteIfNeeded(_ command: CargoRemoteCommand) async throws -> Bool {
         guard isRemoteClientMode else { return false }
         _ = try await remoteClientSession.execute(command)
         return true
@@ -270,227 +277,7 @@ final class CargoCoordinator {
         return token
     }
 
-    func saveChillToken(_ token: String) throws {
-        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedToken.isEmpty else {
-            throw ChillAPIClient.ClientError.missingToken
-        }
-
-        try keychain.saveChillToken(trimmedToken)
-        chillClient = ChillAPIClient(token: trimmedToken)
-        chillStatus = "Token saved · testing…"
-    }
-
-    func verifyChillConnection() async {
-        do {
-            let profile = try await chillClient.fetchProfile()
-            let displayName = profile.username.isEmpty ? profile.userID : profile.username
-            chillStatus = "Connected as \(displayName)"
-            Task { await refreshChillCatalog() }
-        } catch {
-            if chillClient is UnconfiguredChillClient {
-                chillStatus = "Not connected yet"
-            } else {
-                chillStatus = "Chill error · \(error.localizedDescription)"
-            }
-        }
-    }
-
-    func removeChillToken() throws {
-        try keychain.deleteChillToken()
-        chillClient = UnconfiguredChillClient()
-        chillSearchQuery = ""
-        chillSearchResults = []
-        chillSearchStatus = "Search Chill for a release"
-        chillCatalogMovies = []
-        chillCatalogShows = []
-        chillCatalogStatus = "Top movies and series appear here"
-        chillStatus = "Not connected yet"
-    }
-
-    func searchChill(query: String) async {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        chillSearchQuery = trimmedQuery
-        guard !trimmedQuery.isEmpty else {
-            chillSearchResults = []
-            chillSearchStatus = "Enter a title, show, or release"
-            return
-        }
-        chillSearchStatus = "Searching Chill…"
-        do {
-            if isRemoteClientMode {
-                let remote = try await remoteClientSession.search(query: trimmedQuery)
-                chillSearchResults = remote.results.map(ChillSearchResult.init)
-                chillSearchStatus = remote.status
-            } else {
-                chillSearchResults = try await chillReleases(matching: trimmedQuery)
-                chillSearchStatus = "\(chillSearchResults.count) result\(chillSearchResults.count == 1 ? "" : "s")"
-            }
-        } catch {
-            chillSearchResults = []
-            chillSearchStatus = error.localizedDescription
-        }
-    }
-
-    /// The stateless core of a Chill search, shared by this Mac's Discover
-    /// page and by remote clients searching through the resident.
-    func chillReleases(matching query: String) async throws -> [ChillSearchResult] {
-        if !isChillConnected, chillStatus.hasPrefix("Token saved") {
-            await verifyChillConnection()
-        }
-        guard isChillConnected else {
-            throw ChillAPIClient.ClientError.requestFailed("Connect Chill in Settings → Chill")
-        }
-        return try await chillClient.search(query: query)
-            .sorted {
-                if $0.seeders != $1.seeders { return $0.seeders > $1.seeders }
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
-    }
-
-    func refreshChillCatalog() async {
-        if isRemoteClientMode {
-            _ = try? await remoteClientSession.execute(.refreshChillCatalog)
-            return
-        }
-        guard isChillConnected else {
-            chillCatalogMovies = []
-            chillCatalogShows = []
-            chillCatalogStatus = "Connect Chill in Settings → Chill"
-            return
-        }
-
-        chillCatalogStatus = "Loading top movies and series…"
-        do {
-            async let movies = fetchExpandedMovies()
-            async let shows = fetchExpandedTVShows()
-            chillCatalogMovies = try await movies
-            chillCatalogShows = try await shows
-            let movieCount = chillCatalogMovies.count
-            let showCount = chillCatalogShows.count
-            chillCatalogStatus = "\(movieCount) movies · \(showCount) series"
-        } catch {
-            chillCatalogMovies = []
-            chillCatalogShows = []
-            chillCatalogStatus = error.localizedDescription
-        }
-    }
-
-    /// Chill's aggregated movie catalog is intentionally short. Ask each
-    /// chart for its own catalog in parallel, then keep the first copy of
-    /// each title so the Discover page has a useful tail.
-    private func fetchExpandedMovies() async throws -> [ChillMovie] {
-        let client = chillClient
-        let sources = ChillMovieCatalogSource.allCases
-        let batches = await withTaskGroup(of: (Int, [ChillMovie]?).self) { group in
-            for (index, source) in sources.enumerated() {
-                group.addTask {
-                    (index, try? await client.fetchMovies(source: source))
-                }
-            }
-
-            var results = Array(repeating: [ChillMovie](), count: sources.count)
-            for await (index, movies) in group {
-                results[index] = movies ?? []
-            }
-            return results
-        }
-
-        var seen = Set<String>()
-        let expanded = batches.flatMap { $0 }.filter { movie in
-            let title = movie.displayTitle
-                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
-                .lowercased()
-                .split(whereSeparator: { $0.isWhitespace })
-                .joined(separator: " ")
-            let key = title.isEmpty ? "id:\(movie.id)" : "\(title)|\(movie.year)"
-            return seen.insert(key).inserted
-        }
-        if !expanded.isEmpty { return expanded }
-
-        // Preserve the previous aggregated behavior if the source-specific
-        // endpoint is unavailable for this account or API deployment.
-        return try await client.fetchMovies()
-    }
-
-    /// Chill's aggregated TV catalog is intentionally short. Ask each
-    /// provider for its own catalog in parallel, then keep the first copy of
-    /// each IMDb title so the provider/network filters have a useful tail.
-    private func fetchExpandedTVShows() async throws -> [ChillTVShow] {
-        let client = chillClient
-        let sources = ChillTVCatalogSource.allCases
-        let batches = await withTaskGroup(of: (Int, [ChillTVShow]?).self) { group in
-            for (index, source) in sources.enumerated() {
-                group.addTask {
-                    (index, try? await client.fetchTVShows(source: source))
-                }
-            }
-
-            var results = Array(repeating: [ChillTVShow](), count: sources.count)
-            for await (index, shows) in group {
-                results[index] = shows ?? []
-            }
-            return results
-        }
-
-        var seen = Set<String>()
-        let expanded = batches.flatMap { $0 }.filter { show in
-            seen.insert(show.id).inserted
-        }
-        if !expanded.isEmpty { return expanded }
-
-        // Preserve the previous aggregated behavior if a provider-specific
-        // endpoint is unavailable for this account or API deployment.
-        return try await client.fetchTVShows()
-    }
-
-    func requestChillSearch(query: String) {
-        chillSearchQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        chillSearchResults = []
-        chillSearchStatus = chillSearchQuery.isEmpty ? "Enter a title, show, or release" : "Ready to search"
-        NotificationCenter.default.post(name: Self.didRequestChillSearch, object: self)
-    }
-
-    func sendChillResult(_ result: ChillSearchResult) async throws {
-        if try await executeRemoteIfNeeded(.sendChillRelease(url: result.link, title: result.releaseTitle)) { return }
-        try await sendChillTransfer(url: result.link, title: result.releaseTitle)
-    }
-
-    func sendChillRelease(url: String, title: String?) async throws {
-        try await sendChillTransfer(url: url, title: title)
-    }
-
-    func sendChillMovie(_ movie: ChillMovie) async throws {
-        if try await executeRemoteIfNeeded(.sendChillMovie(id: movie.id)) { return }
-        try await sendChillTransfer(url: movie.link, title: movie.displayTitle)
-    }
-
-    func sendChillEpisode(imdbID: String, season: Int, episode: Int) async throws {
-        guard let download = try await chillClient.episodeDownload(
-            imdbID: imdbID,
-            season: season,
-            episode: episode
-        ) else {
-            throw ChillAPIClient.ClientError.requestFailed("Chill did not find a download for this episode.")
-        }
-        try await sendChillTransfer(url: download.link, title: download.title)
-    }
-
-    private func sendChillTransfer(url: String, title: String?) async throws {
-        guard isConnected else {
-            throw UnconfiguredPutIOClient.ClientError.notConfigured
-        }
-        let trimmedURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedURL.isEmpty, URL(string: trimmedURL) != nil else {
-            throw SettingsError.invalidTransferURL
-        }
-        let response = try await chillClient.addTransfer(url: trimmedURL)
-        let name = title ?? response.transfer?.name ?? trimmedURL
-        recordHistory(kind: .info, title: "Added via Chill", detail: name)
-        await refreshFromPutIO(force: false)
-    }
-
-    private func persist() throws {
+    func persist() throws {
         state.lastUpdated = Date()
         try store.replace(with: state)
         if lastPersistError != nil {
@@ -501,13 +288,13 @@ final class CargoCoordinator {
 
     /// The last error from a save that nothing was going to catch (SSD gone,
     /// disk full, permissions). Shown in the menu bar until a save succeeds.
-    private(set) var lastPersistError: String? {
+    var lastPersistError: String? {
         didSet { if lastPersistError != oldValue { scheduleChangeNotification() } }
     }
 
     /// For the many fire-and-forget saves in the workflow: a failure is logged
     /// and surfaced once instead of vanishing behind `try?`.
-    private func persistQuietly() {
+    func persistQuietly() {
         do {
             try persist()
         } catch {
@@ -520,7 +307,7 @@ final class CargoCoordinator {
         }
     }
 
-    private func scheduleChangeNotification() {
+    func scheduleChangeNotification() {
         guard !changeNotificationScheduled else { return }
         changeNotificationScheduled = true
         DispatchQueue.main.async { [weak self] in
@@ -589,75 +376,6 @@ final class CargoCoordinator {
         state.settings.moviesDirectoryName = values[1]
         state.settings.tvShowsDirectoryName = values[2]
         try persist()
-    }
-
-    func saveIMDbWatchlistURL(_ value: String) throws {
-        let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmedValue),
-              url.scheme == "https",
-              url.host?.lowercased().hasSuffix("imdb.com") == true,
-              url.path.lowercased().contains("watchlist") else {
-            throw SettingsError.invalidIMDbWatchlistURL
-        }
-
-        if state.settings.imdbWatchlistURL != url.absoluteString {
-            state.settings.imdbWatchlistURL = url.absoluteString
-            state.imdbWatchlistItems = []
-            state.imdbWatchlistLastUpdated = nil
-        }
-        state.lastUpdated = Date()
-        imdbWatchlistStatus = "Ready to sync"
-        try store.replace(with: state)
-    }
-
-    func refreshIMDbWatchlist(force: Bool = true) async -> [String] {
-        if isRemoteClientMode {
-            _ = try? await remoteClientSession.execute(.refreshWatchlist)
-            return []
-        }
-        guard !state.settings.imdbWatchlistURL.isEmpty else {
-            imdbWatchlistStatus = "No Watchlist URL"
-            return []
-        }
-
-        if !force,
-           let lastUpdated = state.imdbWatchlistLastUpdated,
-           Date().timeIntervalSince(lastUpdated) < 15 * 60 {
-            return []
-        }
-
-        do {
-            let previousIDs = Set(state.imdbWatchlistItems.map(\.id))
-            let items = try await imdbWatchlistService.fetchItems(from: state.settings.imdbWatchlistURL)
-            state.imdbWatchlistItems = items.sorted {
-                if let lhsDate = $0.addedAt, let rhsDate = $1.addedAt, lhsDate != rhsDate {
-                    return lhsDate > rhsDate
-                }
-                if ($0.addedAt != nil) != ($1.addedAt != nil) {
-                    return $0.addedAt != nil
-                }
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
-            state.imdbWatchlistLastUpdated = Date()
-            try persist()
-            imdbWatchlistStatus = "Updated \(Self.watchlistTimeFormatter.string(from: Date())) · \(items.count) titles"
-
-            let addedItems = items.filter { !previousIDs.contains($0.id) }
-            if !addedItems.isEmpty {
-                let detail = addedItems.map { item in
-                    item.year.map { "\(item.title) (\($0))" } ?? item.title
-                }.joined(separator: ", ")
-                recordHistory(
-                    kind: .info,
-                    title: "IMDb Watchlist updated",
-                    detail: "Added \(addedItems.count) title\(addedItems.count == 1 ? "" : "s"): \(detail)"
-                )
-            }
-            return addedItems.map(\.title)
-        } catch {
-            imdbWatchlistStatus = error.localizedDescription
-            return []
-        }
     }
 
     func saveWorkflowSettings(
@@ -876,191 +594,6 @@ final class CargoCoordinator {
         recordHistory(kind: .info, title: "Asked Put.io to extract", detail: "\(archive.displayPath) · manual")
     }
 
-    // MARK: - Library
-
-    var hasTMDBKey: Bool { !(keychain.readTMDBKey() ?? "").isEmpty }
-    var hasOMDBKey: Bool { !(keychain.readOMDBKey() ?? "").isEmpty }
-    private var discoverMetadata: [String: TMDBMetadata] = [:]
-    private let discoverRatingsCache = OMDBRatingsCache()
-
-    func saveTMDBKey(_ key: String) throws {
-        try keychain.saveTMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
-        discoverMetadata.removeAll()
-        scheduleChangeNotification()
-    }
-
-    func saveOMDBKey(_ key: String) throws {
-        try keychain.saveOMDBKey(key.trimmingCharacters(in: .whitespacesAndNewlines))
-        scheduleChangeNotification()
-    }
-
-    /// Looks up a Discover title on demand. Library enrichment remains persisted
-    /// in CargoState; this cache is intentionally session-only because Discover
-    /// titles are supplied by Chill and may change between catalog refreshes.
-    func fetchDiscoverMetadata(
-        title: String,
-        year: Int?,
-        type: TMDBMetadata.MediaType,
-        imdbID: String?
-    ) async throws -> TMDBMetadata {
-        guard let key = keychain.readTMDBKey(), !key.isEmpty else {
-            throw TMDBClient.ClientError.missingKey
-        }
-        let cacheKey = [type.rawValue, imdbID ?? "", title, year.map(String.init) ?? ""].joined(separator: "|")
-        if let cached = discoverMetadata[cacheKey] { return cached }
-        let client = TMDBClient(apiKey: key)
-        let metadata: TMDBMetadata
-        if let imdbID, imdbID.hasPrefix("tt") {
-            metadata = try await client.find(imdbID: imdbID)
-        } else {
-            metadata = try await client.search(title: title, year: year, type: type)
-        }
-        discoverMetadata[cacheKey] = metadata
-        return metadata
-    }
-
-    func fetchDiscoverRatings(imdbID: String) async throws -> OMDBRatings {
-        guard let key = keychain.readOMDBKey(), !key.isEmpty else {
-            throw OMDBClient.ClientError.missingKey
-        }
-        if let cached = discoverRatingsCache.ratings(for: imdbID) { return cached }
-        let ratings = try await OMDBClient(apiKey: key).ratings(imdbID: imdbID)
-        discoverRatingsCache.store(ratings, for: imdbID)
-        return ratings
-    }
-
-
-    /// Rescans the SSD. Cheap — directory listings only — so it runs every cycle.
-    func scanLibrary() {
-        guard let root = libraryRootURL() else { return }
-        let accessing = root.startAccessingSecurityScopedResource()
-        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
-        let items = LibraryIndex.scan(root: root, settings: state.settings)
-        guard items != state.libraryItems else { return }
-        state.libraryItems = items
-        persistQuietly()
-    }
-
-    /// Library item for a watchlist entry: by TMDB id when both sides have
-    /// metadata, else by title and year.
-    func libraryItem(for watchlistItem: IMDbWatchlistItem) -> LibraryItem? {
-        if let meta = state.metadata[watchlistItem.id] {
-            if let hit = state.libraryItems.first(where: { state.metadata[$0.id]?.tmdbID == meta.tmdbID }) { return hit }
-        }
-        let wanted = Self.normalizedTitle(watchlistItem.title)
-        return state.libraryItems.first {
-            Self.normalizedTitle($0.title) == wanted && (watchlistItem.year == nil || $0.year == nil || $0.year == watchlistItem.year)
-        }
-    }
-
-    static func normalizedTitle(_ value: String) -> String {
-        value.lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-    }
-
-    /// Fills in TMDB metadata for library and watchlist entries that lack it
-    /// or whose copy is a week old — a handful per cycle, to stay polite.
-    func enrichMetadata(limit: Int = 40) async {
-        guard let key = keychain.readTMDBKey(), !key.isEmpty else { return }
-        let client = TMDBClient(apiKey: key)
-        var budget = limit
-        var changed = false
-
-        func needsLookup(_ id: String) -> Bool {
-            if let existing = state.metadata[id], !existing.isStale { return false }
-            if let missed = state.metadataMisses[id], Date().timeIntervalSince(missed) < 7 * 86_400 { return false }
-            return true
-        }
-        func store(_ id: String, _ lookup: () async throws -> TMDBMetadata) async -> Bool {
-            budget -= 1
-            do {
-                state.metadata[id] = try await lookup()
-                state.metadataMisses[id] = nil
-                return true
-            } catch TMDBClient.ClientError.notFound {
-                state.metadataMisses[id] = Date()
-                return true
-            } catch {
-                // Network or key trouble: stop for this cycle rather than burn the budget.
-                budget = 0
-                tmdbStatus = error.localizedDescription
-                return false
-            }
-        }
-
-        for item in state.libraryItems where budget > 0 && needsLookup(item.id) {
-            let kind: TMDBMetadata.MediaType = item.kind == .movie ? .movie : .tv
-            changed = await store(item.id) { try await client.search(title: item.title, year: item.year, type: kind) } || changed
-        }
-        for item in state.imdbWatchlistItems where budget > 0 && item.id.hasPrefix("tt") && needsLookup(item.id) {
-            changed = await store(item.id) { try await client.find(imdbID: item.id) } || changed
-        }
-        if changed { persistQuietly() }
-    }
-
-    private(set) var tmdbStatus: String? {
-        didSet { scheduleChangeNotification() }
-    }
-
-    /// Forget misses so the next cycle tries them again (after a rename, say).
-    func retryMetadataMisses() {
-        state.metadataMisses.removeAll()
-        persistQuietly()
-        Task { await enrichMetadata() }
-    }
-
-    /// Season → episode numbers TMDB says exist but the disk lacks.
-    func missingEpisodes(for item: LibraryItem) -> [Int: [Int]] {
-        guard item.kind == .show, let counts = state.metadata[item.id]?.episodeCounts else { return [:] }
-        var missing: [Int: [Int]] = [:]
-        for (season, count) in counts where count > 0 {
-            // Only seasons the library has started; unaired future seasons are noise.
-            guard let have = item.episodes[season] else { continue }
-            let gaps = (1...count).filter { !have.contains($0) }
-            if !gaps.isEmpty { missing[season] = gaps }
-        }
-        return missing
-    }
-
-    /// Searches Put.io for the show and queues any video whose name carries a
-    /// missing SxxEyy. Returns what was queued and what is still missing.
-    func findMissingOnPutIO(for item: LibraryItem) async throws -> (queued: [String], stillMissing: Int) {
-        let missing = missingEpisodes(for: item)
-        let wanted = Set(missing.flatMap { season, episodes in episodes.map { String(format: "S%02dE%02d", season, $0) } })
-        guard !wanted.isEmpty else { return ([], 0) }
-        let results = try await putIOClient.searchFiles(query: item.title)
-        var queued: [String] = []
-        var found = Set<String>()
-        for file in results where file.isMediaFile {
-            guard let (season, episode) = LibraryIndex.seasonEpisode(from: file.name) else { continue }
-            let marker = String(format: "S%02dE%02d", season, episode)
-            guard wanted.contains(marker), !found.contains(marker) else { continue }
-            found.insert(marker)
-            var remote = file
-            remote.path = file.name
-            enqueueLocalSync(remoteFile: remote)
-            queued.append(file.name)
-        }
-        if !queued.isEmpty {
-            recordHistory(kind: .info, title: "Queued from Put.io search", detail: "\(item.displayTitle): \(queued.joined(separator: ", "))")
-            Task { await runBackgroundCycle() }
-        }
-        return (queued, wanted.count - found.count)
-    }
-
-    func deleteLibraryItem(_ item: LibraryItem) throws {
-        guard let root = libraryRootURL() else { throw SettingsError.libraryRootMissing }
-        let accessing = root.startAccessingSecurityScopedResource()
-        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
-        let url = root.appendingPathComponent(item.relativePath)
-        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-        state.libraryItems.removeAll { $0.id == item.id }
-        try persist()
-        recordHistory(kind: .success, title: "Moved to Trash", detail: item.displayTitle)
-        scanLibrary()
-    }
-
     // MARK: - Clearing
 
     func clearHistory() {
@@ -1266,626 +799,18 @@ final class CargoCoordinator {
         return (sorted(mediaFilesByID.values), sorted(foldersByID.values), sorted(archivesByID.values))
     }
 
-    private static func joinRemotePath(_ parent: String, _ child: String) -> String {
+    static func joinRemotePath(_ parent: String, _ child: String) -> String {
         parent.isEmpty ? child : "\(parent)/\(child)"
     }
 
-    private static let watchlistTimeFormatter: DateFormatter = {
+    static let watchlistTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
         formatter.dateStyle = .none
         return formatter
     }()
 
-    // MARK: - Transfers
-
-    func addTransfer(url: String) async throws {
-        if try await executeRemoteIfNeeded(.addTransfer(url: url)) { return }
-        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw SettingsError.invalidTransferURL }
-        let transfer = try await putIOClient.addTransfer(url: trimmed)
-        if !state.transfers.contains(where: { $0.id == transfer.id }) {
-            state.transfers.insert(transfer, at: 0)
-        }
-        try persist()
-        recordHistory(kind: .info, title: "Added transfer", detail: transfer.name)
-    }
-
-    func cancelTransfer(id: Int) async throws {
-        if try await executeRemoteIfNeeded(.cancelTransfer(id: id)) { return }
-        let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
-        try await putIOClient.cancelTransfers(ids: [id])
-        state.transfers.removeAll { $0.id == id }
-        try persist()
-        recordHistory(kind: .warning, title: "Cancelled transfer", detail: name)
-    }
-
-    func retryTransfer(id: Int) async throws {
-        if try await executeRemoteIfNeeded(.retryTransfer(id: id)) { return }
-        let name = state.transfers.first { $0.id == id }?.name ?? "Transfer \(id)"
-        try await putIOClient.retryTransfer(id: id)
-        recordHistory(kind: .info, title: "Retried transfer", detail: name)
-        await refreshFromPutIO()
-    }
-
-    func cleanFinishedTransfers() async throws {
-        if try await executeRemoteIfNeeded(.cleanFinishedTransfers) { return }
-        try await putIOClient.cleanFinishedTransfers()
-        state.transfers.removeAll { $0.status == .completed || $0.status == .seeding }
-        try persist()
-        recordHistory(kind: .info, title: "Cleared finished transfers", detail: "Put.io transfer list cleaned")
-    }
-
-    // MARK: - File extras
-
-    func downloadURL(remoteFileID: Int) async throws -> URL {
-        try await putIOClient.downloadURL(fileID: remoteFileID)
-    }
-
-    func fetchSubtitles(remoteFileID: Int) async throws -> [PutIOSubtitle] {
-        try await putIOClient.fetchSubtitles(fileID: remoteFileID)
-    }
-
-    /// Saves a Put.io subtitle next to the local copy of the file (`Name.en.srt`).
-    /// Falls back to the staging folder when the file has not been downloaded yet.
-    func downloadSubtitle(_ subtitle: PutIOSubtitle, remoteFileID: Int) async throws -> URL {
-        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID }) else {
-            throw SettingsError.remoteFileMissing
-        }
-        let localPath = state.localJobs
-            .filter { $0.remoteFileID == remoteFileID }
-            .max { $0.updatedAt < $1.updatedAt }?
-            .destination
-        let base: URL
-        if let localPath, FileManager.default.fileExists(atPath: localPath) {
-            base = URL(fileURLWithPath: localPath)
-        } else {
-            guard let root = libraryRootURL() else { throw SettingsError.libraryRootMissing }
-            base = root
-                .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
-                .appendingPathComponent(remoteFile.name)
-        }
-        let language = subtitle.language.lowercased().prefix(3).replacingOccurrences(of: " ", with: "")
-        let destination = base.deletingPathExtension().appendingPathExtension("\(language).srt")
-        try await putIOClient.downloadSubtitle(fileID: remoteFileID, key: subtitle.key, to: destination)
-        recordHistory(kind: .success, title: "Saved subtitle", detail: destination.lastPathComponent)
-        return destination
-    }
-
-    func openRemoteFolder(remoteFolderID: Int) async {
-        guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
-            return
-        }
-
-        do {
-            let remoteFiles = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
-            remoteFolderStack.append((id: self.remoteFolderID, name: remoteFolderName))
-            self.remoteFolderID = folder.id
-            remoteFolderName = folder.name
-            state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            try persist()
-        } catch {
-            putIOStatus = "Put.io error · \(error.localizedDescription)"
-        }
-    }
-
-    func goBackRemoteFolder() async {
-        guard let previousFolder = remoteFolderStack.popLast() else { return }
-
-        do {
-            let remoteFiles = try await putIOClient.fetchFiles(parentID: previousFolder.id, types: nil)
-            remoteFolderID = previousFolder.id
-            remoteFolderName = previousFolder.name
-            state.remoteFiles = Self.managedRemoteFiles(remoteFiles)
-            try persist()
-        } catch {
-            remoteFolderStack.append(previousFolder)
-            putIOStatus = "Put.io error · \(error.localizedDescription)"
-        }
-    }
-
-    func enqueueLocalSync(remoteFileID: Int) {
-        guard let remoteFile = state.remoteFiles.first(where: { $0.id == remoteFileID })
-            ?? state.remoteMediaFiles.first(where: { $0.id == remoteFileID }) else {
-            return
-        }
-        enqueueLocalSync(remoteFile: remoteFile)
-    }
-
-    private func enqueueLocalSync(remoteFile: RemoteFile) {
-        guard remoteFile.isMediaFile,
-              !state.localJobs.contains(where: { $0.remoteFileID == remoteFile.id }) else {
-            return
-        }
-
-        state.localJobs.append(
-            LocalSyncJob(
-                id: UUID(),
-                remoteFileID: remoteFile.id,
-                name: remoteFile.name,
-                status: .queued,
-                progress: 0,
-                destination: state.settings.libraryRootPath.map {
-                    URL(fileURLWithPath: $0, isDirectory: true)
-                        .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
-                        .path
-                },
-                errorMessage: nil,
-                updatedAt: Date()
-            )
-        )
-        persistQuietly()
-    }
-
-    func processLocalSync(remoteFileID: Int) async {
-        guard let jobIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFileID }),
-              state.localJobs[jobIndex].status == .queued,
-              LibraryOrganizer.isMediaFile(named: state.localJobs[jobIndex].name) else {
-            return
-        }
-
-        let jobName = state.localJobs[jobIndex].name
-
-        guard let rootURL = libraryRootURL() else {
-            updateLocalJob(
-                at: jobIndex,
-                status: .failed,
-                progress: 0,
-                destination: nil,
-                errorMessage: "Choose the SSD library root in Settings first."
-            )
-            return
-        }
-
-        let stagingURL = rootURL.appendingPathComponent(
-            state.settings.stagingDirectoryName,
-            isDirectory: true
-        )
-        let destinationURL = stagingURL.appendingPathComponent(Self.safeFilename(jobName))
-
-        updateLocalJob(
-            at: jobIndex,
-            status: .downloading,
-            progress: 0,
-            destination: destinationURL.path,
-            errorMessage: nil
-        )
-
-        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
-        defer {
-            if isAccessingScopedResource {
-                rootURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        do {
-            let jobID = state.localJobs[jobIndex].id
-            try await putIOClient.downloadFile(fileID: remoteFileID, to: destinationURL) { [weak self] received, total in
-                let fraction = total.map { $0 > 0 ? Double(received) / Double($0) : 0 } ?? 0
-                Task { @MainActor [weak self] in
-                    guard let self, let index = state.localJobs.firstIndex(where: { $0.id == jobID }),
-                          state.localJobs[index].status == .downloading else { return }
-                    state.localJobs[index].progress = min(max(fraction, 0), 0.999)
-                    state.localJobs[index].updatedAt = Date()
-                    scheduleChangeNotification()
-                }
-            }
-            try verifyLocalCopy(remoteFileID: remoteFileID, localURL: destinationURL)
-            updateLocalJob(
-                at: jobIndex,
-                status: .needsReview,
-                progress: 1,
-                destination: destinationURL.path,
-                errorMessage: nil
-            )
-            recordHistory(
-                kind: .success,
-                title: "Downloaded",
-                detail: "\(jobName) → \(destinationURL.path)"
-            )
-            if state.settings.automaticSubtitlesEnabled {
-                await parkPutIOSubtitle(remoteFileID: remoteFileID)
-            }
-
-            if state.settings.automaticRemoteCleanupEnabled {
-                do {
-                    _ = try await deleteRemoteFileAfterVerifiedCopy(
-                        remoteFileID: remoteFileID,
-                        localURL: destinationURL,
-                        jobName: jobName
-                    )
-                } catch {
-                    recordHistory(
-                        kind: .failure,
-                        title: "Remote cleanup failed",
-                        detail: "\(jobName): \(error.localizedDescription)"
-                    )
-                }
-            }
-        } catch {
-            // A partial file on disk means the transfer broke, not the job:
-            // queue it again and let the next cycle resume from the .part.
-            let attempts = (state.localJobs.indices.contains(jobIndex) ? state.localJobs[jobIndex].attempts : 0) + 1
-            let partialExists = FileManager.default.fileExists(atPath: PutIOAPIClient.partialURL(for: destinationURL).path)
-            let willResume = partialExists && attempts < Self.maximumDownloadAttempts
-            if state.localJobs.indices.contains(jobIndex) { state.localJobs[jobIndex].attempts = attempts }
-            updateLocalJob(
-                at: jobIndex,
-                status: willResume ? .queued : .failed,
-                progress: willResume ? (state.localJobs[jobIndex].progress) : 0,
-                destination: destinationURL.path,
-                errorMessage: willResume ? "Interrupted · resumes next cycle (attempt \(attempts))" : error.localizedDescription
-            )
-            recordHistory(
-                kind: willResume ? .warning : .failure,
-                title: willResume ? "Download interrupted" : "Download failed",
-                detail: "\(jobName): \(error.localizedDescription)"
-            )
-        }
-    }
-
-    private static let maximumDownloadAttempts = 8
-
-    private func verifyLocalCopy(remoteFileID: Int, localURL: URL) throws {
-        guard FileManager.default.fileExists(atPath: localURL.path) else {
-            throw SettingsError.localCopyMissing
-        }
-
-        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
-            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
-            throw SettingsError.remoteFileMissing
-        }
-
-        // Verification is the only thing standing between a download and a
-        // trash-skipping remote delete, so an unknown remote size must fail
-        // rather than pass by default.
-        guard remoteFile.sizeBytes > 0 else {
-            throw SettingsError.remoteSizeUnknown
-        }
-        let localSize = try FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? NSNumber
-        guard localSize?.int64Value == remoteFile.sizeBytes else {
-            throw SettingsError.localCopySizeMismatch
-        }
-    }
-
-    /// User-initiated deletion from the Files page. No local-copy verification —
-    /// the UI is responsible for confirming with the user first.
-    @discardableResult
-    /// Manual deletes go to Put.io's trash (recoverable). Cargo's own cleanup
-    /// after a verified local copy skips the trash — otherwise the quota is
-    /// only freed when someone remembers to empty it.
-    func deleteRemoteFile(remoteFileID: Int, reason: String? = nil, skipTrash: Bool = false) async throws -> RemoteFile {
-        if isRemoteClientMode {
-            let remoteState = dashboardState
-            guard let file = remoteState.remoteFiles.first(where: { $0.id == remoteFileID }) else {
-                throw SettingsError.remoteFileMissing
-            }
-            _ = try await remoteClientSession.execute(.deleteRemoteFile(remoteFileID: remoteFileID))
-            return file
-        }
-        guard let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
-            ?? state.remoteFiles.first(where: { $0.id == remoteFileID }) else {
-            throw SettingsError.remoteFileMissing
-        }
-
-        try await putIOClient.deleteFile(fileID: remoteFileID, skipTrash: skipTrash)
-        state.remoteFiles.removeAll { $0.id == remoteFileID }
-        state.remoteMediaFiles.removeAll { $0.id == remoteFileID || $0.parentID == remoteFileID }
-        state.remoteFolders.removeAll { $0.id == remoteFileID }
-        if !state.deletedRemoteFileIDs.contains(remoteFileID) {
-            state.deletedRemoteFileIDs.append(remoteFileID)
-        }
-        try persist()
-        recordHistory(
-            kind: .success,
-            title: remoteFile.isFolder ? "Deleted Put.io folder" : "Deleted from Put.io",
-            detail: reason ?? "\(remoteFile.displayPath) · manual"
-        )
-        return remoteFile
-    }
-
-    private func deleteRemoteFileAfterVerifiedCopy(
-        remoteFileID: Int,
-        localURL: URL,
-        jobName: String
-    ) async throws -> [Int] {
-        try verifyLocalCopy(remoteFileID: remoteFileID, localURL: localURL)
-        let remoteFile = try await deleteRemoteFile(
-            remoteFileID: remoteFileID,
-            reason: "\(jobName) · local copy verified",
-            skipTrash: true
-        )
-        do {
-            return try await deleteEmptyRemoteFolders(startingAt: remoteFile.parentID)
-        } catch {
-            recordHistory(
-                kind: .warning,
-                title: "Put.io folder cleanup deferred",
-                detail: "\(jobName): \(error.localizedDescription)"
-            )
-            return []
-        }
-    }
-
-    private func deleteEmptyRemoteFolders(startingAt parentID: Int) async throws -> [Int] {
-        var folderID = parentID
-        var deletedFolderIDs: [Int] = []
-
-        while folderID != 0,
-              let folder = state.remoteFolders.first(where: { $0.id == folderID }) {
-            let children = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
-            guard children.isEmpty else { break }
-
-            try await putIOClient.deleteFile(fileID: folder.id, skipTrash: true)
-            if !state.deletedRemoteFolderIDs.contains(folder.id) {
-                state.deletedRemoteFolderIDs.append(folder.id)
-            }
-            deletedFolderIDs.append(folder.id)
-            try persist()
-            recordHistory(
-                kind: .success,
-                title: "Deleted empty Put.io folder",
-                detail: folder.displayPath
-            )
-            folderID = folder.parentID
-        }
-
-        return deletedFolderIDs
-    }
-
-    @discardableResult
-    func organizeLocalJob(jobID: UUID) throws -> URL {
-        guard let jobIndex = state.localJobs.firstIndex(where: { $0.id == jobID }),
-              state.localJobs[jobIndex].status == .needsReview,
-              let sourcePath = state.localJobs[jobIndex].destination else {
-            throw SettingsError.inboxFileMissing
-        }
-
-        let job = state.localJobs[jobIndex]
-        let preview = LibraryOrganizer.preview(for: job.name, settings: state.settings)
-        guard let relativePath = preview.relativePath else {
-            throw SettingsError.ambiguousMedia
-        }
-        guard let rootURL = libraryRootURL() else {
-            throw SettingsError.inboxFileMissing
-        }
-
-        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
-        defer {
-            if isAccessingScopedResource {
-                rootURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let sourceURL = URL(fileURLWithPath: sourcePath)
-        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
-            throw SettingsError.inboxFileMissing
-        }
-
-        let destinationURL = rootURL.appendingPathComponent(relativePath)
-        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
-            throw SettingsError.destinationAlreadyExists
-        }
-
-        let destinationDirectory = destinationURL.deletingLastPathComponent()
-        do {
-            try FileManager.default.createDirectory(
-                at: destinationDirectory,
-                withIntermediateDirectories: true
-            )
-        } catch {
-            throw SettingsError.unableToCreateDestination
-        }
-
-        do {
-            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
-        } catch {
-            throw SettingsError.unableToMoveFile
-        }
-        removeEmptyInboxFolders(afterMoving: sourceURL, rootURL: rootURL)
-
-        state.localJobs[jobIndex].status = .completed
-        state.localJobs[jobIndex].progress = 1
-        state.localJobs[jobIndex].destination = destinationURL.path
-        state.localJobs[jobIndex].errorMessage = nil
-        state.localJobs[jobIndex].updatedAt = Date()
-        try persist()
-        recordHistory(
-            kind: .success,
-            title: "Organized",
-            detail: "\(job.name) → \(destinationURL.path)"
-        )
-        if state.settings.automaticSubtitlesEnabled {
-            Task { await self.attachSubtitle(to: destinationURL, remoteFileID: job.remoteFileID) }
-        }
-        return destinationURL
-    }
-
-    // MARK: - Subtitles
-
-    var openSubtitlesCredentials: OpenSubtitlesCredentials {
-        OpenSubtitlesCredentials(
-            apiKey: state.settings.openSubtitlesAPIKey,
-            username: state.settings.openSubtitlesUsername,
-            password: keychain.readOpenSubtitlesPassword() ?? ""
-        )
-    }
-
-    func saveOpenSubtitlesPassword(_ password: String) throws {
-        try keychain.saveOpenSubtitlesPassword(password)
-        scheduleChangeNotification()
-    }
-
-    /// Put.io's subtitle for the file in the wanted language, kept aside until the
-    /// file has its final name. Best effort; the remote copy is about to go.
-    private func parkPutIOSubtitle(remoteFileID: Int) async {
-        guard let list = try? await putIOClient.fetchSubtitles(fileID: remoteFileID), !list.isEmpty else { return }
-        let wanted = state.settings.subtitleLanguage.lowercased()
-        let pick = list.first { $0.language.lowercased().hasPrefix(wanted) || $0.key.lowercased().contains(wanted) } ?? list.first!
-        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("cargo-\(remoteFileID).srt")
-        do {
-            try await putIOClient.downloadSubtitle(fileID: remoteFileID, key: pick.key, to: temporary)
-            try subtitles.park(putIOSubtitle: Data(contentsOf: temporary), remoteFileID: remoteFileID)
-            try? FileManager.default.removeItem(at: temporary)
-        } catch {
-            recordHistory(kind: .warning, title: "Put.io subtitle not saved", detail: error.localizedDescription)
-        }
-    }
-
-    /// Parked Put.io subtitle if there is one, else OpenSubtitles. Records the outcome.
-    @discardableResult
-    func attachSubtitle(to video: URL, remoteFileID: Int?, force: Bool = false) async -> SubtitleService.Outcome {
-        if !force, SubtitleService.hasSubtitle(video) { return .alreadyPresent }
-        if let remoteFileID, let saved = subtitles.claimParked(remoteFileID: remoteFileID, for: video) {
-            recordHistory(kind: .success, title: "Subtitle from Put.io", detail: saved.lastPathComponent)
-            return .saved(saved, source: "Put.io")
-        }
-        if force { try? FileManager.default.removeItem(at: SubtitleService.sidecarURL(for: video)) }
-        let outcome = await subtitles.fetchFromOpenSubtitles(
-            for: video,
-            language: state.settings.subtitleLanguage,
-            credentials: openSubtitlesCredentials
-        )
-        switch outcome {
-        case .saved(let url, let source):
-            recordHistory(kind: .success, title: "Subtitle saved", detail: "\(url.lastPathComponent) · \(source)")
-        case .notFound(let reason):
-            recordHistory(kind: .warning, title: "No subtitle", detail: "\(video.lastPathComponent): \(reason)")
-        case .noCredentials, .alreadyPresent:
-            break
-        }
-        return outcome
-    }
-
-    /// Every video under a library item that has no subtitle yet.
-    func fetchSubtitles(for item: LibraryItem) async -> (saved: Int, failed: Int) {
-        guard let root = libraryRootURL() else { return (0, 0) }
-        let accessing = root.startAccessingSecurityScopedResource()
-        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
-        let url = root.appendingPathComponent(item.relativePath)
-        var videos: [URL] = []
-        if item.kind == .movie {
-            videos = [url]
-        } else if let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
-            videos = enumerator.allObjects.compactMap { $0 as? URL }.filter { LibraryOrganizer.isMediaFile(named: $0.lastPathComponent) }
-        }
-        var saved = 0, failed = 0
-        for video in videos where !SubtitleService.hasSubtitle(video) {
-            if case .saved = await attachSubtitle(to: video, remoteFileID: nil) { saved += 1 } else { failed += 1 }
-        }
-        return (saved, failed)
-    }
-
-    @discardableResult
-    func organizeInboxFile(at sourceURL: URL) throws -> URL {
-        guard let rootURL = libraryRootURL() else {
-            throw SettingsError.inboxFileMissing
-        }
-
-        let inboxURL = rootURL.appendingPathComponent(
-            state.settings.stagingDirectoryName,
-            isDirectory: true
-        ).standardizedFileURL
-        let normalizedSourceURL = sourceURL.standardizedFileURL
-        let inboxPrefix = inboxURL.path.hasSuffix("/") ? inboxURL.path : inboxURL.path + "/"
-        guard normalizedSourceURL.path.hasPrefix(inboxPrefix),
-              FileManager.default.fileExists(atPath: normalizedSourceURL.path) else {
-            throw SettingsError.inboxFileMissing
-        }
-
-        let preview = LibraryOrganizer.preview(
-            for: normalizedSourceURL.lastPathComponent,
-            settings: state.settings
-        )
-        guard let relativePath = preview.relativePath else {
-            throw SettingsError.ambiguousMedia
-        }
-
-        let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
-        defer {
-            if isAccessingScopedResource {
-                rootURL.stopAccessingSecurityScopedResource()
-            }
-        }
-
-        let destinationURL = rootURL.appendingPathComponent(relativePath)
-        guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
-            throw SettingsError.destinationAlreadyExists
-        }
-        do {
-            try FileManager.default.createDirectory(
-                at: destinationURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try FileManager.default.moveItem(at: normalizedSourceURL, to: destinationURL)
-        } catch {
-            throw SettingsError.unableToMoveFile
-        }
-        removeEmptyInboxFolders(afterMoving: normalizedSourceURL, rootURL: rootURL)
-        recordHistory(
-            kind: .success,
-            title: "Organized",
-            detail: "\(normalizedSourceURL.lastPathComponent) → \(destinationURL.path)"
-        )
-        return destinationURL
-    }
-
-    private func removeEmptyInboxFolders(afterMoving sourceURL: URL, rootURL: URL) {
-        let inboxURL = rootURL.appendingPathComponent(
-            state.settings.stagingDirectoryName,
-            isDirectory: true
-        ).standardizedFileURL
-        let inboxPrefix = inboxURL.path.hasSuffix("/") ? inboxURL.path : inboxURL.path + "/"
-        var folderURL = sourceURL.deletingLastPathComponent().standardizedFileURL
-        let fileManager = FileManager.default
-
-        while folderURL != inboxURL && folderURL.path.hasPrefix(inboxPrefix) {
-            guard let children = try? fileManager.contentsOfDirectory(
-                at: folderURL,
-                includingPropertiesForKeys: nil,
-                options: []
-            ) else {
-                break
-            }
-
-            let directoryPaths = Set(children.compactMap { child -> String? in
-                guard (try? child.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
-                    return nil
-                }
-                return child.path
-            })
-            let mediaFiles = children.filter {
-                !directoryPaths.contains($0.path) && LibraryOrganizer.isMediaFile(named: $0.lastPathComponent)
-            }
-
-            if state.settings.automaticInboxCleanupEnabled {
-                // Once a processed folder has no media or subfolders left, all other
-                // files in it are sidecars/cruft and can be removed with the folder.
-                guard directoryPaths.isEmpty, mediaFiles.isEmpty else { break }
-                children
-                    .filter { !directoryPaths.contains($0.path) }
-                    .forEach { try? fileManager.removeItem(at: $0) }
-            } else {
-                let metadata = children.filter { $0.lastPathComponent == ".DS_Store" }
-                let meaningfulChildren = children.filter { $0.lastPathComponent != ".DS_Store" }
-                guard meaningfulChildren.isEmpty else { break }
-                metadata.forEach { try? fileManager.removeItem(at: $0) }
-            }
-
-            guard let remaining = try? fileManager.contentsOfDirectory(
-                at: folderURL,
-                includingPropertiesForKeys: nil,
-                options: []
-            ), remaining.isEmpty else {
-                break
-            }
-            try? fileManager.removeItem(at: folderURL)
-            guard !fileManager.fileExists(atPath: folderURL.path) else { break }
-            folderURL = folderURL.deletingLastPathComponent()
-        }
-    }
-
-    private func updateLocalJob(
+    func updateLocalJob(
         at index: Int,
         status: LocalSyncStatus,
         progress: Double,
@@ -1901,14 +826,14 @@ final class CargoCoordinator {
         persistQuietly()
     }
 
-    private static func safeFilename(_ name: String) -> String {
+    static func safeFilename(_ name: String) -> String {
         let cleaned = name.replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned.isEmpty ? "untitled-download" : cleaned
     }
 
-    private func recordHistory(kind: CargoHistoryKind, title: String, detail: String, persisting: Bool = true) {
+    func recordHistory(kind: CargoHistoryKind, title: String, detail: String, persisting: Bool = true) {
         state.history.insert(
             CargoHistoryEntry(
                 id: UUID(),
@@ -1924,7 +849,7 @@ final class CargoCoordinator {
         if persisting { persistQuietly() }
     }
 
-    private static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
+    static func managedRemoteFiles(_ files: [RemoteFile]) -> [RemoteFile] {
         files.filter { $0.isFolder || $0.isMediaFile || $0.isArchive }
     }
 

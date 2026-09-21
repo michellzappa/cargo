@@ -137,7 +137,7 @@ AppKit throughout, Swift 6 strict concurrency, no storyboards. Dependencies:
 | | |
 | --- | --- |
 | `CargoApp` | `NSStatusItem`, menus, URL scheme (`oauth`, `pair`, `open`), background cycle timer, API server lifecycle |
-| `Services/CargoCoordinator` | The state machine: background cycle, sync jobs, settings mutations, client-mode proxying |
+| `Services/CargoCoordinator` (+`Chill`, `Watchlist`, `PutIO`, `LocalSync`, `Library`, `Inbox`) | The state machine: stored state and the background cycle in the core file, one extension file per concern |
 | `Services/PutIOClient`, `PutIOOAuth`, `KeychainStore` | Put.io API (account, transfers, files, resumable download, delete/skip-trash, events, extract, trash), browser OAuth, token storage |
 | `Services/ChillClient` | Chill catalogs, search, episode lookup, explicit Put.io handoff |
 | `Services/LibraryOrganizer` | Release-name parsing, destination preview, atomic move |
