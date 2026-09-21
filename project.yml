@@ -30,6 +30,10 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
     GENERATE_INFOPLIST_FILE: NO
     SWIFT_STRICT_CONCURRENCY: complete
+    # Both are overridden on the command line by scripts/build-app.sh and the
+    # release workflow (see scripts/build-number.sh); Xcode-only builds get these.
+    CURRENT_PROJECT_VERSION: "0"
+    CARGO_COMMIT: xcode
   configs:
     Debug:
       SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG

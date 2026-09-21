@@ -28,3 +28,6 @@ jobs:
         run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Debug -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
       - name: Test
         run: xcodebuild test -project Cargo.xcodeproj -scheme Cargo -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
+      # Release is what ships; -O and strict concurrency can fail where Debug passes.
+      - name: Build (Release)
+        run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Release -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet

@@ -58,6 +58,9 @@ jobs:
             exit 1
           fi
           echo "APP_VERSION=$version" >> "$GITHUB_ENV"
+          { read -r build; read -r commit; } < <(./scripts/build-number.sh)
+          echo "APP_BUILD=$build" >> "$GITHUB_ENV"
+          echo "APP_COMMIT=$commit" >> "$GITHUB_ENV"
 
       - name: Import Developer ID certificate
         shell: bash
@@ -90,6 +93,8 @@ jobs:
             -archivePath "$RUNNER_TEMP/Cargo.xcarchive" \
             ARCHS="arm64 x86_64" \
             ONLY_ACTIVE_ARCH=NO \
+            CURRENT_PROJECT_VERSION="$APP_BUILD" \
+            CARGO_COMMIT="$APP_COMMIT" \
             CODE_SIGN_STYLE=Manual \
             CODE_SIGN_IDENTITY="Developer ID Application" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \

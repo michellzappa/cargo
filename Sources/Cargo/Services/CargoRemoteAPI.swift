@@ -44,6 +44,8 @@ struct CargoAPIHealth: Codable, Equatable, Sendable {
     let status: String
     let apiVersion: String
     let generatedAt: Date
+    /// "0.8.0 (96, a1b2c3d)" — so a client can tell what it is talking to.
+    var appVersion: String? = nil
 }
 
 struct CargoAPISearchRequest: Codable, Equatable, Sendable {
@@ -180,7 +182,7 @@ final class CargoRemoteAPIRouter {
         case "/v1/health":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
             return success(
-                CargoAPIHealth(status: "ok", apiVersion: "v1", generatedAt: Date()),
+                CargoAPIHealth(status: "ok", apiVersion: "v1", generatedAt: Date(), appVersion: CargoBuild.label),
                 requestID: requestID
             )
         case "/v1/state":

@@ -16,12 +16,11 @@ swift build -c release --package-path "$housekit" >/dev/null
 
 cd "$here"
 xcodegen generate --quiet
-build="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+{ read -r build; read -r commit; } < <(./scripts/build-number.sh)
 xcodebuild -project Cargo.xcodeproj -scheme Cargo -configuration "$config" \
-  -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$build" \
+  -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$build" CARGO_COMMIT="$commit" \
   CODE_SIGNING_ALLOWED=NO -quiet build
 app="build/DerivedData/Build/Products/$config/Cargo.app"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build" "$app/Contents/Info.plist"
 # Xcode's Debug product is an executable shim that loads Cargo.debug.dylib at
 # launch. Sign nested code first, otherwise the outer app can carry a stable
 # Team ID while dyld rejects the debug dylib's linker/adhoc signature.
@@ -38,4 +37,4 @@ rm -rf "$target"
 /usr/bin/ditto "$app" "$target"
 codesign --verify --strict "$target"
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")"
-printf '%s (version %s, build %s)\n' "$target" "$version" "$build"
+printf '%s (version %s, build %s, %s)\n' "$target" "$version" "$build" "$commit"
