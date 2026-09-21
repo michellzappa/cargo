@@ -16,7 +16,7 @@ Cargo now stores the selected SSD folder as a security-scoped bookmark and uses 
 
 ## Resumable downloads
 
-Local Put.io downloads can be interrupted by sleep, network changes, app termination, or SSD removal. The downloader needs temporary files, resume support, cancellation, and a final atomic rename so incomplete files never appear in the Infuse library.
+Settled: downloads stream into `<name>.part` in `_Inbox`, resume with a `Range` request, and only rename to the final name once complete, so partials never appear in the Infuse library. Interrupted jobs re-queue themselves up to eight times. Still open: cancellation, and SSD removal mid-write (the `.part` then lives on a vanished volume).
 
 ## Media identification
 
@@ -45,15 +45,14 @@ The client should be another instance of the same Cargo app, not a separate
 product: one installation owns the resident state, while any number of trusted
 installations can connect as remote clients. Pairing should register each
 client with the resident, show connected clients on the resident, show the
-connected resident on each client, and support revoke/forget. Manual URL/token
-connection, Keychain storage, presence registration, heartbeat, and status
-display in Remote Access settings are now in place, along with Tailscale peer
-auto-find, the same-app remote dashboard, and supported resident-side commands.
-The client only needs the resident URL and bearer token; provider credentials
-and local filesystem paths remain resident-side. Streaming delivery,
-revoke/forget controls, and real-device network testing are still pending.
-Network-scope changes and token rotation also need real-device testing before
-treating remote access as production-ready.
+connected resident on each client, and support revoke/forget. Pairing is one
+copyable `cargo://pair` link; presence registration, heartbeat with
+re-registration after a resident restart, Tailscale auto-find and the same-app
+remote dashboard are in place and tested across two Macs over Tailscale. Two
+things to remember: the App Store Tailscale binary only behaves as a CLI when
+`SHLVL` is set (Cargo sets it), and ATS needs the `ts.net` exception in
+Info.plist for plain HTTP to a tailnet name. Streaming delivery and
+revoke/forget controls are still pending.
 
 ## EasySubs contract
 

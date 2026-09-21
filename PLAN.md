@@ -8,7 +8,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 ## Milestones
 
-### 0. Native shell — current
+### 0. Native shell
 
 - [x] Create a macOS Swift Package executable.
 - [x] Add an AppKit status-item application.
@@ -29,7 +29,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Fetch remote files and navigate Put.io folders.
 - [x] Limit Cargo tracking to video media files while retaining folders for navigation.
 - [x] Map Put.io statuses into Cargo statuses.
-- [ ] Add refresh, retry, cancel, and open-in-browser actions.
+- [x] Add refresh, retry, cancel, and clean-finished actions.
 - [ ] Keep the app useful when Put.io is unavailable by showing cached state and a stale indicator.
 - [x] Poll Put.io on a basic fixed interval and update the open dashboard.
 
@@ -39,9 +39,9 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Persist a security-scoped bookmark for the selected volume.
 - [x] Add the first local download job execution path.
 - [x] Download selected remote files into a hidden staging directory.
-- [ ] Add progress, pause, resume, retry, and cancellation.
+- [x] Add progress, resume and retry (streamed `.part` files with `Range`); pause and cancellation are still open.
 - [x] Verify the local byte size before remote cleanup/import.
-- [ ] Resume safely after app restart, SSD removal, or network failure.
+- [x] Resume safely after app restart or network failure — interrupted jobs re-queue and continue from the partial. SSD removal mid-download still needs explicit handling.
 
 ### 3. Library organization
 
@@ -56,8 +56,8 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Apply conservative movie and TV episode rename rules during explicit Inbox organization.
 - [ ] Confirm finer rename and reorganization rules with the existing Infuse folder layout.
 - [x] Move verified files from hidden `_Inbox` into the chosen existing destination after an explicit Organize action.
-- [ ] Quarantine ambiguous or unsupported files instead of guessing.
-- [ ] Detect duplicates and existing library files before import.
+- [x] Leave ambiguous or unsupported files in `_Inbox` with an explanation instead of guessing.
+- [x] Refuse to overwrite an existing destination; smarter duplicate detection (same title, better quality) is still open.
 - [x] Delete a copied Put.io media file only after local verification, then remove only empty parent folders.
 
 ### 4. Background operation
@@ -71,9 +71,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 ### 5. EasySubs integration
 
 - [x] Confirm the integration contract for EasySubs: EasySubsKit package, subtitles after organize.
-- [ ] Prefer a local protocol or file-based handoff over app-specific coupling.
-- [ ] Add subtitle processing as a post-import job type.
-- [ ] Keep subtitle failures independent from media import success.
+- [x] EasySubsKit is a package dependency; subtitles run after organize and a subtitle failure never fails the import.
 
 ### 6. Optional metadata/watchlist features
 
@@ -107,14 +105,14 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
   registry; clients can register, heartbeat, query presence, and unregister.
 - [x] Show resident/client connection status and connected-client presence in
   Remote Access settings.
+- [x] One-string pairing (`cargo://pair?url=…&token=…`) from the resident, using its Tailscale MagicDNS name.
 - [ ] Add revoke/forget controls for individual client registrations.
 - [x] Make the normal dashboard render the resident snapshot in client mode
   and route supported dashboard actions through the resident.
 - [x] Reuse the same dashboard UI and command models for multiple client
   devices per resident.
-- [ ] Add streaming delivery and reconnect/backoff behavior; keep the current
-  revisioned polling feed as the fallback.
-- [ ] Validate the full flow across real Macs and trusted LAN boundaries.
+- [x] Reconnect: the heartbeat re-registers after a resident restart. Streaming delivery is still open; the revisioned polling feed remains.
+- [x] Validated across two Macs over Tailscale (pairing link, per-client search).
 
 ## Non-goals for the first release
 
