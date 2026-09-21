@@ -13,7 +13,10 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let keychainStore = KeychainStore()
     private let notificationService = CargoNotificationService()
     private lazy var mainWindowController = MainWindowController(coordinator: coordinator)
-    private lazy var settingsWindowController = SettingsWindowController.cargo(coordinator: coordinator)
+    private var remoteAccessPage: RemoteAccessPage?
+    private lazy var settingsWindowController = SettingsWindowController.cargo(coordinator: coordinator) { [weak self] page in
+        self?.remoteAccessPage = page
+    }
     private lazy var remoteAPIController = CargoRemoteController(coordinator: coordinator)
     private let remoteAPIEventFeed = CargoRemoteEventFeed()
     private var remoteAPIServer: CargoHTTPServer?
@@ -108,6 +111,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             case "settings":
                 showSettings(nil)
+            case "pair":
+                // cargo://pair?url=…&token=… — the resident's pairing link, opened directly.
+                guard let link = CargoPairingLink(parsing: url) else { break }
+                showSettings(nil)
+                settingsWindowController.show(page: 4) // Remote Access
+                remoteAccessPage?.connect(with: link)
             case "open":
                 // cargo://open?page=library
                 let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "page" }?.value

@@ -541,6 +541,49 @@ final class CargoRemoteAPIClient: @unchecked Sendable {
     }
 }
 
+/// One copy-pasteable string that carries everything a client needs:
+/// `cargo://pair?url=http://host:39817&token=…`. The resident produces it, the
+/// client accepts it pasted into the address field or opened as a link.
+struct CargoPairingLink: Equatable, Sendable {
+    let serverURL: String
+    let token: String
+
+    init(serverURL: String, token: String) {
+        self.serverURL = serverURL
+        self.token = token
+    }
+
+    init?(parsing string: String) {
+        guard let url = URL(string: string.trimmingCharacters(in: .whitespacesAndNewlines)) else { return nil }
+        self.init(parsing: url)
+    }
+
+    init?(parsing url: URL) {
+        guard url.scheme?.lowercased() == "cargo", url.host?.lowercased() == "pair",
+              let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems,
+              let serverURL = items.first(where: { $0.name == "url" })?.value, !serverURL.isEmpty,
+              let token = items.first(where: { $0.name == "token" })?.value, !token.isEmpty else {
+            return nil
+        }
+        self.serverURL = serverURL
+        self.token = token
+    }
+
+    var urlString: String {
+        var components = URLComponents()
+        components.scheme = "cargo"
+        components.host = "pair"
+        components.queryItems = [
+            URLQueryItem(name: "url", value: serverURL),
+            URLQueryItem(name: "token", value: token)
+        ]
+        // `+` is a valid query character to URLComponents but many decoders
+        // read it as a space; encode it so the token survives every paste.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return components.string ?? "cargo://pair"
+    }
+}
+
 struct CargoTailscaleServer: Codable, Equatable, Identifiable, Sendable {
     let id: UUID
     let name: String
@@ -555,6 +598,9 @@ enum CargoTailscaleDiscoveryError: LocalizedError, Equatable {
     case unavailable
     case invalidStatus
     case commandFailed
+    /// The CLI exited 0 but printed a message instead of JSON (the App Store
+    /// binary does this when it mistakes itself for the GUI).
+    case cliMessage(String)
 
     var errorDescription: String? {
         switch self {
@@ -566,6 +612,8 @@ enum CargoTailscaleDiscoveryError: LocalizedError, Equatable {
             "Tailscale returned an unrecognized peer list."
         case .commandFailed:
             "Cargo could not read the Tailscale peer list."
+        case .cliMessage(let message):
+            "Tailscale: \(message)"
         }
     }
 }
@@ -592,6 +640,9 @@ final class CargoTailscaleDiscovery {
     func findServers() async throws -> [CargoTailscaleServer] {
         let data = try await Self.runStatus()
         let parsed = try Self.parsePeers(data)
+        if let backendState = parsed.backendState, backendState != "Running" {
+            throw CargoTailscaleDiscoveryError.cliMessage("not connected (\(backendState)). Open Tailscale and sign in.")
+        }
         let candidates = parsed.peers.compactMap { peer -> (String, Peer)? in
             guard peer.online != false,
                   !parsed.selfNames.contains(peer.normalizedName) else { return nil }
@@ -626,6 +677,17 @@ final class CargoTailscaleDiscovery {
         }
     }
 
+    /// This Mac's own MagicDNS name (without the trailing dot), or nil when
+    /// Tailscale is missing or not running. Used to build the pairing link.
+    static func selfDNSName() async -> String? {
+        guard let data = try? await runStatus(),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (root["BackendState"] as? String) == "Running",
+              let name = (root["Self"] as? [String: Any])?["DNSName"] as? String else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     nonisolated static func parseStatus(_ data: Data) throws -> [(name: String, address: String, platform: String)] {
         try parsePeers(data).peers.compactMap { peer in
             guard let address = peer.addresses.first else { return nil }
@@ -633,7 +695,7 @@ final class CargoTailscaleDiscovery {
         }
     }
 
-    private nonisolated static func parsePeers(_ data: Data) throws -> (selfNames: Set<String>, peers: [Peer]) {
+    private nonisolated static func parsePeers(_ data: Data) throws -> (selfNames: Set<String>, peers: [Peer], backendState: String?) {
         let root: [String: Any]
         do {
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -643,6 +705,11 @@ final class CargoTailscaleDiscovery {
         } catch let error as CargoTailscaleDiscoveryError {
             throw error
         } catch {
+            // Not JSON at all: surface whatever the CLI actually said.
+            if let text = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                throw CargoTailscaleDiscoveryError.cliMessage(String(text.prefix(200)))
+            }
             throw CargoTailscaleDiscoveryError.invalidStatus
         }
 
@@ -689,7 +756,7 @@ final class CargoTailscaleDiscovery {
                 addresses: addresses
             )
         }
-        return (selfNames: selfNames, peers: peers)
+        return (selfNames: selfNames, peers: peers, backendState: root["BackendState"] as? String)
     }
 
     private static func runStatus() async throws -> Data {
@@ -703,8 +770,15 @@ final class CargoTailscaleDiscovery {
                 let output = Pipe()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = ["status", "--json"]
+                // The App Store Tailscale binary is both the GUI and the CLI and
+                // decides which one it is by whether SHLVL is set. A Dock-launched
+                // Cargo has no SHLVL, so without this the child tries to start the
+                // GUI, prints "The Tailscale GUI failed to start" and exits 0.
+                var environment = ProcessInfo.processInfo.environment
+                if environment["SHLVL"] == nil { environment["SHLVL"] = "1" }
+                process.environment = environment
                 process.standardOutput = output
-                process.standardError = Pipe()
+                process.standardError = FileHandle.nullDevice
                 do {
                     try process.run()
                     let data = output.fileHandleForReading.readDataToEndOfFile()

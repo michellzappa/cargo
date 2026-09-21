@@ -4,13 +4,18 @@ import HouseKit
 
 extension SettingsWindowController {
     /// Put.io · Chill · Library · Automation · General · About.
-    static func cargo(coordinator: CargoCoordinator) -> SettingsWindowController {
-        SettingsWindowController(appName: "Cargo", pages: [
+    static func cargo(
+        coordinator: CargoCoordinator,
+        remoteAccessPage: ((RemoteAccessPage) -> Void)? = nil
+    ) -> SettingsWindowController {
+        let remoteAccess = RemoteAccessPage(coordinator: coordinator)
+        remoteAccessPage?(remoteAccess)
+        return SettingsWindowController(appName: "Cargo", pages: [
             SettingsPage("Put.io", symbol: "icloud.and.arrow.down", controller: PutIOPage(coordinator: coordinator)),
             SettingsPage("Chill", symbol: "sparkles", controller: ChillPage(coordinator: coordinator)),
             SettingsPage("Library", symbol: "externaldrive", controller: LibraryPage(coordinator: coordinator)),
             SettingsPage("Automation", symbol: "gearshape.2", controller: AutomationPage(coordinator: coordinator)),
-            SettingsPage("Remote Access", symbol: "network", controller: RemoteAccessPage(coordinator: coordinator)),
+            SettingsPage("Remote Access", symbol: "network", controller: remoteAccess),
             SettingsPage("General", symbol: "gearshape", controller: GeneralPage(
                 launchAtLogin: (
                     get: { coordinator.state.settings.launchAtLoginEnabled },
@@ -34,7 +39,7 @@ final class RemoteAccessPage: CargoPage {
     private let endpointLabel = SettingsForm.caption("")
     private let tokenLabel = SettingsForm.caption("")
     private let serverURLField = SettingsForm.textField(
-        placeholder: "http://192.168.1.20:39817",
+        placeholder: "cargo://pair?… or http://192.168.1.20:39817",
         width: 300
     )
     private let clientNameField = SettingsForm.textField(
@@ -53,6 +58,7 @@ final class RemoteAccessPage: CargoPage {
     private let clientsLabel = SettingsForm.caption("")
     private let tailscalePopup = SettingsForm.popup()
     private lazy var copyTokenButton = SettingsForm.button("Copy token", target: self, action: #selector(copyToken))
+    private lazy var copyPairingLinkButton = SettingsForm.button("Copy pairing link", target: self, action: #selector(copyPairingLink))
     private lazy var rotateTokenButton = SettingsForm.button("Rotate…", target: self, action: #selector(rotateToken))
     private lazy var connectClientButton = SettingsForm.button("Connect", target: self, action: #selector(connectClient))
     private lazy var disconnectClientButton = SettingsForm.button("Disconnect", target: self, action: #selector(disconnectClient))
@@ -70,6 +76,7 @@ final class RemoteAccessPage: CargoPage {
         row("Network", scopePopup)
         row("Endpoint", endpointLabel)
         row("Token", [tokenLabel, copyTokenButton, rotateTokenButton])
+        row("Pair a client", copyPairingLinkButton)
         note("Loopback is the safe default. Local network mode listens on all local IPv4 interfaces; keep it behind your Mac firewall and rotate the token if another device has seen it.")
 
         section("Connect to another Cargo")
@@ -78,6 +85,7 @@ final class RemoteAccessPage: CargoPage {
         tailscalePopup.action = #selector(tailscaleServerSelected)
         row("Auto-find", [tailscalePopup, findTailscaleButton])
         row("Resident address", serverURLField)
+        note("Paste the resident's pairing link here and press Connect; it fills the address and token.")
         row("Client name", clientNameField)
         row("Token", [remoteTokenField, connectClientButton, disconnectClientButton])
         row("Status", clientStatusLabel)
@@ -155,6 +163,50 @@ final class RemoteAccessPage: CargoPage {
         }
     }
 
+    /// Everything a client needs, in one string. Switches the resident to
+    /// local-network scope when it is loopback-only, since a link nobody can
+    /// reach is worse than none.
+    @objc private func copyPairingLink() {
+        copyPairingLinkButton.isEnabled = false
+        statusLabel.stringValue = "Building pairing link…"
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { copyPairingLinkButton.isEnabled = true }
+            do {
+                let token = try coordinator.ensureRemoteAPIToken()
+                var notes: [String] = []
+                if coordinator.state.settings.remoteNetworkScope == .localhost {
+                    try coordinator.updateSettings { $0.remoteNetworkScope = .localNetwork }
+                    notes.append("Network set to Local network")
+                }
+                let host: String
+                if let dnsName = await CargoTailscaleDiscovery.selfDNSName() {
+                    host = dnsName
+                } else {
+                    host = ProcessInfo.processInfo.hostName
+                    notes.append("no Tailscale, using \(host)")
+                }
+                let link = CargoPairingLink(
+                    serverURL: "http://\(host):\(CargoHTTPServer.Configuration.defaultPort)",
+                    token: token
+                )
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(link.urlString, forType: .string)
+                statusLabel.stringValue = (["Pairing link copied · paste it into the other Cargo's Resident address"] + notes).joined(separator: " · ")
+                refresh()
+            } catch {
+                statusLabel.stringValue = error.localizedDescription
+            }
+        }
+    }
+
+    /// Fills the client fields from a pairing link and connects.
+    func connect(with link: CargoPairingLink) {
+        serverURLField.stringValue = link.serverURL
+        remoteTokenField.stringValue = link.token
+        connectClient()
+    }
+
     @objc private func rotateToken() {
         let alert = NSAlert()
         alert.messageText = "Rotate remote-access token?"
@@ -176,6 +228,10 @@ final class RemoteAccessPage: CargoPage {
     }
 
     @objc private func connectClient() {
+        if let link = CargoPairingLink(parsing: serverURLField.stringValue) {
+            serverURLField.stringValue = link.serverURL
+            remoteTokenField.stringValue = link.token
+        }
         let address = serverURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !address.isEmpty else {
             statusLabel.stringValue = "Enter the resident Cargo address"

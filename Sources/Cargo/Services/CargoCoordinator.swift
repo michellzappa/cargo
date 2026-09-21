@@ -26,6 +26,7 @@ final class CargoCoordinator {
         case remoteFileMissing
         case localCopyMissing
         case localCopySizeMismatch
+        case remoteSizeUnknown
         case inboxFileMissing
         case ambiguousMedia
         case destinationAlreadyExists
@@ -50,6 +51,8 @@ final class CargoCoordinator {
                 "Cargo could not verify the local copy because it is missing."
             case .localCopySizeMismatch:
                 "Cargo did not delete the Put.io file because the local copy size does not match."
+            case .remoteSizeUnknown:
+                "Cargo did not delete the Put.io file because Put.io reported no size to verify against."
             case .inboxFileMissing:
                 "The downloaded file is no longer in the Cargo inbox."
             case .ambiguousMedia:
@@ -1486,12 +1489,15 @@ final class CargoCoordinator {
             throw SettingsError.remoteFileMissing
         }
 
-        guard remoteFile.sizeBytes <= 0 else {
-            let localSize = try FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? NSNumber
-            guard localSize?.int64Value == remoteFile.sizeBytes else {
-                throw SettingsError.localCopySizeMismatch
-            }
-            return
+        // Verification is the only thing standing between a download and a
+        // trash-skipping remote delete, so an unknown remote size must fail
+        // rather than pass by default.
+        guard remoteFile.sizeBytes > 0 else {
+            throw SettingsError.remoteSizeUnknown
+        }
+        let localSize = try FileManager.default.attributesOfItem(atPath: localURL.path)[.size] as? NSNumber
+        guard localSize?.int64Value == remoteFile.sizeBytes else {
+            throw SettingsError.localCopySizeMismatch
         }
     }
 

@@ -421,6 +421,27 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(peers.first?.address, "100.64.0.2")
     }
 
+    func testPairingLinkRoundTripsAndRejectsOtherInput() {
+        let link = CargoPairingLink(serverURL: "http://mini-4p.tailb7e9cf.ts.net:39817", token: "ab+c/d=e")
+        let string = link.urlString
+        XCTAssertTrue(string.hasPrefix("cargo://pair?"))
+        XCTAssertEqual(CargoPairingLink(parsing: " \(string)\n"), link)
+        XCTAssertEqual(CargoPairingLink(parsing: URL(string: string)!), link)
+        XCTAssertNil(CargoPairingLink(parsing: "http://192.168.1.20:39817"))
+        XCTAssertNil(CargoPairingLink(parsing: "cargo://pair?url=http://x:1"))
+    }
+
+    func testTailscaleStatusParserSurfacesPlainTextCLIMessages() {
+        // The App Store binary prints this (and exits 0) when it thinks it is the GUI.
+        let text = Data("The Tailscale GUI failed to start: The operation couldn’t be completed.\n".utf8)
+        XCTAssertThrowsError(try CargoTailscaleDiscovery.parseStatus(text)) { error in
+            guard case .cliMessage(let message) = error as? CargoTailscaleDiscoveryError else {
+                return XCTFail("expected cliMessage, got \(error)")
+            }
+            XCTAssertTrue(message.hasPrefix("The Tailscale GUI failed to start"))
+        }
+    }
+
     @MainActor
     func testRemoteAPIExecutesCommandsThroughCommandRoute() async throws {
         let directory = FileManager.default.temporaryDirectory
@@ -892,6 +913,67 @@ final class CargoTests: XCTestCase {
         XCTAssertEqual(coordinator.state.deletedRemoteFileIDs, [file.id])
         XCTAssertEqual(coordinator.state.deletedRemoteFolderIDs, [folder.id])
         XCTAssertEqual(coordinator.state.localJobs.first?.status, .needsReview)
+    }
+
+    @MainActor
+    func testUnknownRemoteSizeNeverDeletesRemoteFile() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoUnknownSizeTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        let libraryRoot = directory.appendingPathComponent("Library", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let file = RemoteFile(
+            id: 91,
+            name: "Movie.2026.mkv",
+            path: "Movie.2026.mkv",
+            type: .video,
+            parentID: 0,
+            sizeBytes: 0,
+            createdAt: Date()
+        )
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.remoteFiles = [file]
+        state.remoteMediaFiles = [file]
+        state.settings = CargoSettings(
+            libraryRootPath: libraryRoot.path,
+            automaticOrganizationEnabled: false,
+            automaticRemoteCleanupEnabled: true
+        )
+        try store.replace(with: state)
+
+        let recorder = StubDeleteRecorder()
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient(deleteRecorder: recorder))
+        coordinator.enqueueLocalSync(remoteFileID: file.id)
+        await coordinator.processLocalSync(remoteFileID: file.id)
+
+        XCTAssertEqual(recorder.ids, [])
+        XCTAssertTrue(coordinator.state.deletedRemoteFileIDs.isEmpty)
+    }
+
+    func testStoreKeepsBackupAndPreservesUndecodableState() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoStoreTests-\(UUID().uuidString)", isDirectory: true)
+        let stateURL = directory.appendingPathComponent("state.json")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let store = CargoStore(stateURL: stateURL)
+        var state = store.snapshot()
+        state.settings.refreshIntervalMinutes = 7
+        try store.replace(with: state)
+        state.settings.refreshIntervalMinutes = 9
+        try store.replace(with: state)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let backup = try decoder.decode(CargoState.self, from: Data(contentsOf: store.backupURL))
+        XCTAssertEqual(backup.settings.refreshIntervalMinutes, 7)
+
+        try Data("{not json".utf8).write(to: stateURL)
+        let reloaded = CargoStore(stateURL: stateURL)
+        XCTAssertEqual(reloaded.snapshot().settings.refreshIntervalMinutes, CargoState.empty.settings.refreshIntervalMinutes)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stateURL.appendingPathExtension("corrupt").path))
+        XCTAssertEqual(try String(contentsOf: stateURL.appendingPathExtension("corrupt"), encoding: .utf8), "{not json")
     }
 
     @MainActor
