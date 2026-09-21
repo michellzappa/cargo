@@ -244,8 +244,7 @@ final class CargoRemoteAPIRouter {
         guard !query.isEmpty else {
             throw CargoRemoteAPIError.badRequest("The query cannot be empty.")
         }
-        let snapshot = try await controller.execute(.searchChill(query: query))
-        return success(snapshot.chillSearch, requestID: requestID)
+        return success(try await controller.search(query: query), requestID: requestID)
     }
 
     private func events(_ request: CargoAPIRequest, requestID: String) throws -> CargoAPIResponse {
@@ -485,6 +484,10 @@ final class CargoRemoteAPIClient: @unchecked Sendable {
             "/v1/presence/unregister",
             body: CargoRemotePresenceHeartbeat(id: clientID)
         )
+    }
+
+    func search(query: String) async throws -> CargoRemoteSearchState {
+        try await post("v1/discover/search", body: CargoAPISearchRequest(query: query))
     }
 
     func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot {
@@ -892,6 +895,11 @@ final class CargoRemoteClientSession {
             status = error.localizedDescription
         }
         notifyChange()
+    }
+
+    func search(query: String) async throws -> CargoRemoteSearchState {
+        guard let client else { throw CargoRemoteAPIClient.ClientError.invalidResponse }
+        return try await client.search(query: query)
     }
 
     func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot {

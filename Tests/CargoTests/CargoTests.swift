@@ -221,6 +221,7 @@ final class CargoTests: XCTestCase {
             .refreshChillCatalog,
             .searchChill(query: "The Bear 2024"),
             .sendChillResult(id: "release-1"),
+            .sendChillRelease(url: "magnet:?xt=urn:btih:release", title: "Release 1"),
             .sendChillMovie(id: "movie-1"),
             .addTransfer(url: "magnet:?xt=urn:btih:release"),
             .cancelTransfer(id: 42),

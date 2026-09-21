@@ -616,6 +616,9 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case refreshChillCatalog
     case searchChill(query: String)
     case sendChillResult(id: String)
+    /// A release the client found through its own per-client search; the
+    /// resident never held it, so the link travels with the command.
+    case sendChillRelease(url: String, title: String?)
     case sendChillMovie(id: String)
     case addTransfer(url: String)
     case cancelTransfer(id: Int)
@@ -634,6 +637,7 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case query
         case id
         case url
+        case title
         case remoteFileID
     }
 
@@ -642,6 +646,7 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case refreshChillCatalog
         case searchChill
         case sendChillResult
+        case sendChillRelease
         case sendChillMovie
         case addTransfer
         case cancelTransfer
@@ -667,6 +672,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             self = .searchChill(query: try values.decode(String.self, forKey: .query))
         case .sendChillResult:
             self = .sendChillResult(id: try values.decode(String.self, forKey: .id))
+        case .sendChillRelease:
+            self = .sendChillRelease(
+                url: try values.decode(String.self, forKey: .url),
+                title: try values.decodeIfPresent(String.self, forKey: .title)
+            )
         case .sendChillMovie:
             self = .sendChillMovie(id: try values.decode(String.self, forKey: .id))
         case .addTransfer:
@@ -707,6 +717,10 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case .sendChillResult(let id):
             try values.encode(Kind.sendChillResult, forKey: .type)
             try values.encode(id, forKey: .id)
+        case .sendChillRelease(let url, let title):
+            try values.encode(Kind.sendChillRelease, forKey: .type)
+            try values.encode(url, forKey: .url)
+            try values.encodeIfPresent(title, forKey: .title)
         case .sendChillMovie(let id):
             try values.encode(Kind.sendChillMovie, forKey: .type)
             try values.encode(id, forKey: .id)
@@ -757,6 +771,7 @@ enum CargoRemoteControlError: LocalizedError, Equatable, Sendable {
 @MainActor
 protocol CargoRemoteControlling: AnyObject {
     func snapshot() -> CargoRemoteSnapshot
+    func search(query: String) async throws -> CargoRemoteSearchState
     func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot
 }
 
@@ -800,6 +815,17 @@ final class CargoRemoteController: CargoRemoteControlling {
         )
     }
 
+    /// Per-client search: runs against Chill and returns the results without
+    /// touching the resident's own Discover page.
+    func search(query: String) async throws -> CargoRemoteSearchState {
+        let results = try await coordinator.chillReleases(matching: query)
+        return CargoRemoteSearchState(
+            query: query,
+            status: "\(results.count) result\(results.count == 1 ? "" : "s")",
+            results: results.map(CargoRemoteSearchResult.init)
+        )
+    }
+
     func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot {
         switch command {
         case .refresh:
@@ -813,6 +839,8 @@ final class CargoRemoteController: CargoRemoteControlling {
                 throw CargoRemoteControlError.targetNotFound("Chill release \(id)")
             }
             try await coordinator.sendChillResult(result)
+        case .sendChillRelease(let url, let title):
+            try await coordinator.sendChillRelease(url: url, title: title)
         case .sendChillMovie(let id):
             guard let movie = coordinator.chillCatalogMovies.first(where: { $0.id == id }) else {
                 throw CargoRemoteControlError.targetNotFound("Chill movie \(id)")

@@ -219,17 +219,11 @@ final class CargoCoordinator {
         remoteClientSession.snapshot?.chill.status ?? chillStatus
     }
 
-    var dashboardChillSearchQuery: String {
-        remoteClientSession.snapshot?.chillSearch.query ?? chillSearchQuery
-    }
-
-    var dashboardChillSearchResults: [ChillSearchResult] {
-        remoteClientSession.snapshot?.chillSearch.results.map(ChillSearchResult.init) ?? chillSearchResults
-    }
-
-    var dashboardChillSearchStatus: String {
-        remoteClientSession.snapshot?.chillSearch.status ?? chillSearchStatus
-    }
+    // Search is per machine: a client runs it through the resident but keeps
+    // the query and results to itself, so two screens never fight over one box.
+    var dashboardChillSearchQuery: String { chillSearchQuery }
+    var dashboardChillSearchResults: [ChillSearchResult] { chillSearchResults }
+    var dashboardChillSearchStatus: String { chillSearchStatus }
 
     var dashboardChillCatalogMovies: [ChillMovie] {
         remoteClientSession.snapshot?.chillCatalog.movies.map(ChillMovie.init) ?? chillCatalogMovies
@@ -315,37 +309,42 @@ final class CargoCoordinator {
 
     func searchChill(query: String) async {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isRemoteClientMode {
-            _ = try? await remoteClientSession.execute(.searchChill(query: trimmedQuery))
-            return
-        }
         chillSearchQuery = trimmedQuery
         guard !trimmedQuery.isEmpty else {
             chillSearchResults = []
             chillSearchStatus = "Enter a title, show, or release"
             return
         }
-        if !isChillConnected, chillStatus.hasPrefix("Token saved") {
-            await verifyChillConnection()
-        }
-        guard isChillConnected else {
-            chillSearchResults = []
-            chillSearchStatus = "Connect Chill in Settings → Chill"
-            return
-        }
-
         chillSearchStatus = "Searching Chill…"
         do {
-            chillSearchResults = try await chillClient.search(query: trimmedQuery)
-                .sorted {
-                    if $0.seeders != $1.seeders { return $0.seeders > $1.seeders }
-                    return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-                }
-            chillSearchStatus = "\(chillSearchResults.count) result\(chillSearchResults.count == 1 ? "" : "s")"
+            if isRemoteClientMode {
+                let remote = try await remoteClientSession.search(query: trimmedQuery)
+                chillSearchResults = remote.results.map(ChillSearchResult.init)
+                chillSearchStatus = remote.status
+            } else {
+                chillSearchResults = try await chillReleases(matching: trimmedQuery)
+                chillSearchStatus = "\(chillSearchResults.count) result\(chillSearchResults.count == 1 ? "" : "s")"
+            }
         } catch {
             chillSearchResults = []
             chillSearchStatus = error.localizedDescription
         }
+    }
+
+    /// The stateless core of a Chill search, shared by this Mac's Discover
+    /// page and by remote clients searching through the resident.
+    func chillReleases(matching query: String) async throws -> [ChillSearchResult] {
+        if !isChillConnected, chillStatus.hasPrefix("Token saved") {
+            await verifyChillConnection()
+        }
+        guard isChillConnected else {
+            throw ChillAPIClient.ClientError.requestFailed("Connect Chill in Settings → Chill")
+        }
+        return try await chillClient.search(query: query)
+            .sorted {
+                if $0.seeders != $1.seeders { return $0.seeders > $1.seeders }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
     }
 
     func refreshChillCatalog() async {
@@ -452,8 +451,12 @@ final class CargoCoordinator {
     }
 
     func sendChillResult(_ result: ChillSearchResult) async throws {
-        if try await executeRemoteIfNeeded(.sendChillResult(id: result.id)) { return }
+        if try await executeRemoteIfNeeded(.sendChillRelease(url: result.link, title: result.releaseTitle)) { return }
         try await sendChillTransfer(url: result.link, title: result.releaseTitle)
+    }
+
+    func sendChillRelease(url: String, title: String?) async throws {
+        try await sendChillTransfer(url: url, title: title)
     }
 
     func sendChillMovie(_ movie: ChillMovie) async throws {
