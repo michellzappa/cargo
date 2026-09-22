@@ -228,6 +228,8 @@ final class CargoTests: XCTestCase {
             .retryTransfer(id: 43),
             .cleanFinishedTransfers,
             .requestExtraction(remoteFileID: 44),
+            .openRemoteFolder(remoteFolderID: 46),
+            .goBackRemoteFolder,
             .deleteRemoteFile(remoteFileID: 45),
             .enqueueLocalSync(remoteFileID: 99),
             .organizeLocalJob(id: UUID()),

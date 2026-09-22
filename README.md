@@ -85,6 +85,7 @@ behind the Mac firewall or a tailnet, and the token can be rotated at any time.
 ## Requirements
 
 - macOS 14 (Sonoma) or later
+- iOS 17 or later for the optional companion app
 - A Put.io account. Cargo authorizes in the browser through its registered
   OAuth app and the `cargo://oauth/callback` scheme; the token lives in Keychain.
 - An SSD (or any folder) for the library. Cargo keeps a security-scoped
@@ -100,6 +101,8 @@ yourself:
 
 ```sh
 ./scripts/build-app.sh      # → /Applications/Cargo.app, signed, icon regenerated
+xcodegen generate
+xcodebuild -project Cargo.xcodeproj -scheme CargoIOS -sdk iphonesimulator
 ```
 
 Needs `xcodegen` and two sibling checkouts next to this repo:
@@ -147,6 +150,8 @@ AppKit throughout, Swift 6 strict concurrency, no storyboards. Dependencies:
 | `Core/CargoStore` | The JSON state file, with backup and corrupt-file preservation |
 | `Core/CargoRemoteControl` | Remote-safe read models, transport-neutral commands, presence registry |
 | `Services/CargoRemoteAPI`, `CargoHTTPServer` | HTTP API v1 (bearer token, constant-time compare), discovery, Tailscale peer auto-find, client session |
+| `Packages/CargoRemoteKit` | Foundation-only remote models, commands, pairing, URLSession client, and contract tests shared with iOS |
+| `Sources/CargoIOS` | SwiftUI companion target; resident connection, Keychain token, polling, mobile dashboard |
 | `UI/*` | Dashboard window, pages, tables, poster grid, ⌘K search, settings pages |
 
 ### HTTP API
@@ -176,6 +181,14 @@ Commands: `refresh`, `refreshChillCatalog`, `sendChillRelease`,
 See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
 for the working notes on risks — both are the author's ledgers rather than
 polished docs.
+
+### iOS companion
+
+The iOS target is a client only. It never receives Put.io, Chill, TMDB,
+subtitle, or SSD credentials; it stores only the resident address and bearer
+token in the iOS Keychain. Pair it by opening or pasting the resident's
+`cargo://pair` link. The app uses the revisioned `/v1/events` feed while
+foregrounded and shows the last cached snapshot after a relaunch.
 
 ## License
 

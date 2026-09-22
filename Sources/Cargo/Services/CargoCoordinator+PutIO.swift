@@ -80,6 +80,7 @@ extension CargoCoordinator {
     }
 
     func openRemoteFolder(remoteFolderID: Int) async {
+        if (try? await executeRemoteIfNeeded(.openRemoteFolder(remoteFolderID: remoteFolderID))) == true { return }
         guard let folder = state.remoteFiles.first(where: { $0.id == remoteFolderID && $0.isFolder }) else {
             return
         }
@@ -97,6 +98,7 @@ extension CargoCoordinator {
     }
 
     func goBackRemoteFolder() async {
+        if (try? await executeRemoteIfNeeded(.goBackRemoteFolder)) == true { return }
         guard let previousFolder = remoteFolderStack.popLast() else { return }
 
         do {

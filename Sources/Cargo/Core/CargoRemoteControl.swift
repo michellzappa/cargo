@@ -625,6 +625,8 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case retryTransfer(id: Int)
     case cleanFinishedTransfers
     case requestExtraction(remoteFileID: Int)
+    case openRemoteFolder(remoteFolderID: Int)
+    case goBackRemoteFolder
     case deleteRemoteFile(remoteFileID: Int)
     case enqueueLocalSync(remoteFileID: Int)
     case organizeLocalJob(id: UUID)
@@ -653,6 +655,8 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case retryTransfer
         case cleanFinishedTransfers
         case requestExtraction
+        case openRemoteFolder
+        case goBackRemoteFolder
         case deleteRemoteFile
         case enqueueLocalSync
         case organizeLocalJob
@@ -689,6 +693,10 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             self = .cleanFinishedTransfers
         case .requestExtraction:
             self = .requestExtraction(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
+        case .openRemoteFolder:
+            self = .openRemoteFolder(remoteFolderID: try values.decode(Int.self, forKey: .remoteFileID))
+        case .goBackRemoteFolder:
+            self = .goBackRemoteFolder
         case .deleteRemoteFile:
             self = .deleteRemoteFile(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
         case .enqueueLocalSync:
@@ -738,6 +746,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case .requestExtraction(let remoteFileID):
             try values.encode(Kind.requestExtraction, forKey: .type)
             try values.encode(remoteFileID, forKey: .remoteFileID)
+        case .openRemoteFolder(let remoteFolderID):
+            try values.encode(Kind.openRemoteFolder, forKey: .type)
+            try values.encode(remoteFolderID, forKey: .remoteFileID)
+        case .goBackRemoteFolder:
+            try values.encode(Kind.goBackRemoteFolder, forKey: .type)
         case .deleteRemoteFile(let remoteFileID):
             try values.encode(Kind.deleteRemoteFile, forKey: .type)
             try values.encode(remoteFileID, forKey: .remoteFileID)
@@ -856,11 +869,20 @@ final class CargoRemoteController: CargoRemoteControlling {
             try await coordinator.cleanFinishedTransfers()
         case .requestExtraction(let remoteFileID):
             try await coordinator.requestExtraction(remoteFileID: remoteFileID)
+        case .openRemoteFolder(let remoteFolderID):
+            await coordinator.openRemoteFolder(remoteFolderID: remoteFolderID)
+        case .goBackRemoteFolder:
+            await coordinator.goBackRemoteFolder()
         case .deleteRemoteFile(let remoteFileID):
             try await coordinator.deleteRemoteFile(remoteFileID: remoteFileID)
         case .enqueueLocalSync(let remoteFileID):
             coordinator.enqueueLocalSync(remoteFileID: remoteFileID)
-            await coordinator.processLocalSync(remoteFileID: remoteFileID)
+            // Queue the resident-side work and return immediately. Downloads
+            // can outlive a phone request; progress is delivered by the
+            // revisioned snapshot feed instead of holding an HTTP request open.
+            Task { @MainActor in
+                await coordinator.processLocalSync(remoteFileID: remoteFileID)
+            }
         case .organizeLocalJob(let id):
             _ = try coordinator.organizeLocalJob(jobID: id)
         case .refreshWatchlist:

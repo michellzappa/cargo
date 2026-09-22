@@ -114,6 +114,21 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Reconnect: the heartbeat re-registers after a resident restart. Streaming delivery is still open; the revisioned polling feed remains.
 - [x] Validated across two Macs over Tailscale (pairing link, per-client search).
 
+### 8. iOS SwiftUI companion
+
+- [x] Add an iOS 17 target in the existing XcodeGen project.
+- [x] Add `CargoRemoteKit` with the remote JSON models, commands, pairing
+  parser, URLSession client, and contract fixtures.
+- [x] Add Keychain-backed iOS pairing and resident presence registration.
+- [x] Add foreground revision polling and cached last-known snapshots.
+- [x] Add SwiftUI screens for Transfers, Files, Library, Discover, Watchlist,
+  Inbox, History, and Settings.
+- [x] Route folder navigation and long-running local sync through the resident.
+- [ ] Validate pairing and commands against a real resident from an iPhone.
+- [ ] Replace long-lived bearer tokens in pairing URLs with one-time exchange
+  codes before broad distribution.
+- [ ] Add push notifications or opportunistic background refresh if needed.
+
 ## Non-goals for the first release
 
 - indexer management (Chill is the provider)

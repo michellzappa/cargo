@@ -16,6 +16,8 @@ packages:
   SwiftNIO:
     url: https://github.com/apple/swift-nio.git
     version: 2.103.0
+  CargoRemoteKit:
+    path: Packages/CargoRemoteKit
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -73,6 +75,23 @@ targets:
       - path: Tests/CargoTests
     dependencies:
       - target: Cargo
+  CargoIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Sources/CargoIOS
+    dependencies:
+      - package: CargoRemoteKit
+        product: CargoRemoteKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.cargo.CargoIOS
+        PRODUCT_NAME: Cargo
+        INFOPLIST_FILE: Resources/CargoIOS-Info.plist
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
 schemes:
   Cargo:
     build:
@@ -87,5 +106,13 @@ schemes:
         - CargoTests
     profile:
       config: Release
+    archive:
+      config: Release
+  CargoIOS:
+    build:
+      targets:
+        CargoIOS: all
+    run:
+      config: Debug
     archive:
       config: Release
