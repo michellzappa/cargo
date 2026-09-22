@@ -1,13 +1,25 @@
 import AppKit
 
+private extension CargoStartPage {
+    var page: Page {
+        switch self {
+        case .discover: .discover
+        case .transfers: .transfers
+        case .files: .files
+        case .inbox: .inbox
+        case .library: .library
+        case .watchlist: .watchlist
+        case .history: .history
+        }
+    }
+}
+
 /// Sidebar + content split. Owns one view controller per page and swaps them in the detail pane.
 @MainActor
 final class CargoNavigationViewController: NSSplitViewController, NSTableViewDataSource, NSTableViewDelegate {
     private let coordinator: CargoCoordinator
     private let sidebarTableView = NSTableView()
     private let connectionDot = NSView()
-    private let connectionLabel = Theme.label(style: .detail, lineBreak: .byTruncatingTail)
-    private let updatedLabel = Theme.label(style: .caption)
     private let diskLabel = Theme.label(style: .caption)
     private let diskIndicator = NSProgressIndicator()
     private var emptyingTrash = false
@@ -46,8 +58,10 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         super.viewDidLoad()
 
         let sidebarItem = NSSplitViewItem(sidebarWithViewController: makeSidebarViewController())
-        sidebarItem.minimumThickness = 180
-        sidebarItem.maximumThickness = 260
+        // Keep the navigation rail stable. Intrinsic widths from long media
+        // titles and footer readouts must never resize it per page.
+        sidebarItem.minimumThickness = 220
+        sidebarItem.maximumThickness = 220
         sidebarItem.canCollapse = true
         sidebarItem.allowsFullHeightLayout = true
         sidebarItem.titlebarSeparatorStyle = .none
@@ -73,7 +87,7 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             name: CargoCoordinator.didRequestChillSearch,
             object: coordinator
         )
-        select(.transfers)
+        select(coordinator.state.settings.startPage.page)
         updateFooter()
     }
 
@@ -149,16 +163,16 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         sidebarTableView.delegate = self
         scrollView.documentView = sidebarTableView
 
-        // Footer: connection, last update, Put.io storage.
+        // Footer: one Put.io status/storage item and one SSD status/storage item.
         connectionDot.wantsLayer = true
         connectionDot.layer?.cornerRadius = 4
         connectionDot.translatesAutoresizingMaskIntoConstraints = false
         connectionDot.widthAnchor.constraint(equalToConstant: 8).isActive = true
         connectionDot.heightAnchor.constraint(equalToConstant: 8).isActive = true
-        let connectionRow = NSStackView(views: [connectionDot, connectionLabel])
-        connectionRow.orientation = .horizontal
-        connectionRow.alignment = .centerY
-        connectionRow.spacing = 6
+        let putIORow = NSStackView(views: [connectionDot, diskLabel])
+        putIORow.orientation = .horizontal
+        putIORow.alignment = .centerY
+        putIORow.spacing = 6
 
         for indicator in [diskIndicator, ssdIndicator] {
             indicator.style = .bar
@@ -174,15 +188,19 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         diskLabel.menu = storageMenu
         diskIndicator.menu = storageMenu
 
-        let footer = NSStackView(views: [connectionRow, updatedLabel, diskLabel, diskIndicator, ssdLabel, ssdIndicator])
+        diskLabel.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(openPutIOStorage(_:))))
+        diskIndicator.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(openPutIOStorage(_:))))
+        ssdLabel.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(openSSDStorage(_:))))
+        ssdIndicator.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(openSSDStorage(_:))))
+
+        let footer = NSStackView(views: [putIORow, diskIndicator, ssdLabel, ssdIndicator])
         footer.orientation = .vertical
         footer.alignment = .leading
         footer.spacing = 4
         footer.translatesAutoresizingMaskIntoConstraints = false
         diskIndicator.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
         ssdIndicator.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
-        connectionRow.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
-        footer.setCustomSpacing(10, after: updatedLabel)
+        putIORow.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
         footer.setCustomSpacing(8, after: diskIndicator)
 
         root.addSubview(scrollView)
@@ -202,16 +220,13 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
 
     private func updateFooter() {
         let connected = coordinator.dashboardIsConnected
-        connectionDot.layer?.backgroundColor = (connected ? NSColor.systemGreen : NSColor.systemGray).cgColor
-        connectionLabel.stringValue = connected
-            ? coordinator.dashboardPutIOStatus.replacingOccurrences(of: "Connected as ", with: "")
-            : coordinator.dashboardPutIOStatus
-        connectionLabel.toolTip = coordinator.dashboardPutIOStatus
-        updatedLabel.stringValue = "Updated \(Formatters.time.string(from: coordinator.dashboardState.lastUpdated))"
+        connectionDot.isHidden = connected
+        connectionDot.layer?.backgroundColor = (connected ? NSColor.clear : NSColor.systemRed).cgColor
+        let putIOName = coordinator.dashboardPutIOStatus.replacingOccurrences(of: "Connected as ", with: "")
 
         if let disk = coordinator.dashboardDiskUsage {
-            diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"
-            diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes))"
+            diskLabel.stringValue = "Put.io · \(putIOName) · \(Formatters.shortBytes(disk.availableBytes)) free"
+            diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes)). Click to open Put.io files."
             diskIndicator.doubleValue = disk.fraction
             emptyTrashMenuItem.isEnabled = !coordinator.isRemoteClientMode
                 && (coordinator.trashSummary?.count ?? 0) > 0
@@ -220,15 +235,15 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             diskIndicator.isHidden = false
         } else {
             emptyTrashMenuItem.isEnabled = false
-            diskLabel.stringValue = connected ? "Put.io · Availability unavailable" : "Put.io · Not connected"
-            diskLabel.toolTip = coordinator.dashboardPutIOStatus
+            diskLabel.stringValue = connected ? "Put.io · \(putIOName) · Availability unavailable" : "Put.io · Not connected"
+            diskLabel.toolTip = "Click to open Put.io files. \(coordinator.dashboardPutIOStatus)"
             diskLabel.isHidden = false
             diskIndicator.isHidden = true
         }
 
         if coordinator.isRemoteClientMode {
             ssdLabel.stringValue = "SSD · Resident only"
-            ssdLabel.toolTip = "The resident Mac owns the local SSD."
+            ssdLabel.toolTip = "The resident Mac owns the local SSD. Click to open the resident library."
             ssdLabel.isHidden = false
             ssdIndicator.isHidden = true
             return
@@ -240,10 +255,10 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
            let free = values.volumeAvailableCapacityForImportantUsage, let total = values.volumeTotalCapacity, total > 0 {
             let volumeName = values.volumeName ?? "SSD"
             let repairSuffix = coordinator.libraryRootBookmarkNeedsRepair ? " · bookmark repair needed" : ""
-            ssdLabel.stringValue = "\(volumeName) · \(Formatters.shortBytes(free)) free\(repairSuffix)"
+            ssdLabel.stringValue = "SSD · \(volumeName) · \(Formatters.shortBytes(free)) free\(repairSuffix)"
             ssdLabel.toolTip = coordinator.libraryRootBookmarkNeedsRepair
-                ? "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total))). The saved path is working without prompting; re-select the library root in Settings only if you want to renew its bookmark."
-                : "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total)))"
+                ? "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total))). The saved path is working without prompting; click to open the library. Re-select the library root in Settings only if you want to renew its bookmark."
+                : "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total))). Click to open the library."
             ssdIndicator.doubleValue = 1 - Double(free) / Double(total)
             ssdLabel.isHidden = false
             ssdIndicator.isHidden = false
@@ -258,6 +273,14 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             ssdLabel.isHidden = false
             ssdIndicator.isHidden = true
         }
+    }
+
+    @objc private func openPutIOStorage(_ sender: Any?) {
+        select(.files)
+    }
+
+    @objc private func openSSDStorage(_ sender: Any?) {
+        select(.library)
     }
 
     @objc private func emptyPutIOTrashFromMenu(_ sender: Any?) {

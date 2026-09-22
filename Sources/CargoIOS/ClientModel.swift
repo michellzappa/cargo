@@ -3,6 +3,32 @@ import Foundation
 import Observation
 import Security
 
+enum CargoStartTab: String, CaseIterable, Identifiable {
+    case transfers
+    case files
+    case library
+    case discover
+    case watchlist
+    case inbox
+    case history
+    case settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .transfers: "Transfers"
+        case .files: "Files"
+        case .library: "Library"
+        case .discover: "Discover"
+        case .watchlist: "Watchlist"
+        case .inbox: "Inbox"
+        case .history: "History"
+        case .settings: "Settings"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class CargoClientModel {
@@ -26,6 +52,7 @@ final class CargoClientModel {
     var searchState: CargoRemoteSearchState?
     var connectionState: ConnectionState = .disconnected
     var residentAddress = ""
+    var startTab: CargoStartTab
     var lastError: String?
     var actionError: String?
 
@@ -42,6 +69,7 @@ final class CargoClientModel {
 
     init() {
         residentAddress = UserDefaults.standard.string(forKey: "residentAddress") ?? ""
+        startTab = CargoStartTab(rawValue: UserDefaults.standard.string(forKey: "startTab") ?? "") ?? .transfers
         clientID = UserDefaults.standard.string(forKey: "clientID").flatMap(UUID.init) ?? UUID()
         UserDefaults.standard.set(clientID.uuidString, forKey: "clientID")
         hasSavedToken = credentials.readToken() != nil
@@ -55,12 +83,47 @@ final class CargoClientModel {
         return false
     }
 
+    var hasSavedResident: Bool {
+        hasSavedToken && !residentAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    func displayTitle(for rawName: String) -> String {
+        CargoRemoteMediaTitle.clean(rawName)
+    }
+
+    func posterURL(for rawName: String) -> String? {
+        let wanted = normalize(displayTitle(for: rawName))
+        guard !wanted.isEmpty else { return nil }
+        return snapshot?.library.compactMap { item -> String? in
+            guard let poster = item.metadata?.posterURL else { return nil }
+            let candidate = normalize([item.title, item.year.map(String.init)].compactMap { $0 }.joined(separator: " "))
+            return candidate == wanted || candidate.contains(wanted) || wanted.contains(candidate) ? poster : nil
+        }.first
+    }
+
+    func setStartTab(_ tab: CargoStartTab) {
+        startTab = tab
+        UserDefaults.standard.set(tab.rawValue, forKey: "startTab")
+    }
+
+    private func normalize(_ value: String) -> String {
+        value.lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .joined(separator: " ")
+    }
+
     func restoreConnection() async {
         guard !restoreAttempted else { return }
         restoreAttempted = true
         guard !residentAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               hasSavedToken else { return }
         await connect(address: residentAddress, token: "", clearSnapshot: false)
+    }
+
+    func retrySavedConnection() async {
+        restoreAttempted = false
+        await restoreConnection()
     }
 
     func connect(address: String, token: String, clientName: String = "", clearSnapshot: Bool = true) async {

@@ -68,6 +68,20 @@ public enum CargoRemoteFileType: String, Codable, Sendable {
     }
 }
 
+public enum CargoRemoteMediaTitle {
+    /// Best-effort display title for a release filename. The resident also
+    /// sends this value when it can resolve it; this fallback keeps older
+    /// residents pleasant to use while they are being upgraded.
+    public static func clean(_ value: String) -> String {
+        var name = URL(fileURLWithPath: value).deletingPathExtension().lastPathComponent
+        name = name.replacingOccurrences(of: "\\[[^\\]]*\\]", with: " ", options: .regularExpression)
+        name = name.replacingOccurrences(of: "(?i)[ ._-](2160p|1080p|720p|480p|4k|8k|bluray|blu-ray|bdrip|brrip|webrip|web[- ]dl|webdl|h\\.?264|h\\.?265|x264|x265|hevc|avc|aac|eac3|ac3|dts|hdr|remux|proper|repack|yts|eztv|ethel|timesuck)(?:$|[ ._\\[-]).*", with: "", options: .regularExpression)
+        name = name.replacingOccurrences(of: "[._]+", with: " ", options: .regularExpression)
+        name = name.replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return name.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+    }
+}
+
 public enum CargoRemoteLibraryKind: String, Codable, Sendable {
     case movie
     case show
@@ -163,15 +177,19 @@ public struct CargoRemoteDiscovery: Codable, Equatable, Sendable {
 public struct CargoRemoteTransfer: Codable, Equatable, Sendable, Identifiable {
     public let id: Int
     public let name: String
+    public let displayName: String?
+    public let posterURL: String?
     public let status: CargoRemoteTransferStatus
     public let statusLabel: String
     public let progress: Double
     public let sizeBytes: Int64
     public let updatedAt: Date
 
-    public init(id: Int, name: String, status: CargoRemoteTransferStatus, statusLabel: String, progress: Double, sizeBytes: Int64, updatedAt: Date) {
+    public init(id: Int, name: String, displayName: String? = nil, posterURL: String? = nil, status: CargoRemoteTransferStatus, statusLabel: String, progress: Double, sizeBytes: Int64, updatedAt: Date) {
         self.id = id
         self.name = name
+        self.displayName = displayName
+        self.posterURL = posterURL
         self.status = status
         self.statusLabel = statusLabel
         self.progress = progress
@@ -183,6 +201,7 @@ public struct CargoRemoteTransfer: Codable, Equatable, Sendable, Identifiable {
 public struct CargoRemoteFile: Codable, Equatable, Sendable, Identifiable {
     public let id: Int
     public let name: String
+    public let posterURL: String?
     public let remotePath: String
     public let type: CargoRemoteFileType
     public let typeLabel: String
@@ -190,9 +209,10 @@ public struct CargoRemoteFile: Codable, Equatable, Sendable, Identifiable {
     public let sizeBytes: Int64
     public let createdAt: Date
 
-    public init(id: Int, name: String, remotePath: String, type: CargoRemoteFileType, typeLabel: String, parentID: Int, sizeBytes: Int64, createdAt: Date) {
+    public init(id: Int, name: String, posterURL: String? = nil, remotePath: String, type: CargoRemoteFileType, typeLabel: String, parentID: Int, sizeBytes: Int64, createdAt: Date) {
         self.id = id
         self.name = name
+        self.posterURL = posterURL
         self.remotePath = remotePath
         self.type = type
         self.typeLabel = typeLabel
@@ -206,6 +226,8 @@ public struct CargoRemoteSyncJob: Codable, Equatable, Sendable, Identifiable {
     public let id: UUID
     public let remoteFileID: Int
     public let name: String
+    public let displayName: String?
+    public let posterURL: String?
     public let status: CargoRemoteLocalSyncStatus
     public let statusLabel: String
     public let progress: Double
@@ -213,10 +235,12 @@ public struct CargoRemoteSyncJob: Codable, Equatable, Sendable, Identifiable {
     public let errorMessage: String?
     public let updatedAt: Date
 
-    public init(id: UUID, remoteFileID: Int, name: String, status: CargoRemoteLocalSyncStatus, statusLabel: String, progress: Double, hasError: Bool, errorMessage: String? = nil, updatedAt: Date) {
+    public init(id: UUID, remoteFileID: Int, name: String, displayName: String? = nil, posterURL: String? = nil, status: CargoRemoteLocalSyncStatus, statusLabel: String, progress: Double, hasError: Bool, errorMessage: String? = nil, updatedAt: Date) {
         self.id = id
         self.remoteFileID = remoteFileID
         self.name = name
+        self.displayName = displayName
+        self.posterURL = posterURL
         self.status = status
         self.statusLabel = statusLabel
         self.progress = progress
@@ -372,6 +396,7 @@ public struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
     public let id: String
     public let title: String
     public let year: Int
+    public let source: String?
     public let displayTitle: String
     public let link: String
     public let peers: Int64
@@ -390,6 +415,7 @@ public struct CargoRemoteSeries: Codable, Equatable, Identifiable, Sendable {
     public let imdbID: String
     public let title: String
     public let year: Int
+    public let source: String?
     public let posterURL: String
     public let rating: Double
     public let overview: String

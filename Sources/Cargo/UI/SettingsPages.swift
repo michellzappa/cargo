@@ -10,6 +10,7 @@ extension SettingsWindowController {
     ) -> SettingsWindowController {
         let remoteAccess = RemoteAccessPage(coordinator: coordinator)
         remoteAccessPage?(remoteAccess)
+        let startPageControl = CargoStartPageControl(coordinator: coordinator)
         return SettingsWindowController(appName: "Cargo", pages: [
             SettingsPage("Put.io", symbol: "icloud.and.arrow.down", controller: PutIOPage(coordinator: coordinator)),
             SettingsPage("Chill", symbol: "sparkles", controller: ChillPage(coordinator: coordinator)),
@@ -21,7 +22,8 @@ extension SettingsWindowController {
                     get: { coordinator.state.settings.launchAtLoginEnabled },
                     set: { value in try? coordinator.updateSettings { $0.launchAtLoginEnabled = value } }
                 ),
-                permissions: [.notifications]
+                permissions: [.notifications],
+                extras: { form in startPageControl.add(to: form) }
             )),
             SettingsPage("About", symbol: "info.circle", controller: AboutPage(
                 appName: "Cargo",
@@ -29,6 +31,42 @@ extension SettingsWindowController {
                 links: [("GitHub", URL(string: "https://github.com/michellzappa/cargo")!)]
             ))
         ])
+    }
+}
+
+@MainActor
+private final class CargoStartPageControl: NSObject {
+    private let coordinator: CargoCoordinator
+    private let popup = SettingsForm.popup()
+
+    init(coordinator: CargoCoordinator) {
+        self.coordinator = coordinator
+        super.init()
+        for page in CargoStartPage.allCases {
+            popup.addItem(withTitle: page.displayName)
+            popup.lastItem?.representedObject = page
+        }
+        popup.target = self
+        popup.action = #selector(changed(_:))
+    }
+
+    func add(to form: SettingsForm) {
+        form.section("Dashboard")
+        form.row("Start in", popup)
+        form.note("Choose the page Cargo opens when the main window appears.")
+        refresh()
+    }
+
+    private func refresh() {
+        let page = coordinator.state.settings.startPage
+        if let index = popup.itemArray.firstIndex(where: { ($0.representedObject as? CargoStartPage) == page }) {
+            popup.selectItem(at: index)
+        }
+    }
+
+    @objc private func changed(_ sender: NSPopUpButton) {
+        guard let page = sender.selectedItem?.representedObject as? CargoStartPage else { return }
+        try? coordinator.updateSettings { $0.startPage = page }
     }
 }
 

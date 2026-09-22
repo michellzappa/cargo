@@ -69,6 +69,8 @@ enum RemoteFileType: String, Codable, Sendable {
 struct RemoteTransfer: Codable, Identifiable, Sendable {
     let id: Int
     var name: String
+    /// Optional poster resolved by the resident for client displays.
+    var posterURL: String? = nil
     var status: RemoteTransferStatus
     var progress: Double
     var sizeBytes: Int64
@@ -79,6 +81,8 @@ struct RemoteFile: Codable, Identifiable, Sendable {
     let id: Int
     var name: String
     var path: String? = nil
+    /// Optional poster resolved by the resident for media rows.
+    var posterURL: String? = nil
     var type: RemoteFileType
     var parentID: Int
     var sizeBytes: Int64
@@ -148,17 +152,19 @@ struct LocalSyncJob: Codable, Identifiable, Sendable {
     var progress: Double
     var destination: String?
     var errorMessage: String?
+    /// Optional poster resolved by the resident for media rows.
+    var posterURL: String? = nil
     var updatedAt: Date
     /// Download attempts so far; interrupted downloads re-queue themselves
     /// (resuming from the `.part` file) until this hits the cap.
     var attempts: Int = 0
 
     private enum CodingKeys: String, CodingKey {
-        case id, remoteFileID, name, status, progress, destination, errorMessage, updatedAt, attempts
+        case id, remoteFileID, name, status, progress, destination, errorMessage, posterURL, updatedAt, attempts
     }
 
     init(id: UUID, remoteFileID: Int, name: String, status: LocalSyncStatus, progress: Double,
-         destination: String?, errorMessage: String?, updatedAt: Date, attempts: Int = 0) {
+         destination: String?, errorMessage: String?, posterURL: String? = nil, updatedAt: Date, attempts: Int = 0) {
         self.id = id
         self.remoteFileID = remoteFileID
         self.name = name
@@ -166,6 +172,7 @@ struct LocalSyncJob: Codable, Identifiable, Sendable {
         self.progress = progress
         self.destination = destination
         self.errorMessage = errorMessage
+        self.posterURL = posterURL
         self.updatedAt = updatedAt
         self.attempts = attempts
     }
@@ -179,6 +186,7 @@ struct LocalSyncJob: Codable, Identifiable, Sendable {
         progress = try c.decode(Double.self, forKey: .progress)
         destination = try c.decodeIfPresent(String.self, forKey: .destination)
         errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+        posterURL = try c.decodeIfPresent(String.self, forKey: .posterURL)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         attempts = try c.decodeIfPresent(Int.self, forKey: .attempts) ?? 0
     }
@@ -231,6 +239,28 @@ enum CargoRemoteNetworkScope: String, Codable, CaseIterable, Equatable, Sendable
     }
 }
 
+enum CargoStartPage: String, Codable, CaseIterable, Equatable, Sendable {
+    case discover
+    case transfers
+    case files
+    case inbox
+    case library
+    case watchlist
+    case history
+
+    var displayName: String {
+        switch self {
+        case .discover: "Discover"
+        case .transfers: "Transfers"
+        case .files: "Files"
+        case .inbox: "Inbox"
+        case .library: "Library"
+        case .watchlist: "Watchlist"
+        case .history: "History"
+        }
+    }
+}
+
 struct CargoSettings: Codable, Equatable, Sendable {
     var libraryRootBookmark: Data?
     var libraryRootPath: String?
@@ -261,6 +291,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var remoteClientEnabled: Bool
     /// URL of the resident Cargo API; its token lives in Keychain.
     var remoteServerURL: String
+    /// The first dashboard page shown when the main window opens.
+    var startPage: CargoStartPage
 
     static let refreshIntervalChoices = [1, 5, 10, 30]
 
@@ -286,7 +318,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         refreshIntervalMinutes: Int = 1,
         remoteNetworkScope: CargoRemoteNetworkScope = .localhost,
         remoteClientEnabled: Bool = false,
-        remoteServerURL: String = ""
+        remoteServerURL: String = "",
+        startPage: CargoStartPage = .transfers
     ) {
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
@@ -310,6 +343,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.remoteNetworkScope = remoteNetworkScope
         self.remoteClientEnabled = remoteClientEnabled
         self.remoteServerURL = remoteServerURL
+        self.startPage = startPage
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -335,6 +369,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case remoteNetworkScope
         case remoteClientEnabled
         case remoteServerURL
+        case startPage
     }
 
     init(from decoder: Decoder) throws {
@@ -363,6 +398,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
             ?? .localhost
         remoteClientEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteClientEnabled) ?? false
         remoteServerURL = try container.decodeIfPresent(String.self, forKey: .remoteServerURL) ?? ""
+        startPage = try container.decodeIfPresent(CargoStartPage.self, forKey: .startPage) ?? .transfers
     }
 
     static let `default` = CargoSettings()

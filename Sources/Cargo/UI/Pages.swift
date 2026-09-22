@@ -411,8 +411,12 @@ final class TransfersPageViewController: PageViewController {
     }
 
     override func sections() -> [ListSection] {
-        let rows = coordinator.dashboardState.transfers.map { transfer -> ListRow in
+        let state = coordinator.dashboardState
+        let rows = state.transfers.map { transfer -> ListRow in
             let isActive = transfer.status == .downloading || transfer.status == .waiting
+            let displayName = LibraryOrganizer.displayTitle(for: transfer.name)
+            let posterURL = transfer.posterURL.flatMap(URL.init(string:))
+                ?? LibraryOrganizer.posterURL(for: transfer.name, library: state.libraryItems, metadata: state.metadata)
             var actions: [RowAction] = []
             if transfer.status == .failed {
                 actions.append(RowAction(title: "Retry") { [weak self] in
@@ -423,7 +427,7 @@ final class TransfersPageViewController: PageViewController {
                 title: isActive ? "Cancel Transfer" : "Remove Transfer",
                 isDestructive: true,
                 confirmation: .init(
-                    message: "\(isActive ? "Cancel" : "Remove") “\(transfer.name)”?",
+                    message: "\(isActive ? "Cancel" : "Remove") “\(displayName)”?",
                     detail: isActive ? "The download stops and is removed from Put.io." : "Files already in Put.io are kept.",
                     button: isActive ? "Cancel Transfer" : "Remove",
                     pluralMessage: isActive ? "Cancel %d transfers?" : "Remove %d transfers?"
@@ -431,17 +435,18 @@ final class TransfersPageViewController: PageViewController {
             ) { [weak self] in
                 self?.run { try await self?.coordinator.cancelTransfer(id: transfer.id) }
             })
-            actions.append(copyAction("Copy Name", transfer.name))
+            actions.append(copyAction("Copy Name", displayName))
 
             return ListRow(
                 id: String(transfer.id),
-                title: transfer.name,
+                title: displayName,
                 details: [
                     "\(Formatters.percent(transfer.progress)) · \(Formatters.bytes(transfer.sizeBytes))",
                     "\(isActive ? "Started" : "Transferred") \(Formatters.dateTime.string(from: transfer.updatedAt))"
                 ],
                 badge: Self.badge(for: transfer.status),
                 progress: isActive ? transfer.progress : nil,
+                thumbnail: posterURL,
                 primaryAction: transfer.status == .failed ? actions.first : nil,
                 menuActions: actions
             )
@@ -1142,13 +1147,16 @@ final class InboxPageViewController: PageViewController {
         let downloading = state.localJobs
             .filter { coordinator.isRemoteClientMode ? $0.status != .completed : [.queued, .downloading, .importing, .failed].contains($0.status) }
             .map { job in
-                ListRow(
+                let displayName = LibraryOrganizer.displayTitle(for: job.name)
+                return ListRow(
                     id: job.id.uuidString,
-                    title: job.name,
+                    title: displayName,
                     details: [job.destination ?? "Destination not chosen", job.errorMessage].compactMap { $0 },
                     badge: Self.badge(for: job.status),
                     progress: job.status == .downloading ? job.progress : nil,
-                    menuActions: [copyAction("Copy Name", job.name), revealAction(job.destination)]
+                    thumbnail: job.posterURL.flatMap(URL.init(string:))
+                        ?? LibraryOrganizer.posterURL(for: job.name, library: state.libraryItems, metadata: state.metadata),
+                    menuActions: [copyAction("Copy Name", displayName), revealAction(job.destination)]
                 )
             }
 
@@ -1184,12 +1192,17 @@ final class InboxPageViewController: PageViewController {
                 }
                 return ListRow(
                     id: entry.sourceURL.path,
-                    title: entry.name,
+                    title: LibraryOrganizer.displayTitle(for: entry.name),
                     details: [
                         destination.map { "→ \($0)" } ?? "Review manually · \(preview.explanation)",
                         entry.job == nil ? "Not tracked by Cargo" : nil
                     ].compactMap { $0 },
                     badge: badge,
+                    thumbnail: LibraryOrganizer.posterURL(
+                        for: entry.name,
+                        library: state.libraryItems,
+                        metadata: state.metadata
+                    ),
                     primaryAction: organize,
                     menuActions: [
                         organize,
@@ -1215,12 +1228,15 @@ final class InboxPageViewController: PageViewController {
             .sorted { $0.updatedAt > $1.updatedAt }
             .prefix(10)
             .map { job in
-                ListRow(
+                let displayName = LibraryOrganizer.displayTitle(for: job.name)
+                return ListRow(
                     id: "organized-\(job.id.uuidString)",
-                    title: job.name,
+                    title: displayName,
                     details: [job.destination ?? "Destination unavailable"],
                     badge: .success("Organized"),
-                    menuActions: [revealAction(job.destination), copyAction("Copy Name", job.name)]
+                    thumbnail: job.posterURL.flatMap(URL.init(string:))
+                        ?? LibraryOrganizer.posterURL(for: job.name, library: state.libraryItems, metadata: state.metadata),
+                    menuActions: [revealAction(job.destination), copyAction("Copy Name", displayName)]
                 )
             }
 

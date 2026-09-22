@@ -76,6 +76,41 @@ enum LibraryOrganizer {
         )
     }
 
+    /// The title shown in media lists. Release metadata such as `[BluRay]`,
+    /// resolution, codec and release-group tags are implementation details,
+    /// not the title the user is looking for.
+    static func displayTitle(for fileName: String) -> String {
+        let safeName = safeFilename(fileName)
+        if let episode = episodeMarker(in: safeName) {
+            let showName = normalizedShowTitle(episode.prefix)
+            if !showName.isEmpty { return "(showName) · (episode.marker)" }
+        }
+
+        let cleaned = cleanedMovieFilename(safeName)
+        return URL(fileURLWithPath: cleaned).deletingPathExtension().lastPathComponent
+    }
+
+    static func posterURL(
+        for fileName: String,
+        library: [LibraryItem],
+        metadata: [String: TMDBMetadata]
+    ) -> URL? {
+        let wanted = normalizedForMatching(displayTitle(for: fileName))
+        guard !wanted.isEmpty else { return nil }
+
+        if let item = library.first(where: {
+            let title = normalizedForMatching($0.displayTitle)
+            return title == wanted || title.contains(wanted) || wanted.contains(title)
+        }), let poster = metadata[item.id]?.posterURL {
+            return poster
+        }
+
+        return metadata.values.first(where: {
+            let title = normalizedForMatching($0.title)
+            return title == wanted || title.contains(wanted) || wanted.contains(title)
+        })?.posterURL
+    }
+
     private static func episodeMarker(in fileName: String) -> (season: Int, marker: String, prefix: String)? {
         let expression = #"(?i)s(\d{1,2})e\d{1,3}(?:[-.]e?\d{1,3})?(?=[^0-9]|$)"#
         guard let regex = try? NSRegularExpression(pattern: expression),
@@ -138,6 +173,14 @@ enum LibraryOrganizer {
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)
+    }
+
+    private static func normalizedForMatching(_ value: String) -> String {
+        value
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .joined(separator: " ")
     }
 
     private static func removeReleaseMetadata(from value: String) -> String {

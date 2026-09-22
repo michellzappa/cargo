@@ -102,6 +102,86 @@ struct CargoPosterCard: View {
     }
 }
 
+/// The shared media row used by every media list. Keeping artwork, title,
+/// status, progress and errors in one component makes Transfers, Inbox,
+/// Put.io files, Library, Watchlist and Discover read as one product.
+struct CargoMediaLine: View {
+    let title: String
+    let subtitle: String?
+    let posterURL: String?
+    let badge: String?
+    let progress: Double?
+    let error: String?
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        posterURL: String? = nil,
+        badge: String? = nil,
+        progress: Double? = nil,
+        error: String? = nil
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.posterURL = posterURL
+        self.badge = badge
+        self.progress = progress
+        self.error = error
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            CargoPosterImage(urlString: posterURL, cornerRadius: 8)
+                .frame(width: 56, height: 84)
+                .clipped()
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.headline)
+                    .lineLimit(2)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                if let badge, !badge.isEmpty {
+                    Text(badge)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(badgeColor)
+                        .lineLimit(1)
+                }
+
+                if let progress {
+                    ProgressView(value: progress)
+                        .tint(.accentColor)
+                }
+
+                if let error, !error.isEmpty {
+                    Label(error, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
+    }
+
+    private var badgeColor: Color {
+        let lower = badge?.lowercased() ?? ""
+        if lower.contains("fail") || lower.contains("error") { return .red }
+        if lower.contains("complete") || lower.contains("organized") { return .green }
+        if lower.contains("download") || lower.contains("queued") || lower.contains("inbox") { return .orange }
+        return .secondary
+    }
+}
+
 enum CargoTitleDetailAction: Equatable {
     case sendMovie(id: String)
     case searchReleases(query: String)

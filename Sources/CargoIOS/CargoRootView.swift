@@ -7,7 +7,7 @@ struct CargoRootView: View {
 
     var body: some View {
         Group {
-            if model.isConnected {
+            if model.isConnected || model.hasSavedResident {
                 CargoDashboardView()
             } else {
                 CargoConnectView()
@@ -45,10 +45,13 @@ struct CargoConnectView: View {
                 Section {
                     Text("Pair with the Cargo resident Mac to control transfers and view its library. Put.io, Chill, metadata, and SSD settings stay on the resident.")
                         .foregroundStyle(.secondary)
+                    Text("You can paste the complete cargo://pair link here; Cargo will extract the resident address and token.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Resident") {
-                    TextField("http://mac-name:39817", text: $address)
+                    TextField("Paste pairing link or server address", text: $address)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -108,26 +111,57 @@ struct CargoConnectView: View {
 struct CargoDashboardView: View {
     @Environment(CargoClientModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
+    @State private var selectedTab: CargoStartTab = .transfers
 
     var body: some View {
-        TabView {
-            CargoTransfersView()
-                .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
-            CargoFilesView()
-                .tabItem { Label("Files", systemImage: "folder") }
-            CargoLibraryView()
-                .tabItem { Label("Library", systemImage: "film") }
-            CargoDiscoverView()
-                .tabItem { Label("Discover", systemImage: "sparkles") }
-            CargoWatchlistView()
-                .tabItem { Label("Watchlist", systemImage: "star") }
-            CargoInboxView()
-                .tabItem { Label("Inbox", systemImage: "tray") }
-            CargoHistoryView()
-                .tabItem { Label("History", systemImage: "clock") }
-            CargoSettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape") }
+        VStack(spacing: 0) {
+            if !model.isConnected {
+                HStack(spacing: 10) {
+                    Image(systemName: "wifi.exclamationmark")
+                    Text(model.connectionState.label)
+                        .font(.footnote)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Retry") {
+                        Task { await model.retrySavedConnection() }
+                    }
+                    .font(.footnote.weight(.semibold))
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .foregroundStyle(.orange)
+                .background(.orange.opacity(0.12))
+            }
+
+            TabView(selection: $selectedTab) {
+                CargoTransfersView()
+                    .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
+                    .tag(CargoStartTab.transfers)
+                CargoFilesView()
+                    .tabItem { Label("Files", systemImage: "folder") }
+                    .tag(CargoStartTab.files)
+                CargoLibraryView()
+                    .tabItem { Label("Library", systemImage: "film") }
+                    .tag(CargoStartTab.library)
+                CargoDiscoverView()
+                    .tabItem { Label("Discover", systemImage: "sparkles") }
+                    .tag(CargoStartTab.discover)
+                CargoWatchlistView()
+                    .tabItem { Label("Watchlist", systemImage: "star") }
+                    .tag(CargoStartTab.watchlist)
+                CargoInboxView()
+                    .tabItem { Label("Inbox", systemImage: "tray") }
+                    .tag(CargoStartTab.inbox)
+                CargoHistoryView()
+                    .tabItem { Label("History", systemImage: "clock") }
+                    .tag(CargoStartTab.history)
+                CargoSettingsView()
+                    .tabItem { Label("Settings", systemImage: "gearshape") }
+                    .tag(CargoStartTab.settings)
+            }
         }
+        .onAppear { selectedTab = model.startTab }
+        .onChange(of: model.startTab) { _, tab in selectedTab = tab }
         .onChange(of: scenePhase) { _, phase in
             model.setActive(phase == .active)
         }
@@ -188,23 +222,17 @@ struct CargoTransfersView: View {
 }
 
 private struct CargoTransferRow: View {
+    @Environment(CargoClientModel.self) private var model
     let transfer: CargoRemoteTransfer
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(transfer.name)
-                .font(.headline)
-                .lineLimit(2)
-            HStack {
-                Text(transfer.statusLabel)
-                Spacer()
-                Text(ByteCountFormatter.string(fromByteCount: transfer.sizeBytes, countStyle: .file))
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            ProgressView(value: transfer.progress)
-        }
-        .padding(.vertical, 4)
+        CargoMediaLine(
+            title: transfer.displayName ?? model.displayTitle(for: transfer.name),
+            subtitle: ByteCountFormatter.string(fromByteCount: transfer.sizeBytes, countStyle: .file),
+            posterURL: transfer.posterURL ?? model.posterURL(for: transfer.name),
+            badge: transfer.statusLabel,
+            progress: [.downloading, .waiting].contains(transfer.status) ? transfer.progress : nil
+        )
     }
 }
 
@@ -276,31 +304,28 @@ struct CargoLibraryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            List {
                 if visibleItems.isEmpty {
                     ContentUnavailableView(
                         "No library titles",
                         systemImage: "film.stack",
                         description: Text(filter == .all ? "The resident library is empty." : "No titles match this filter.")
                     )
-                    .frame(maxWidth: .infinity, minHeight: 300)
+                    .frame(maxWidth: .infinity, minHeight: 220)
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 14)], spacing: 20) {
-                        ForEach(visibleItems) { item in
-                            Button {
-                                selectedDetail = detail(for: item)
-                            } label: {
-                                CargoPosterCard(
-                                    title: item.title,
-                                    subtitle: detail(for: item),
-                                    posterURL: item.metadata?.posterURL,
-                                    badge: badge(for: item)
-                                )
-                            }
-                            .buttonStyle(.plain)
+                    ForEach(visibleItems) { item in
+                        Button {
+                            selectedDetail = detail(for: item)
+                        } label: {
+                            CargoMediaLine(
+                                title: item.title,
+                                subtitle: detail(for: item),
+                                posterURL: item.metadata?.posterURL,
+                                badge: badge(for: item)
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding()
                 }
             }
             .refreshable { await model.refresh() }
@@ -499,29 +524,14 @@ struct CargoFilesView: View {
         }
 
         return HStack {
-            Label {
-                VStack(alignment: .leading) {
-                    Text(file.name).font(.headline).lineLimit(2)
-                    Text(ByteCountFormatter.string(fromByteCount: file.sizeBytes, countStyle: .file))
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let job {
-                        Text(job.statusLabel)
-                            .font(.caption)
-                            .foregroundStyle(job.status == .failed ? .red : .secondary)
-                        if let errorMessage = job.errorMessage {
-                            Text(errorMessage)
-                                .font(.caption2)
-                                .foregroundStyle(.red)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        if job.status == .downloading {
-                            ProgressView(value: job.progress)
-                        }
-                    }
-                }
-            } icon: {
-                Image(systemName: icon).foregroundStyle(.blue)
-            }
+            CargoMediaLine(
+                title: model.displayTitle(for: file.name),
+                subtitle: ByteCountFormatter.string(fromByteCount: file.sizeBytes, countStyle: .file),
+                posterURL: file.posterURL ?? model.posterURL(for: file.name),
+                badge: job?.statusLabel,
+                progress: job?.status == .downloading ? job?.progress : nil,
+                error: job?.errorMessage
+            )
             Spacer()
             Button {
                 Task { await model.execute(.enqueueLocalSync(remoteFileID: file.id)) }
@@ -557,75 +567,91 @@ private struct CargoDiskStatusView: View {
     }
 }
 
+private enum CargoDiscoverCatalog: String, CaseIterable, Identifiable {
+    case movies
+    case series
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .movies: "Top Movies"
+        case .series: "Top Series"
+        }
+    }
+}
+
+private extension Array where Element == String {
+    func uniquedCaseInsensitive() -> [String] {
+        reduce(into: [String]()) { result, value in
+            guard !result.contains(where: { $0.caseInsensitiveCompare(value) == .orderedSame }) else { return }
+            result.append(value)
+        }
+        .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+}
+
 struct CargoDiscoverView: View {
     @Environment(CargoClientModel.self) private var model
     @State private var query = ""
+    @State private var selectedCatalog: CargoDiscoverCatalog = .movies
+    @State private var selectedFilter = ""
     @State private var selectedDetail: CargoTitleDetail?
+
+    private var showingSearchResults: Bool {
+        guard model.searchState != nil else { return false }
+        return !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var catalogFilters: (lists: [String], genres: [String]) {
+        guard let catalog = model.snapshot?.chillCatalog else { return ([], []) }
+
+        switch selectedCatalog {
+        case .movies:
+            let lists = catalog.movies.compactMap(\.source).uniquedCaseInsensitive()
+            let genres = catalog.movies.flatMap(\.genres).uniquedCaseInsensitive()
+            return (lists, genres)
+        case .series:
+            let sources = catalog.series.compactMap(\.source)
+            let lists = (sources.isEmpty ? catalog.series.flatMap(\.networks) : sources).uniquedCaseInsensitive()
+            return (lists, [])
+        }
+    }
+
+    private var activeFilter: String {
+        (catalogFilters.lists + catalogFilters.genres).first {
+            $0.caseInsensitiveCompare(selectedFilter) == .orderedSame
+        } ?? ""
+    }
+
+    private var visibleMovies: [CargoRemoteMovie] {
+        guard let movies = model.snapshot?.chillCatalog.movies else { return [] }
+        return movies.filter { movie in
+            matchesFilter([movie.source].compactMap { $0 } + movie.genres)
+        }
+    }
+
+    private var visibleSeries: [CargoRemoteSeries] {
+        guard let series = model.snapshot?.chillCatalog.series else { return [] }
+        return series.filter { show in
+            matchesFilter([show.source].compactMap { $0 } + show.networks)
+        }
+    }
+
+    private var filterMenuTitle: String {
+        if !activeFilter.isEmpty { return activeFilter }
+        return selectedCatalog == .movies ? "All Lists & Genres" : "All Lists"
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    if let catalog = model.snapshot?.chillCatalog {
-                        if !catalog.movies.isEmpty {
-                            CargoDiscoverSection(title: "Top movies") {
-                                ForEach(catalog.movies.prefix(12)) { movie in
-                                    Button {
-                                        selectedDetail = detail(for: movie)
-                                    } label: {
-                                        CargoPosterCard(
-                                            title: movie.displayTitle,
-                                            subtitle: "\(movie.year) · \(movie.rating.formatted(.number.precision(.fractionLength(1)))) rating",
-                                            posterURL: movie.posterURL
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-
-                        if !catalog.series.isEmpty {
-                            CargoDiscoverSection(title: "Top series") {
-                                ForEach(catalog.series.prefix(12)) { series in
-                                    Button {
-                                        selectedDetail = detail(for: series)
-                                    } label: {
-                                        CargoPosterCard(
-                                            title: series.title,
-                                            subtitle: "\(series.year) · \(series.seasonCount) seasons",
-                                            posterURL: series.posterURL,
-                                            badge: series.statusLabel.isEmpty ? nil : series.statusLabel
-                                        )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-
-                    if let search = model.searchState {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(search.status)
-                                .font(.title3.weight(.semibold))
-                            ForEach(search.results) { result in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text(result.title).font(.headline)
-                                    if let release = result.releaseInfo {
-                                        Text([release.resolution, release.quality, release.source].filter { !$0.isEmpty }.joined(separator: " · "))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Button("Send to Put.io") {
-                                        Task {
-                                            await model.execute(.sendChillRelease(url: result.link, title: result.title))
-                                        }
-                                    }
-                                    .disabled(result.link.isEmpty)
-                                }
-                                .padding(.vertical, 4)
-                                Divider()
-                            }
-                        }
+                VStack(alignment: .leading, spacing: 20) {
+                    if showingSearchResults {
+                        searchResults
+                    } else {
+                        catalogControls
+                        catalogContent
                     }
                 }
                 .padding()
@@ -645,17 +671,190 @@ struct CargoDiscoverView: View {
                     }
                 }
             }
+            .onChange(of: selectedCatalog) { _, _ in
+                selectedFilter = ""
+            }
             .sheet(item: $selectedDetail) { detail in
                 CargoTitleDetailView(detail: detail) { action in
                     switch action {
                     case .sendMovie(let id):
                         Task { await model.execute(.sendChillMovie(id: id)) }
                     case .searchReleases(let query):
+                        self.query = query
                         Task { await model.search(query: query) }
                     }
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var catalogControls: some View {
+        Picker("Catalog", selection: $selectedCatalog) {
+            ForEach(CargoDiscoverCatalog.allCases) { catalog in
+                Text(catalog.title).tag(catalog)
+            }
+        }
+        .pickerStyle(.segmented)
+
+        filterMenu
+    }
+
+    @ViewBuilder
+    private var filterMenu: some View {
+        Menu {
+            Button {
+                selectedFilter = ""
+            } label: {
+                filterLabel("All", activeFilter.isEmpty)
+            }
+
+            if !catalogFilters.lists.isEmpty {
+                Divider()
+                Section("Lists") {
+                    ForEach(catalogFilters.lists, id: \.self) { option in
+                        Button {
+                            selectedFilter = option
+                        } label: {
+                            filterLabel(option, activeFilter.caseInsensitiveCompare(option) == .orderedSame)
+                        }
+                    }
+                }
+            }
+
+            if !catalogFilters.genres.isEmpty {
+                Divider()
+                Section("Genres") {
+                    ForEach(catalogFilters.genres, id: \.self) { option in
+                        Button {
+                            selectedFilter = option
+                        } label: {
+                            filterLabel(option, activeFilter.caseInsensitiveCompare(option) == .orderedSame)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label(filterMenuTitle, systemImage: "line.3.horizontal.decrease.circle")
+                .lineLimit(1)
+        }
+        .menuOrder(.fixed)
+    }
+
+    private func filterLabel(_ title: String, _ selected: Bool) -> some View {
+        if selected {
+            return AnyView(Label(title, systemImage: "checkmark"))
+        }
+        return AnyView(Text(title))
+    }
+
+    @ViewBuilder
+    private var catalogContent: some View {
+        switch selectedCatalog {
+        case .movies:
+            if visibleMovies.isEmpty {
+                ContentUnavailableView(
+                    "No movies match this filter",
+                    systemImage: "film",
+                    description: Text("Try another list or genre.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 260)
+            } else {
+                CargoDiscoverSection(title: "Top movies") {
+                    ForEach(visibleMovies) { movie in
+                        Button {
+                            selectedDetail = detail(for: movie)
+                        } label: {
+                            CargoMediaLine(
+                                title: movie.displayTitle,
+                                subtitle: movieSubtitle(movie),
+                                posterURL: movie.posterURL
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        case .series:
+            if visibleSeries.isEmpty {
+                ContentUnavailableView(
+                    "No series match this filter",
+                    systemImage: "tv",
+                    description: Text("Try another list.")
+                )
+                .frame(maxWidth: .infinity, minHeight: 260)
+            } else {
+                CargoDiscoverSection(title: "Top series") {
+                    ForEach(visibleSeries) { series in
+                        Button {
+                            selectedDetail = detail(for: series)
+                        } label: {
+                            CargoMediaLine(
+                                title: series.title,
+                                subtitle: seriesSubtitle(series),
+                                posterURL: series.posterURL,
+                                badge: series.statusLabel.isEmpty ? nil : series.statusLabel
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        if let search = model.searchState {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(search.status)
+                    .font(.title3.weight(.semibold))
+                ForEach(search.results) { result in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(result.title).font(.headline)
+                        if let release = result.releaseInfo {
+                            Text([release.resolution, release.quality, release.source].filter { !$0.isEmpty }.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Send to Put.io") {
+                            Task {
+                                await model.execute(.sendChillRelease(url: result.link, title: result.title))
+                            }
+                        }
+                        .disabled(result.link.isEmpty)
+                    }
+                    .padding(.vertical, 4)
+                    Divider()
+                }
+            }
+        }
+    }
+
+    private func matchesFilter(_ values: [String]) -> Bool {
+        activeFilter.isEmpty || values.contains {
+            $0.caseInsensitiveCompare(activeFilter) == .orderedSame
+        }
+    }
+
+    private func movieSubtitle(_ movie: CargoRemoteMovie) -> String {
+        [
+            movie.year > 0 ? String(movie.year) : nil,
+            movie.rating > 0 ? "\(movie.rating.formatted(.number.precision(.fractionLength(1)))) rating" : nil,
+            movie.source
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
+    }
+
+    private func seriesSubtitle(_ series: CargoRemoteSeries) -> String {
+        [
+            series.year > 0 ? String(series.year) : nil,
+            series.seasonCount > 0 ? "\(series.seasonCount) season\(series.seasonCount == 1 ? "" : "s")" : nil,
+            series.rating > 0 ? "\(series.rating.formatted(.number.precision(.fractionLength(1)))) rating" : nil
+        ]
+        .compactMap { $0 }
+        .joined(separator: " · ")
     }
 
     private func detail(for movie: CargoRemoteMovie) -> CargoTitleDetail {
@@ -699,7 +898,7 @@ private struct CargoDiscoverSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.title3.weight(.semibold))
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 14)], spacing: 20, content: content)
+            LazyVStack(spacing: 0, content: content)
         }
     }
 }
@@ -745,31 +944,28 @@ struct CargoWatchlistView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
+            List {
                 if visibleItems.isEmpty {
                     ContentUnavailableView(
                         "No watchlist titles",
                         systemImage: "star",
                         description: Text(filter == .all ? "The resident watchlist is empty." : "No titles match this filter.")
                     )
-                    .frame(maxWidth: .infinity, minHeight: 300)
+                    .frame(maxWidth: .infinity, minHeight: 220)
                 } else {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 14)], spacing: 20) {
-                        ForEach(visibleItems, id: \.item.id) { entry in
-                            Button {
-                                selectedDetail = detail(for: entry.item, status: entry.status)
-                            } label: {
-                                CargoPosterCard(
-                                    title: entry.item.title,
-                                    subtitle: subtitle(for: entry.item),
-                                    posterURL: entry.item.metadata?.posterURL,
-                                    badge: entry.status
-                                )
-                            }
-                            .buttonStyle(.plain)
+                    ForEach(visibleItems, id: \.item.id) { entry in
+                        Button {
+                            selectedDetail = detail(for: entry.item, status: entry.status)
+                        } label: {
+                            CargoMediaLine(
+                                title: entry.item.title,
+                                subtitle: subtitle(for: entry.item),
+                                posterURL: entry.item.metadata?.posterURL,
+                                badge: entry.status
+                            )
                         }
+                        .buttonStyle(.plain)
                     }
-                    .padding()
                 }
             }
             .refreshable { await model.refresh() }
@@ -864,24 +1060,22 @@ struct CargoInboxView: View {
     var body: some View {
         NavigationStack {
             List(model.snapshot?.syncJobs ?? []) { job in
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(job.name)
-                        .font(.headline)
-                    HStack {
-                        Text(job.statusLabel)
-                        Spacer()
-                        if job.hasError { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    ProgressView(value: job.progress)
+                VStack(alignment: .leading, spacing: 4) {
+                    CargoMediaLine(
+                        title: job.displayName ?? model.displayTitle(for: job.name),
+                        subtitle: nil,
+                        posterURL: job.posterURL ?? model.posterURL(for: job.name),
+                        badge: job.statusLabel,
+                        progress: [.queued, .downloading, .importing].contains(job.status) ? job.progress : nil,
+                        error: job.errorMessage
+                    )
                     if job.status == .needsReview {
                         Button("Organize") {
                             Task { await model.execute(.organizeLocalJob(id: job.id)) }
                         }
+                        .buttonStyle(.bordered)
                     }
                 }
-                .padding(.vertical, 4)
             }
             .refreshable { await model.refresh() }
             .navigationTitle("Inbox")
@@ -900,6 +1094,19 @@ struct CargoSettingsView: View {
                     LabeledContent("Resident", value: model.residentAddress)
                     if let snapshot = model.snapshot {
                         LabeledContent("Updated", value: snapshot.lastUpdated.formatted(date: .abbreviated, time: .shortened))
+                    }
+                }
+                Section("Startup") {
+                    Picker(
+                        "Start in",
+                        selection: Binding(
+                            get: { model.startTab },
+                            set: { model.setStartTab($0) }
+                        )
+                    ) {
+                        ForEach(CargoStartTab.allCases) { tab in
+                            Text(tab.title).tag(tab)
+                        }
                     }
                 }
                 if let disk = model.snapshot?.disk {

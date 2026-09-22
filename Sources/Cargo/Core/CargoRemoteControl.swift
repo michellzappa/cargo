@@ -139,15 +139,19 @@ final class CargoRemotePresenceRegistry {
 struct CargoRemoteTransfer: Codable, Equatable, Sendable {
     let id: Int
     let name: String
+    let displayName: String?
+    let posterURL: String?
     let status: RemoteTransferStatus
     let statusLabel: String
     let progress: Double
     let sizeBytes: Int64
     let updatedAt: Date
 
-    init(_ transfer: RemoteTransfer) {
+    init(_ transfer: RemoteTransfer, displayName: String? = nil, posterURL: String? = nil) {
         id = transfer.id
         name = transfer.name
+        self.displayName = displayName
+        self.posterURL = posterURL
         status = transfer.status
         statusLabel = transfer.status.displayName
         progress = transfer.progress
@@ -159,6 +163,7 @@ struct CargoRemoteTransfer: Codable, Equatable, Sendable {
 struct CargoRemoteFile: Codable, Equatable, Sendable {
     let id: Int
     let name: String
+    let posterURL: String?
     /// Put.io's remote path, never a local filesystem path.
     let remotePath: String
     let type: RemoteFileType
@@ -167,9 +172,10 @@ struct CargoRemoteFile: Codable, Equatable, Sendable {
     let sizeBytes: Int64
     let createdAt: Date
 
-    init(_ file: RemoteFile) {
+    init(_ file: RemoteFile, posterURL: String? = nil) {
         id = file.id
         name = file.name
+        self.posterURL = posterURL
         remotePath = file.displayPath
         type = file.type
         typeLabel = file.type.displayName
@@ -183,6 +189,8 @@ struct CargoRemoteSyncJob: Codable, Equatable, Sendable {
     let id: UUID
     let remoteFileID: Int
     let name: String
+    let displayName: String?
+    let posterURL: String?
     let status: LocalSyncStatus
     let statusLabel: String
     let progress: Double
@@ -190,10 +198,12 @@ struct CargoRemoteSyncJob: Codable, Equatable, Sendable {
     let errorMessage: String?
     let updatedAt: Date
 
-    init(_ job: LocalSyncJob) {
+    init(_ job: LocalSyncJob, displayName: String? = nil, posterURL: String? = nil) {
         id = job.id
         remoteFileID = job.remoteFileID
         name = job.name
+        self.displayName = displayName
+        self.posterURL = posterURL
         status = job.status
         statusLabel = job.status.displayName
         progress = job.progress
@@ -393,6 +403,7 @@ struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let year: Int
+    let source: String?
     let displayTitle: String
     let link: String
     let peers: Int64
@@ -409,6 +420,7 @@ struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
         id = movie.id
         title = movie.title
         year = movie.year
+        source = movie.source?.displayName
         displayTitle = movie.displayTitle
         link = CargoRemoteLinkSanitizer.sanitize(movie.link)
         peers = movie.peers
@@ -440,6 +452,7 @@ struct CargoRemoteSeries: Codable, Equatable, Identifiable, Sendable {
     let imdbID: String
     let title: String
     let year: Int
+    let source: String?
     let posterURL: String
     let rating: Double
     let overview: String
@@ -454,6 +467,7 @@ struct CargoRemoteSeries: Codable, Equatable, Identifiable, Sendable {
         imdbID = show.imdbID
         title = show.title
         year = show.year
+        source = show.source?.displayName
         posterURL = show.posterURL
         rating = show.rating
         overview = show.overview
@@ -508,6 +522,7 @@ extension CargoRemoteSnapshot {
             RemoteTransfer(
                 id: $0.id,
                 name: $0.name,
+                posterURL: $0.posterURL,
                 status: $0.status,
                 progress: $0.progress,
                 sizeBytes: $0.sizeBytes,
@@ -519,6 +534,7 @@ extension CargoRemoteSnapshot {
                 id: $0.id,
                 name: $0.name,
                 path: $0.remotePath,
+                posterURL: $0.posterURL,
                 type: $0.type,
                 parentID: $0.parentID,
                 sizeBytes: $0.sizeBytes,
@@ -530,6 +546,7 @@ extension CargoRemoteSnapshot {
                 id: $0.id,
                 name: $0.name,
                 path: $0.remotePath,
+                posterURL: $0.posterURL,
                 type: $0.type,
                 parentID: $0.parentID,
                 sizeBytes: $0.sizeBytes,
@@ -542,11 +559,12 @@ extension CargoRemoteSnapshot {
             LocalSyncJob(
                 id: $0.id,
                 remoteFileID: $0.remoteFileID,
-                name: $0.name,
+                name: $0.displayName ?? $0.name,
                 status: $0.status,
                 progress: $0.progress,
                 destination: nil,
                 errorMessage: $0.hasError ? "Remote job failed" : nil,
+                posterURL: $0.posterURL,
                 updatedAt: $0.updatedAt
             )
         }
@@ -848,10 +866,28 @@ final class CargoRemoteController: CargoRemoteControlling {
             remoteFolderID: coordinator.remoteFolderID,
             remoteFolderName: coordinator.remoteFolderName,
             canGoBackRemoteFolder: coordinator.canGoBackRemoteFolder,
-            transfers: state.transfers.map(CargoRemoteTransfer.init),
-            files: state.remoteFiles.map(CargoRemoteFile.init),
-            mediaFiles: state.remoteMediaFiles.map(CargoRemoteFile.init),
-            syncJobs: state.localJobs.map(CargoRemoteSyncJob.init),
+            transfers: state.transfers.map { transfer in
+                let presentation = mediaPresentation(for: transfer.name, state: state)
+                return CargoRemoteTransfer(
+                    transfer,
+                    displayName: presentation.displayName,
+                    posterURL: presentation.posterURL
+                )
+            },
+            files: state.remoteFiles.map { file in
+                CargoRemoteFile(file, posterURL: mediaPresentation(for: file.name, state: state).posterURL)
+            },
+            mediaFiles: state.remoteMediaFiles.map { file in
+                CargoRemoteFile(file, posterURL: mediaPresentation(for: file.name, state: state).posterURL)
+            },
+            syncJobs: state.localJobs.map { job in
+                let presentation = mediaPresentation(for: job.name, state: state)
+                return CargoRemoteSyncJob(
+                    job,
+                    displayName: presentation.displayName,
+                    posterURL: presentation.posterURL
+                )
+            },
             library: state.libraryItems.map { CargoRemoteLibraryItem($0, metadata: state.metadata[$0.id]) },
             watchlist: state.imdbWatchlistItems.map { CargoRemoteWatchlistItem($0, metadata: state.metadata[$0.id]) },
             history: state.history.map(CargoRemoteHistoryEntry.init),
@@ -866,6 +902,13 @@ final class CargoRemoteController: CargoRemoteControlling {
                 series: coordinator.chillCatalogShows.map(CargoRemoteSeries.init)
             ),
             watchlistStatus: coordinator.imdbWatchlistStatus
+        )
+    }
+
+    private func mediaPresentation(for name: String, state: CargoState) -> (displayName: String, posterURL: String?) {
+        (
+            LibraryOrganizer.displayTitle(for: name),
+            LibraryOrganizer.posterURL(for: name, library: state.libraryItems, metadata: state.metadata)?.absoluteString
         )
     }
 
