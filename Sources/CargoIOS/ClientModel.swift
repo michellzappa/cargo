@@ -34,6 +34,7 @@ final class CargoClientModel {
     private var presence: CargoRemotePresence?
     private var eventRevision: UInt64?
     private var pollTask: Task<Void, Never>?
+    private var restoreAttempted = false
     private let credentials = CargoIOSCredentials()
     private let clientID: UUID
     private let defaultClientName = "Cargo iPhone"
@@ -54,8 +55,16 @@ final class CargoClientModel {
         return false
     }
 
-    func connect(address: String, token: String, clientName: String = "") async {
-        await disconnect(clearSnapshot: true)
+    func restoreConnection() async {
+        guard !restoreAttempted else { return }
+        restoreAttempted = true
+        guard !residentAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              hasSavedToken else { return }
+        await connect(address: residentAddress, token: "", clearSnapshot: false)
+    }
+
+    func connect(address: String, token: String, clientName: String = "", clearSnapshot: Bool = true) async {
+        await disconnect(clearSnapshot: clearSnapshot)
         connectionState = .connecting
         lastError = nil
 

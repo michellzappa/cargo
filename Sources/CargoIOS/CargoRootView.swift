@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CargoRootView: View {
     @Environment(CargoClientModel.self) private var model
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         Group {
@@ -13,6 +14,12 @@ struct CargoRootView: View {
             }
         }
         .animation(.default, value: model.isConnected)
+        .task { await model.restoreConnection() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, !model.isConnected {
+                Task { await model.restoreConnection() }
+            }
+        }
         .alert(
             "Cargo",
             isPresented: Binding(
@@ -31,13 +38,12 @@ struct CargoConnectView: View {
     @Environment(CargoClientModel.self) private var model
     @State private var address = ""
     @State private var token = ""
-    @State private var clientName = ""
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Connect to the Cargo resident Mac to control transfers and view its library.")
+                    Text("Pair with the Cargo resident Mac to control transfers and view its library. Put.io, Chill, metadata, and SSD settings stay on the resident.")
                         .foregroundStyle(.secondary)
                 }
 
@@ -46,13 +52,17 @@ struct CargoConnectView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
-                    SecureField("Resident token", text: $token)
-                    TextField("This device", text: $clientName)
+                    if model.hasSavedToken {
+                        Label("Resident token saved on this iPhone", systemImage: "checkmark.shield.fill")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        SecureField("Resident token", text: $token)
+                    }
                 }
 
                 Section {
                     Button {
-                        Task { await model.connect(address: address, token: token, clientName: clientName) }
+                        Task { await model.connect(address: address, token: token) }
                     } label: {
                         HStack {
                             Spacer()
@@ -64,9 +74,27 @@ struct CargoConnectView: View {
                     .disabled(address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.connectionState == .connecting)
                 }
 
+                if model.connectionState == .connecting, model.hasSavedToken {
+                    Section {
+                        HStack {
+                            ProgressView()
+                            Text("Reconnecting to the resident…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section {
                     Label(model.connectionState.label, systemImage: model.isConnected ? "checkmark.circle.fill" : "network")
                         .foregroundStyle(model.isConnected ? .green : .secondary)
+                }
+
+                if let lastError = model.lastError {
+                    Section("Connection details") {
+                        Text(lastError)
+                            .foregroundStyle(.red)
+                            .textSelection(.enabled)
+                    }
                 }
             }
             .navigationTitle("Cargo")
