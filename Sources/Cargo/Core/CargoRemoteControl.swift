@@ -496,6 +496,7 @@ struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     let lastUpdated: Date
     let putIO: CargoRemoteConnection
     let chill: CargoRemoteConnection
+    let appleTV: CargoRemoteConnection?
     let disk: CargoRemoteDiskUsage?
     let remoteFolderID: Int
     let remoteFolderName: String
@@ -510,6 +511,9 @@ struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     let chillSearch: CargoRemoteSearchState
     let chillCatalog: CargoRemoteCatalogState
     let watchlistStatus: String
+    /// The URL belonging to the requesting client, or the resident URL when
+    /// this snapshot is produced locally.
+    let watchlistURL: String?
 }
 
 extension CargoRemoteSnapshot {
@@ -689,8 +693,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case enqueueLocalSync(remoteFileID: Int)
     case organizeLocalJob(id: UUID)
     case refreshWatchlist
+    case refreshPersonalWatchlist(url: String?)
     case clearFailedJobs
     case clearHistory
+    case playLibraryItem(id: String)
+    case playLibraryEpisode(id: String, season: Int, episode: Int)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -699,6 +706,8 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case url
         case title
         case remoteFileID
+        case season
+        case episode
     }
 
     private enum Kind: String, Codable {
@@ -719,8 +728,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case enqueueLocalSync
         case organizeLocalJob
         case refreshWatchlist
+        case refreshPersonalWatchlist
         case clearFailedJobs
         case clearHistory
+        case playLibraryItem
+        case playLibraryEpisode
     }
 
     init(from decoder: Decoder) throws {
@@ -763,10 +775,20 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             self = .organizeLocalJob(id: try values.decode(UUID.self, forKey: .id))
         case .refreshWatchlist:
             self = .refreshWatchlist
+        case .refreshPersonalWatchlist:
+            self = .refreshPersonalWatchlist(url: try values.decodeIfPresent(String.self, forKey: .url))
         case .clearFailedJobs:
             self = .clearFailedJobs
         case .clearHistory:
             self = .clearHistory
+        case .playLibraryItem:
+            self = .playLibraryItem(id: try values.decode(String.self, forKey: .id))
+        case .playLibraryEpisode:
+            self = .playLibraryEpisode(
+                id: try values.decode(String.self, forKey: .id),
+                season: try values.decode(Int.self, forKey: .season),
+                episode: try values.decode(Int.self, forKey: .episode)
+            )
         }
     }
 
@@ -820,30 +842,44 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             try values.encode(id, forKey: .id)
         case .refreshWatchlist:
             try values.encode(Kind.refreshWatchlist, forKey: .type)
+        case .refreshPersonalWatchlist(let url):
+            try values.encode(Kind.refreshPersonalWatchlist, forKey: .type)
+            try values.encodeIfPresent(url, forKey: .url)
         case .clearFailedJobs:
             try values.encode(Kind.clearFailedJobs, forKey: .type)
         case .clearHistory:
             try values.encode(Kind.clearHistory, forKey: .type)
+        case .playLibraryItem(let id):
+            try values.encode(Kind.playLibraryItem, forKey: .type)
+            try values.encode(id, forKey: .id)
+        case .playLibraryEpisode(let id, let season, let episode):
+            try values.encode(Kind.playLibraryEpisode, forKey: .type)
+            try values.encode(id, forKey: .id)
+            try values.encode(season, forKey: .season)
+            try values.encode(episode, forKey: .episode)
         }
     }
 }
 
 enum CargoRemoteControlError: LocalizedError, Equatable, Sendable {
     case targetNotFound(String)
+    case appleTVUnavailable(String)
 
     var errorDescription: String? {
         switch self {
         case .targetNotFound(let target):
             "Cargo could not find \(target). Refresh and try again."
+        case .appleTVUnavailable(let status):
+            "Apple TV playback is unavailable: \(status)"
         }
     }
 }
 
 @MainActor
 protocol CargoRemoteControlling: AnyObject {
-    func snapshot() -> CargoRemoteSnapshot
+    func snapshot(clientID: UUID?) -> CargoRemoteSnapshot
     func search(query: String) async throws -> CargoRemoteSearchState
-    func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot
+    func execute(_ command: CargoRemoteCommand, clientID: UUID?) async throws -> CargoRemoteSnapshot
 }
 
 /// The single application-facing boundary for future resident API transports.
@@ -855,13 +891,19 @@ final class CargoRemoteController: CargoRemoteControlling {
         self.coordinator = coordinator
     }
 
-    func snapshot() -> CargoRemoteSnapshot {
+    func snapshot(clientID: UUID? = nil) -> CargoRemoteSnapshot {
+        // Remote clients need the resident to restore its saved Apple TV
+        // session even when the Mac Settings page has not been opened.
+        coordinator.appleTVPlayback.start()
         let state = coordinator.state
+        let clientWatchlist = clientID.map { coordinator.clientWatchlist(for: $0) ?? CargoClientWatchlist() }
+        let watchlistItems = clientWatchlist?.items ?? state.imdbWatchlistItems
         return CargoRemoteSnapshot(
             generatedAt: Date(),
             lastUpdated: state.lastUpdated,
             putIO: CargoRemoteConnection(connected: coordinator.isConnected, status: coordinator.putIOStatus),
             chill: CargoRemoteConnection(connected: coordinator.isChillConnected, status: coordinator.chillStatus),
+            appleTV: CargoRemoteConnection(connected: coordinator.appleTVPlayback.isConnected, status: coordinator.appleTVPlayback.statusText),
             disk: coordinator.diskUsage.map(CargoRemoteDiskUsage.init),
             remoteFolderID: coordinator.remoteFolderID,
             remoteFolderName: coordinator.remoteFolderName,
@@ -889,7 +931,7 @@ final class CargoRemoteController: CargoRemoteControlling {
                 )
             },
             library: state.libraryItems.map { CargoRemoteLibraryItem($0, metadata: state.metadata[$0.id]) },
-            watchlist: state.imdbWatchlistItems.map { CargoRemoteWatchlistItem($0, metadata: state.metadata[$0.id]) },
+            watchlist: watchlistItems.map { CargoRemoteWatchlistItem($0, metadata: state.metadata[$0.id]) },
             history: state.history.map(CargoRemoteHistoryEntry.init),
             chillSearch: CargoRemoteSearchState(
                 query: coordinator.chillSearchQuery,
@@ -901,7 +943,8 @@ final class CargoRemoteController: CargoRemoteControlling {
                 movies: coordinator.chillCatalogMovies.map(CargoRemoteMovie.init),
                 series: coordinator.chillCatalogShows.map(CargoRemoteSeries.init)
             ),
-            watchlistStatus: coordinator.imdbWatchlistStatus
+            watchlistStatus: clientWatchlist?.status ?? coordinator.imdbWatchlistStatus,
+            watchlistURL: clientWatchlist?.url ?? state.settings.imdbWatchlistURL
         )
     }
 
@@ -923,7 +966,7 @@ final class CargoRemoteController: CargoRemoteControlling {
         )
     }
 
-    func execute(_ command: CargoRemoteCommand) async throws -> CargoRemoteSnapshot {
+    func execute(_ command: CargoRemoteCommand, clientID: UUID? = nil) async throws -> CargoRemoteSnapshot {
         switch command {
         case .refresh:
             await coordinator.refreshFromPutIO(force: true)
@@ -971,11 +1014,46 @@ final class CargoRemoteController: CargoRemoteControlling {
             _ = try coordinator.organizeLocalJob(jobID: id)
         case .refreshWatchlist:
             _ = await coordinator.refreshIMDbWatchlist(force: true)
+        case .refreshPersonalWatchlist(let url):
+            guard let clientID else {
+                throw CargoRemoteControlError.targetNotFound("connected Cargo client")
+            }
+            _ = await coordinator.refreshClientWatchlist(for: clientID, requestedURL: url)
         case .clearFailedJobs:
             coordinator.clearFailedJobs()
         case .clearHistory:
             coordinator.clearHistory()
+        case .playLibraryItem(let id):
+            guard let metadata = coordinator.state.metadata[id] else {
+                throw CargoRemoteControlError.targetNotFound("library metadata for \(id)")
+            }
+            guard coordinator.state.libraryItems.contains(where: { $0.id == id && $0.kind == .movie }) else {
+                throw CargoRemoteControlError.targetNotFound("library item \(id)")
+            }
+            switch coordinator.appleTVPlayback.play(metadata: metadata) {
+            case .sent:
+                break
+            case .needsSetup:
+                throw CargoRemoteControlError.appleTVUnavailable(coordinator.appleTVPlayback.statusText)
+            }
+        case .playLibraryEpisode(let id, let season, let episode):
+            guard let metadata = coordinator.state.metadata[id], metadata.mediaType == .tv else {
+                throw CargoRemoteControlError.targetNotFound("TV metadata for \(id)")
+            }
+            guard let item = coordinator.state.libraryItems.first(where: { $0.id == id && $0.kind == .show }) else {
+                throw CargoRemoteControlError.targetNotFound("TV library item \(id)")
+            }
+            guard item.episodes[season, default: []].contains(episode) else {
+                let label = String(format: "S%02dE%02d", season, episode)
+                throw CargoRemoteControlError.targetNotFound("episode \(label)")
+            }
+            switch coordinator.appleTVPlayback.play(metadata: metadata, season: season, episode: episode) {
+            case .sent:
+                break
+            case .needsSetup:
+                throw CargoRemoteControlError.appleTVUnavailable(coordinator.appleTVPlayback.statusText)
+            }
         }
-        return snapshot()
+        return snapshot(clientID: clientID)
     }
 }

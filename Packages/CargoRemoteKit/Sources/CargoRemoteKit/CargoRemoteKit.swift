@@ -449,6 +449,9 @@ public struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     public let lastUpdated: Date
     public let putIO: CargoRemoteConnection
     public let chill: CargoRemoteConnection
+    /// Present on residents that know about Apple TV playback. Optional so a
+    /// newer client can still connect to an older resident.
+    public let appleTV: CargoRemoteConnection?
     public let disk: CargoRemoteDiskUsage?
     public let remoteFolderID: Int
     public let remoteFolderName: String
@@ -463,6 +466,7 @@ public struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     public let chillSearch: CargoRemoteSearchState
     public let chillCatalog: CargoRemoteCatalogState
     public let watchlistStatus: String
+    public let watchlistURL: String?
 }
 
 public struct CargoRemoteEvent: Codable, Equatable, Sendable {
@@ -543,14 +547,17 @@ public enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case enqueueLocalSync(remoteFileID: Int)
     case organizeLocalJob(id: UUID)
     case refreshWatchlist
+    case refreshPersonalWatchlist(url: String?)
     case clearFailedJobs
     case clearHistory
+    case playLibraryItem(id: String)
+    case playLibraryEpisode(id: String, season: Int, episode: Int)
 
-    private enum CodingKeys: String, CodingKey { case type, query, id, url, title, remoteFileID }
+    private enum CodingKeys: String, CodingKey { case type, query, id, url, title, remoteFileID, season, episode }
     private enum Kind: String, Codable {
         case refresh, refreshChillCatalog, searchChill, sendChillResult, sendChillRelease, sendChillMovie
         case addTransfer, cancelTransfer, retryTransfer, cleanFinishedTransfers, requestExtraction
-        case openRemoteFolder, goBackRemoteFolder, deleteRemoteFile, enqueueLocalSync, organizeLocalJob, refreshWatchlist, clearFailedJobs, clearHistory
+        case openRemoteFolder, goBackRemoteFolder, deleteRemoteFile, enqueueLocalSync, organizeLocalJob, refreshWatchlist, refreshPersonalWatchlist, clearFailedJobs, clearHistory, playLibraryItem, playLibraryEpisode
     }
 
     public init(from decoder: Decoder) throws {
@@ -573,8 +580,16 @@ public enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case .enqueueLocalSync: self = .enqueueLocalSync(remoteFileID: try values.decode(Int.self, forKey: .remoteFileID))
         case .organizeLocalJob: self = .organizeLocalJob(id: try values.decode(UUID.self, forKey: .id))
         case .refreshWatchlist: self = .refreshWatchlist
+        case .refreshPersonalWatchlist: self = .refreshPersonalWatchlist(url: try values.decodeIfPresent(String.self, forKey: .url))
         case .clearFailedJobs: self = .clearFailedJobs
         case .clearHistory: self = .clearHistory
+        case .playLibraryItem: self = .playLibraryItem(id: try values.decode(String.self, forKey: .id))
+        case .playLibraryEpisode:
+            self = .playLibraryEpisode(
+                id: try values.decode(String.self, forKey: .id),
+                season: try values.decode(Int.self, forKey: .season),
+                episode: try values.decode(Int.self, forKey: .episode)
+            )
         }
     }
 
@@ -599,8 +614,15 @@ public enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case .enqueueLocalSync(let id): try type(.enqueueLocalSync); try values.encode(id, forKey: .remoteFileID)
         case .organizeLocalJob(let id): try type(.organizeLocalJob); try values.encode(id, forKey: .id)
         case .refreshWatchlist: try type(.refreshWatchlist)
+        case .refreshPersonalWatchlist(let url): try type(.refreshPersonalWatchlist); try values.encodeIfPresent(url, forKey: .url)
         case .clearFailedJobs: try type(.clearFailedJobs)
         case .clearHistory: try type(.clearHistory)
+        case .playLibraryItem(let id): try type(.playLibraryItem); try values.encode(id, forKey: .id)
+        case .playLibraryEpisode(let id, let season, let episode):
+            try type(.playLibraryEpisode)
+            try values.encode(id, forKey: .id)
+            try values.encode(season, forKey: .season)
+            try values.encode(episode, forKey: .episode)
         }
     }
 }
@@ -659,13 +681,15 @@ public final class CargoRemoteAPIClient: @unchecked Sendable {
 
     public let baseURL: URL
     private let token: String
+    private let clientID: UUID?
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    public init(baseURL: URL, token: String, session: URLSession = .shared) {
+    public init(baseURL: URL, token: String, clientID: UUID? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.token = token
+        self.clientID = clientID
         self.session = session
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
@@ -726,6 +750,9 @@ public final class CargoRemoteAPIClient: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let clientID {
+            request.setValue(clientID.uuidString, forHTTPHeaderField: "X-Cargo-Client-ID")
+        }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = body

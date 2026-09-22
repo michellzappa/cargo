@@ -1,4 +1,5 @@
 import AppKit
+import CargoRemoteKit
 
 struct DiscoverTitle: Equatable, Sendable {
     enum Kind: String, Sendable {
@@ -532,17 +533,31 @@ private final class EpisodeCompletenessCell: NSView {
         ])
         toolTip = state == .notApplicable ? nil : "Season \(season), episode \(episode) — \(state == .owned ? "On disk" : "Missing")"
         setAccessibilityLabel(toolTip ?? "Not applicable")
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accentDidChange),
+            name: CargoAccentTheme.didChange,
+            object: nil
+        )
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func accentDidChange() {
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard state != .notApplicable else { return }
 
         let rect = bounds.insetBy(dx: 1, dy: 1)
         let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
-        let accent = NSColor.controlAccentColor
+        let accent = Theme.accentColor
         let fill = state == .owned
             ? accent.withAlphaComponent(0.78)
             : NSColor.controlBackgroundColor.withAlphaComponent(0.72)

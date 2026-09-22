@@ -129,20 +129,16 @@ struct CargoMediaViewModeMenu: View {
 
     var body: some View {
         Menu {
-            ForEach(CargoMediaViewMode.allCases) { option in
-                Button {
-                    selection = option
-                } label: {
-                    Label(
-                        option.title,
-                        systemImage: selection == option ? "checkmark" : option.symbolName
-                    )
+            Picker("View", selection: $selection) {
+                ForEach(CargoMediaViewMode.allCases) { option in
+                    Text(option.title).tag(option)
                 }
             }
         } label: {
             Image(systemName: selection.symbolName)
         }
-        .accessibilityLabel("View as \(selection.title)")
+        .accessibilityLabel("View")
+        .accessibilityValue(selection.title)
         .accessibilityHint("Choose List or Posters")
     }
 }
@@ -238,9 +234,9 @@ struct CargoMediaLine: View {
 
     private var badgeColor: Color {
         let lower = badge?.lowercased() ?? ""
-        if lower.contains("fail") || lower.contains("error") { return .red }
-        if lower.contains("complete") || lower.contains("organized") { return .green }
-        if lower.contains("download") || lower.contains("queued") || lower.contains("inbox") { return .orange }
+        if lower.contains("fail") || lower.contains("error") { return .accentColor }
+        if lower.contains("complete") || lower.contains("organized") { return .accentColor }
+        if lower.contains("download") || lower.contains("queued") || lower.contains("inbox") { return .accentColor }
         return .secondary
     }
 }
@@ -248,6 +244,17 @@ struct CargoMediaLine: View {
 enum CargoTitleDetailAction: Equatable {
     case sendMovie(id: String)
     case searchReleases(query: String)
+    case playLibraryItem(id: String)
+    case playLibraryEpisode(id: String, season: Int, episode: Int)
+}
+
+struct CargoTitleDetailEpisode: Identifiable, Equatable {
+    let libraryItemID: String
+    let season: Int
+    let episode: Int
+
+    var id: String { "\(libraryItemID)-S\(season)E\(episode)" }
+    var label: String { String(format: "S%02dE%02d", season, episode) }
 }
 
 struct CargoTitleDetail: Identifiable {
@@ -261,6 +268,7 @@ struct CargoTitleDetail: Identifiable {
     let externalURL: URL?
     let externalLabel: String?
     let action: CargoTitleDetailAction?
+    let episodes: [CargoTitleDetailEpisode]
 }
 
 struct CargoTitleDetailView: View {
@@ -302,6 +310,27 @@ struct CargoTitleDetailView: View {
                             .foregroundStyle(.secondary)
                     }
 
+                    if !detail.episodes.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Episodes")
+                                .font(.headline)
+                            ForEach(detail.episodes) { episode in
+                                Button {
+                                    onAction(.playLibraryEpisode(
+                                        id: episode.libraryItemID,
+                                        season: episode.season,
+                                        episode: episode.episode
+                                    ))
+                                    dismiss()
+                                } label: {
+                                    Label("Play \(episode.label) in Infuse on Apple TV", systemImage: "play.fill")
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+
                     VStack(spacing: 10) {
                         if let action = detail.action {
                             Button(actionLabel(for: action)) {
@@ -337,6 +366,10 @@ struct CargoTitleDetailView: View {
             "Send to Put.io"
         case .searchReleases:
             "Search Releases"
+        case .playLibraryItem:
+            "Play in Infuse on Apple TV"
+        case .playLibraryEpisode:
+            "Play episode in Infuse on Apple TV"
         }
     }
 }

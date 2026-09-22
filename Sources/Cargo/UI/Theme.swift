@@ -1,7 +1,12 @@
 import AppKit
+import CargoRemoteKit
 
 /// Shared label styles, badge view and formatters so pages don't hand-roll fonts and colors.
 enum Theme {
+    static var accentColor: NSColor {
+        CargoMacAccentColor.color
+    }
+
     enum LabelStyle {
         case pageTitle
         case sectionHeader
@@ -102,11 +107,11 @@ struct StatusBadge: Equatable {
     let color: NSColor
 
     static func neutral(_ text: String) -> StatusBadge { .init(text: text, color: .secondaryLabelColor) }
-    static func info(_ text: String) -> StatusBadge { .init(text: text, color: .systemBlue) }
-    static func success(_ text: String) -> StatusBadge { .init(text: text, color: .systemGreen) }
-    static func warning(_ text: String) -> StatusBadge { .init(text: text, color: .systemOrange) }
-    static func failure(_ text: String) -> StatusBadge { .init(text: text, color: .systemRed) }
-    static func highlight(_ text: String) -> StatusBadge { .init(text: text, color: .systemPurple) }
+    static func info(_ text: String) -> StatusBadge { .init(text: text, color: Theme.accentColor) }
+    static func success(_ text: String) -> StatusBadge { .init(text: text, color: Theme.accentColor) }
+    static func warning(_ text: String) -> StatusBadge { .init(text: text, color: Theme.accentColor) }
+    static func failure(_ text: String) -> StatusBadge { .init(text: text, color: Theme.accentColor) }
+    static func highlight(_ text: String) -> StatusBadge { .init(text: text, color: Theme.accentColor) }
 }
 
 final class StatusBadgeView: NSView {

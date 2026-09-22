@@ -159,7 +159,8 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate {
     }
 
     @objc func selectPage(_ sender: NSMenuItem) {
-        guard let page = Page(rawValue: sender.tag) else { return }
+        guard Page.macSidebarOrder.indices.contains(sender.tag) else { return }
+        let page = Page.macSidebarOrder[sender.tag]
         navigation.select(page)
     }
 }

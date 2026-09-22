@@ -165,6 +165,7 @@ final class CargoRemoteAPIRouter {
     }
 
     private func route(_ request: CargoAPIRequest, requestID: String) async throws -> CargoAPIResponse {
+        let clientID = try clientID(from: request)
         switch (request.path) {
         case "/v1/discovery":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
@@ -187,10 +188,10 @@ final class CargoRemoteAPIRouter {
             )
         case "/v1/state":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot(), requestID: requestID)
+            return success(controller.snapshot(clientID: clientID), requestID: requestID)
         case "/v1/events":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return try events(request, requestID: requestID)
+            return try events(request, requestID: requestID, clientID: clientID)
         case "/v1/presence":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
             return success(presenceRegistry.snapshot(), requestID: requestID)
@@ -205,28 +206,28 @@ final class CargoRemoteAPIRouter {
             return try unregisterPresence(request, requestID: requestID)
         case "/v1/transfers":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().transfers, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).transfers, requestID: requestID)
         case "/v1/files":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().files, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).files, requestID: requestID)
         case "/v1/inbox":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().syncJobs, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).syncJobs, requestID: requestID)
         case "/v1/library":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().library, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).library, requestID: requestID)
         case "/v1/watchlist":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().watchlist, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).watchlist, requestID: requestID)
         case "/v1/discover/catalog":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return success(controller.snapshot().chillCatalog, requestID: requestID)
+            return success(controller.snapshot(clientID: clientID).chillCatalog, requestID: requestID)
         case "/v1/discover/search":
             guard request.method == "POST" else { throw CargoRemoteAPIError.methodNotAllowed }
             return try await search(request, requestID: requestID)
         case "/v1/commands":
             guard request.method == "POST" else { throw CargoRemoteAPIError.methodNotAllowed }
-            return try await command(request, requestID: requestID)
+            return try await command(request, requestID: requestID, clientID: clientID)
         default:
             throw CargoRemoteAPIError.notFound
         }
@@ -249,7 +250,7 @@ final class CargoRemoteAPIRouter {
         return success(try await controller.search(query: query), requestID: requestID)
     }
 
-    private func events(_ request: CargoAPIRequest, requestID: String) throws -> CargoAPIResponse {
+    private func events(_ request: CargoAPIRequest, requestID: String, clientID: UUID?) throws -> CargoAPIResponse {
         let since: UInt64?
         if let value = URLComponents(string: "http://cargo.local\(request.uri)")?.queryItems?.first(where: { $0.name == "since" })?.value {
             guard let parsed = UInt64(value) else {
@@ -260,12 +261,12 @@ final class CargoRemoteAPIRouter {
             since = nil
         }
         return success(
-            eventFeed.event(since: since, snapshot: controller.snapshot()),
+            eventFeed.event(since: since, snapshot: controller.snapshot(clientID: clientID)),
             requestID: requestID
         )
     }
 
-    private func command(_ request: CargoAPIRequest, requestID: String) async throws -> CargoAPIResponse {
+    private func command(_ request: CargoAPIRequest, requestID: String, clientID: UUID?) async throws -> CargoAPIResponse {
         guard request.body.count <= 64 * 1024 else {
             throw CargoRemoteAPIError.requestTooLarge
         }
@@ -278,12 +279,14 @@ final class CargoRemoteAPIRouter {
         }
 
         do {
-            let snapshot = try await controller.execute(command)
+            let snapshot = try await controller.execute(command, clientID: clientID)
             return success(snapshot, requestID: requestID)
         } catch let error as CargoRemoteControlError {
             switch error {
             case .targetNotFound(let target):
                 throw CargoRemoteAPIError.commandTargetNotFound(target)
+            case .appleTVUnavailable(let status):
+                throw CargoRemoteAPIError.commandFailed(status)
             }
         } catch let error as LocalizedError {
             throw CargoRemoteAPIError.commandFailed(error.errorDescription ?? "Cargo rejected the command.")
@@ -350,6 +353,14 @@ final class CargoRemoteAPIRouter {
         let parts = authorization.split(separator: " ", maxSplits: 1).map(String.init)
         guard parts.count == 2, parts[0].lowercased() == "bearer" else { return false }
         return constantTimeEquals(parts[1], token)
+    }
+
+    private func clientID(from request: CargoAPIRequest) throws -> UUID? {
+        guard let rawValue = request.headers["x-cargo-client-id"] else { return nil }
+        guard let id = UUID(uuidString: rawValue) else {
+            throw CargoRemoteAPIError.badRequest("The X-Cargo-Client-ID header must contain a UUID.")
+        }
+        return id
     }
 
     private func isPublicDiscovery(_ request: CargoAPIRequest) -> Bool {
@@ -420,13 +431,15 @@ final class CargoRemoteAPIClient: @unchecked Sendable {
 
     let baseURL: URL
     private let token: String
+    private let clientID: UUID?
     private let session: URLSession
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
-    init(baseURL: URL, token: String, session: URLSession = .shared) {
+    init(baseURL: URL, token: String, clientID: UUID? = nil, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.token = token
+        self.clientID = clientID
         self.session = session
         self.encoder = JSONEncoder()
         self.decoder = JSONDecoder()
@@ -523,6 +536,9 @@ final class CargoRemoteAPIClient: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let clientID {
+            request.setValue(clientID.uuidString, forHTTPHeaderField: "X-Cargo-Client-ID")
+        }
         if body != nil {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = body
@@ -862,7 +878,7 @@ final class CargoRemoteClientSession {
 
         do {
             try keychain.saveRemoteClientToken(resolvedToken)
-            let remoteClient = CargoRemoteAPIClient(baseURL: baseURL, token: resolvedToken)
+            let remoteClient = CargoRemoteAPIClient(baseURL: baseURL, token: resolvedToken, clientID: clientID)
             _ = try await remoteClient.health()
             let resolvedName = clientName?.trimmingCharacters(in: .whitespacesAndNewlines)
             registration = CargoRemotePresenceRegistration(

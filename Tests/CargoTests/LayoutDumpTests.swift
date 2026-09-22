@@ -13,7 +13,7 @@ final class LayoutDumpTests: XCTestCase {
         window.setContentSize(NSSize(width: 1020, height: 680))
         window.layoutIfNeeded()
 
-        for page in Page.allCases {
+        for page in Page.macSidebarOrder {
             windowController.navigation.select(page)
             window.contentView?.layoutSubtreeIfNeeded()
             guard let pageView = windowController.navigation.currentPage?.view else {

@@ -24,10 +24,17 @@ jobs:
           path: easysubs
       - run: brew install xcodegen
       - run: xcodegen generate
+      - name: Stamp build identity
+        run: |
+          { read -r build; read -r commit; } < <(./scripts/build-number.sh)
+          echo "APP_BUILD=$build" >> "$GITHUB_ENV"
+          echo "APP_COMMIT=$commit" >> "$GITHUB_ENV"
       - name: Build
-        run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Debug -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
+        run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Debug -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$APP_BUILD" CARGO_COMMIT="$APP_COMMIT" CODE_SIGNING_ALLOWED=NO -quiet
       - name: Test
-        run: xcodebuild test -project Cargo.xcodeproj -scheme Cargo -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
+        run: xcodebuild test -project Cargo.xcodeproj -scheme Cargo -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$APP_BUILD" CARGO_COMMIT="$APP_COMMIT" CODE_SIGNING_ALLOWED=NO -quiet
       # Release is what ships; -O and strict concurrency can fail where Debug passes.
       - name: Build (Release)
-        run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Release -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
+        run: xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Release -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$APP_BUILD" CARGO_COMMIT="$APP_COMMIT" CODE_SIGNING_ALLOWED=NO -quiet
+      - name: Build iOS companion
+        run: xcodebuild build -project Cargo.xcodeproj -scheme CargoIOS -sdk iphonesimulator -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$APP_BUILD" CARGO_COMMIT="$APP_COMMIT" CODE_SIGNING_ALLOWED=NO -quiet

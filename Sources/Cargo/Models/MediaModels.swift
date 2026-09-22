@@ -144,6 +144,27 @@ struct IMDbWatchlistItem: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
+/// A client-owned watchlist. Unlike the resident IMDb watchlist, this list is
+/// display-only: it never drives the resident's automatic download cycle.
+struct CargoClientWatchlist: Codable, Sendable, Equatable {
+    var url: String
+    var items: [IMDbWatchlistItem]
+    var lastUpdated: Date?
+    var status: String
+
+    init(
+        url: String = "",
+        items: [IMDbWatchlistItem] = [],
+        lastUpdated: Date? = nil,
+        status: String = "Not synced yet"
+    ) {
+        self.url = url
+        self.items = items
+        self.lastUpdated = lastUpdated
+        self.status = status
+    }
+}
+
 struct LocalSyncJob: Codable, Identifiable, Sendable {
     let id: UUID
     var remoteFileID: Int
@@ -419,6 +440,9 @@ struct CargoState: Codable, Sendable {
     var remoteMediaBaselineEstablished: Bool
     var imdbWatchlistItems: [IMDbWatchlistItem]
     var imdbWatchlistLastUpdated: Date?
+    /// Watchlists owned by connected clients, keyed by stable client UUID.
+    /// These lists are display-only and never enter the resident automation.
+    var clientWatchlists: [String: CargoClientWatchlist]
     var deletedRemoteFileIDs: [Int]
     var deletedRemoteFolderIDs: [Int]
     /// Archives seen in Put.io (rar'd releases) and the ones we asked it to unpack.
@@ -445,6 +469,7 @@ struct CargoState: Codable, Sendable {
         remoteMediaBaselineEstablished: Bool = false,
         imdbWatchlistItems: [IMDbWatchlistItem] = [],
         imdbWatchlistLastUpdated: Date? = nil,
+        clientWatchlists: [String: CargoClientWatchlist] = [:],
         deletedRemoteFileIDs: [Int] = [],
         deletedRemoteFolderIDs: [Int] = [],
         remoteArchiveFiles: [RemoteFile] = [],
@@ -466,6 +491,7 @@ struct CargoState: Codable, Sendable {
         self.remoteMediaBaselineEstablished = remoteMediaBaselineEstablished
         self.imdbWatchlistItems = imdbWatchlistItems
         self.imdbWatchlistLastUpdated = imdbWatchlistLastUpdated
+        self.clientWatchlists = clientWatchlists
         self.deletedRemoteFileIDs = deletedRemoteFileIDs
         self.deletedRemoteFolderIDs = deletedRemoteFolderIDs
         self.remoteArchiveFiles = remoteArchiveFiles
@@ -493,6 +519,7 @@ struct CargoState: Codable, Sendable {
         remoteMediaBaselineEstablished = currentBaseline ?? legacyBaseline ?? false
         imdbWatchlistItems = try container.decodeIfPresent([IMDbWatchlistItem].self, forKey: .imdbWatchlistItems) ?? []
         imdbWatchlistLastUpdated = try container.decodeIfPresent(Date.self, forKey: .imdbWatchlistLastUpdated)
+        clientWatchlists = try container.decodeIfPresent([String: CargoClientWatchlist].self, forKey: .clientWatchlists) ?? [:]
         deletedRemoteFileIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFileIDs) ?? []
         deletedRemoteFolderIDs = try container.decodeIfPresent([Int].self, forKey: .deletedRemoteFolderIDs) ?? []
         remoteArchiveFiles = try container.decodeIfPresent([RemoteFile].self, forKey: .remoteArchiveFiles) ?? []
@@ -516,6 +543,7 @@ struct CargoState: Codable, Sendable {
         case remoteMediaBaselineEstablished
         case imdbWatchlistItems
         case imdbWatchlistLastUpdated
+        case clientWatchlists
         case deletedRemoteFileIDs
         case deletedRemoteFolderIDs
         case remoteArchiveFiles

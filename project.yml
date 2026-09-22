@@ -16,6 +16,8 @@ packages:
   SwiftNIO:
     url: https://github.com/apple/swift-nio.git
     version: 2.103.0
+  ItsytvCore:
+    path: Vendor/itsytv-core
   CargoRemoteKit:
     path: Packages/CargoRemoteKit
 settings:
@@ -48,6 +50,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources/Cargo
+      - path: Sources/CargoShared
       - path: Resources/AppIcon.icns
         buildPhase: resources
     dependencies:
@@ -55,6 +58,10 @@ targets:
         product: HouseKit
       - package: EasySubsKit
         product: EasySubsKit
+      - package: ItsytvCore
+        product: ItsytvCore
+      - package: CargoRemoteKit
+        product: CargoRemoteKit
       - package: SwiftNIO
         products:
           - NIOCore
@@ -81,6 +88,9 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: Sources/CargoIOS
+      - path: Sources/CargoShared
+      - path: Resources/Assets.xcassets
+        buildPhase: resources
     dependencies:
       - package: CargoRemoteKit
         product: CargoRemoteKit
@@ -89,6 +99,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: app.cargo.CargoIOS
         PRODUCT_NAME: Cargo
         INFOPLIST_FILE: Resources/CargoIOS-Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CURRENT_PROJECT_VERSION: "1"
         SWIFT_VERSION: "6.0"
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_STYLE: Automatic

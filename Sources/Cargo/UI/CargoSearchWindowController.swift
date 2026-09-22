@@ -310,7 +310,7 @@ private final class CargoSearchResultCell: NSTableCellView {
         self.identifier = identifier
 
         iconView.imageScaling = .scaleProportionallyDown
-        iconView.contentTintColor = .controlAccentColor
+        iconView.contentTintColor = Theme.accentColor
         iconView.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         detailLabel.translatesAutoresizingMaskIntoConstraints = false

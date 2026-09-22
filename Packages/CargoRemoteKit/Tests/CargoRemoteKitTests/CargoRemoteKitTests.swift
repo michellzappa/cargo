@@ -11,7 +11,10 @@ final class CargoRemoteKitTests: XCTestCase {
             .cancelTransfer(id: 42),
             .enqueueLocalSync(remoteFileID: 99),
             .openRemoteFolder(remoteFolderID: 12),
-            .goBackRemoteFolder
+            .goBackRemoteFolder,
+            .refreshPersonalWatchlist(url: "https://www.imdb.com/user/ur123/watchlist/"),
+            .playLibraryItem(id: "movie-1"),
+            .playLibraryEpisode(id: "show-1", season: 2, episode: 7)
         ]
 
         for command in commands {

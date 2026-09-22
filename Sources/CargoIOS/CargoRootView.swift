@@ -4,6 +4,7 @@ import SwiftUI
 struct CargoRootView: View {
     @Environment(CargoClientModel.self) private var model
     @Environment(\.scenePhase) private var scenePhase
+    @State private var toast: CargoToast?
 
     var body: some View {
         Group {
@@ -18,6 +19,27 @@ struct CargoRootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, !model.isConnected {
                 Task { await model.restoreConnection() }
+            }
+        }
+        .onChange(of: model.lastError) { _, message in
+            withAnimation {
+                toast = message.map(CargoToast.init(message:))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if let toast {
+                CargoToastView(
+                    toast: toast,
+                    showsRetry: !model.isConnected && model.hasSavedResident,
+                    onDismiss: { withAnimation { self.toast = nil } },
+                    onRetry: {
+                        withAnimation { self.toast = nil }
+                        Task { await model.retrySavedConnection() }
+                    }
+                )
+                .padding(.horizontal)
+                .padding(.bottom, model.isConnected || model.hasSavedResident ? 72 : 16)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .alert(
@@ -115,55 +137,69 @@ struct CargoDashboardView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !model.isConnected {
-                HStack(spacing: 10) {
-                    Image(systemName: "wifi.exclamationmark")
-                    Text(model.connectionState.label)
-                        .font(.footnote)
-                        .lineLimit(2)
-                    Spacer()
-                    Button("Retry") {
-                        Task { await model.retrySavedConnection() }
-                    }
-                    .font(.footnote.weight(.semibold))
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .foregroundStyle(.orange)
-                .background(.orange.opacity(0.12))
-            }
-
             TabView(selection: $selectedTab) {
-                CargoTransfersView()
-                    .tabItem { Label("Transfers", systemImage: "arrow.down.circle") }
-                    .tag(CargoStartTab.transfers)
-                CargoFilesView()
-                    .tabItem { Label("Files", systemImage: "folder") }
-                    .tag(CargoStartTab.files)
-                CargoLibraryView()
-                    .tabItem { Label("Library", systemImage: "film") }
-                    .tag(CargoStartTab.library)
-                CargoDiscoverView()
-                    .tabItem { Label("Discover", systemImage: "sparkles") }
-                    .tag(CargoStartTab.discover)
-                CargoWatchlistView()
-                    .tabItem { Label("Watchlist", systemImage: "star") }
-                    .tag(CargoStartTab.watchlist)
-                CargoInboxView()
-                    .tabItem { Label("Inbox", systemImage: "tray") }
-                    .tag(CargoStartTab.inbox)
-                CargoHistoryView()
-                    .tabItem { Label("History", systemImage: "clock") }
-                    .tag(CargoStartTab.history)
-                CargoSettingsView()
-                    .tabItem { Label("Settings", systemImage: "gearshape") }
-                    .tag(CargoStartTab.settings)
+                ForEach(CargoNavigationDestination.compactTabOrder) { destination in
+                    cargoTab(destination)
+                        .tabItem { Label(destination.title, systemImage: destination.symbolName) }
+                        .tag(CargoStartTab(rawValue: destination.rawValue)!)
+                }
             }
         }
         .onAppear { selectedTab = model.startTab }
         .onChange(of: model.startTab) { _, tab in selectedTab = tab }
         .onChange(of: scenePhase) { _, phase in
             model.setActive(phase == .active)
+        }
+    }
+
+    @ViewBuilder
+    private func cargoTab(_ destination: CargoNavigationDestination) -> some View {
+        switch destination {
+        case .transfers: CargoTransfersView()
+        case .library: CargoLibraryView()
+        case .discover: CargoDiscoverView()
+        case .watchlist: CargoWatchlistView()
+        case .files: CargoFilesView()
+        case .inbox: CargoInboxView()
+        case .history: CargoHistoryView()
+        case .settings: CargoSettingsView()
+        }
+    }
+}
+
+private struct CargoToast: Identifiable {
+    let id = UUID()
+    let message: String
+}
+
+private struct CargoToastView: View {
+    let toast: CargoToast
+    let showsRetry: Bool
+    let onDismiss: () -> Void
+    let onRetry: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(toast.message)
+                .font(.footnote)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+            if showsRetry {
+                Button("Retry", action: onRetry)
+                    .font(.footnote.weight(.semibold))
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .foregroundStyle(.primary)
+        .background(.regularMaterial, in: Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 10, y: 4)
+        .task(id: toast.id) {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            onDismiss()
         }
     }
 }
@@ -311,20 +347,16 @@ struct CargoLibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        ForEach(CargoLibraryFilter.allCases) { option in
-                            Button {
-                                filter = option
-                            } label: {
-                                if filter == option {
-                                    Label(option.title, systemImage: "checkmark")
-                                } else {
-                                    Text(option.title)
-                                }
+                        Picker("Filter", selection: $filter) {
+                            ForEach(CargoLibraryFilter.allCases) { option in
+                                Text(option.title).tag(option)
                             }
                         }
                     } label: {
-                        Label(filter.title, systemImage: "line.3.horizontal.decrease.circle")
+                        Image(systemName: "line.3.horizontal.decrease")
                     }
+                    .accessibilityLabel("Filter")
+                    .accessibilityValue(filter.title)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     CargoMediaViewModeMenu(selection: $viewMode)
@@ -336,7 +368,13 @@ struct CargoLibraryView: View {
                 }
             }
             .sheet(item: $selectedDetail) { detail in
-                CargoTitleDetailView(detail: detail) { _ in }
+                CargoTitleDetailView(detail: detail) { action in
+                    if case .playLibraryItem(let id) = action {
+                        Task { await model.execute(.playLibraryItem(id: id)) }
+                    } else if case .playLibraryEpisode(let id, let season, let episode) = action {
+                        Task { await model.execute(.playLibraryEpisode(id: id, season: season, episode: episode)) }
+                    }
+                }
             }
         }
     }
@@ -438,7 +476,16 @@ struct CargoLibraryView: View {
             metadataLine: metadataLine,
             externalURL: metadata.flatMap { URL(string: $0.externalURL) },
             externalLabel: metadata == nil ? nil : "Open on TMDB",
-            action: nil
+            action: item.kind == .movie && model.snapshot?.appleTV?.connected == true && metadata != nil
+                ? .playLibraryItem(id: item.id)
+                : nil,
+            episodes: item.kind == .show && model.snapshot?.appleTV?.connected == true && metadata?.mediaType == "tv"
+                ? item.episodes.keys.sorted().flatMap { season in
+                    item.episodes[season, default: []].sorted().map { episode in
+                        CargoTitleDetailEpisode(libraryItemID: item.id, season: season, episode: episode)
+                    }
+                }
+                : []
         )
     }
 }
@@ -677,11 +724,6 @@ struct CargoDiscoverView: View {
         }
     }
 
-    private var filterMenuTitle: String {
-        if !activeFilter.isEmpty { return activeFilter }
-        return selectedCatalog == .movies ? "All Lists & Genres" : "All Lists"
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -702,6 +744,11 @@ struct CargoDiscoverView: View {
             }
             .refreshable { await model.refresh() }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !showingSearchResults {
+                        filterMenu
+                    }
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if !showingSearchResults {
                         CargoMediaViewModeMenu(selection: $viewMode)
@@ -724,6 +771,10 @@ struct CargoDiscoverView: View {
                     case .searchReleases(let query):
                         self.query = query
                         Task { await model.search(query: query) }
+                    case .playLibraryItem(let id):
+                        Task { await model.execute(.playLibraryItem(id: id)) }
+                    case .playLibraryEpisode(let id, let season, let episode):
+                        Task { await model.execute(.playLibraryEpisode(id: id, season: season, episode: episode)) }
                     }
                 }
             }
@@ -738,56 +789,36 @@ struct CargoDiscoverView: View {
             }
         }
         .pickerStyle(.segmented)
-
-        filterMenu
     }
 
     @ViewBuilder
     private var filterMenu: some View {
         Menu {
-            Button {
-                selectedFilter = ""
-            } label: {
-                filterLabel("All", activeFilter.isEmpty)
-            }
+            Picker("Filter", selection: $selectedFilter) {
+                Text("All").tag("")
 
-            if !catalogFilters.lists.isEmpty {
-                Divider()
-                Section("Lists") {
-                    ForEach(catalogFilters.lists, id: \.self) { option in
-                        Button {
-                            selectedFilter = option
-                        } label: {
-                            filterLabel(option, activeFilter.caseInsensitiveCompare(option) == .orderedSame)
+                if !catalogFilters.lists.isEmpty {
+                    Section("Lists") {
+                        ForEach(catalogFilters.lists, id: \.self) { option in
+                            Text(option).tag(option)
                         }
                     }
                 }
-            }
 
-            if !catalogFilters.genres.isEmpty {
-                Divider()
-                Section("Genres") {
-                    ForEach(catalogFilters.genres, id: \.self) { option in
-                        Button {
-                            selectedFilter = option
-                        } label: {
-                            filterLabel(option, activeFilter.caseInsensitiveCompare(option) == .orderedSame)
+                if !catalogFilters.genres.isEmpty {
+                    Section("Genres") {
+                        ForEach(catalogFilters.genres, id: \.self) { option in
+                            Text(option).tag(option)
                         }
                     }
                 }
             }
         } label: {
-            Label(filterMenuTitle, systemImage: "line.3.horizontal.decrease.circle")
-                .lineLimit(1)
+            Image(systemName: "line.3.horizontal.decrease")
         }
+        .accessibilityLabel("Filter")
+        .accessibilityValue(activeFilter.isEmpty ? "All" : activeFilter)
         .menuOrder(.fixed)
-    }
-
-    private func filterLabel(_ title: String, _ selected: Bool) -> some View {
-        if selected {
-            return AnyView(Label(title, systemImage: "checkmark"))
-        }
-        return AnyView(Text(title))
     }
 
     @ViewBuilder
@@ -961,7 +992,8 @@ struct CargoDiscoverView: View {
             metadataLine: movie.genres.joined(separator: " · "),
             externalURL: URL(string: movie.externalURL),
             externalLabel: movie.externalURL.isEmpty ? nil : "Open on TMDB",
-            action: .sendMovie(id: movie.id)
+            action: .sendMovie(id: movie.id),
+            episodes: []
         )
     }
 
@@ -978,7 +1010,8 @@ struct CargoDiscoverView: View {
                 .joined(separator: " · "),
             externalURL: URL(string: series.externalURL),
             externalLabel: series.externalURL.isEmpty ? nil : "Open on TMDB",
-            action: .searchReleases(query: "\(series.title) \(series.year)")
+            action: .searchReleases(query: "\(series.title) \(series.year)"),
+            episodes: []
         )
     }
 }
@@ -1040,29 +1073,25 @@ struct CargoWatchlistView: View {
         NavigationStack {
             watchlistContent
             .refreshable { await model.refresh() }
-            .navigationTitle("Watchlist")
+            .navigationTitle("My Watchlist")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        ForEach(CargoWatchlistFilter.allCases) { option in
-                            Button {
-                                filter = option
-                            } label: {
-                                if filter == option {
-                                    Label(option.title, systemImage: "checkmark")
-                                } else {
-                                    Text(option.title)
-                                }
+                        Picker("Filter", selection: $filter) {
+                            ForEach(CargoWatchlistFilter.allCases) { option in
+                                Text(option.title).tag(option)
                             }
                         }
                     } label: {
-                        Label(filter.title, systemImage: "line.3.horizontal.decrease.circle")
+                        Image(systemName: "line.3.horizontal.decrease")
                     }
+                    .accessibilityLabel("Filter")
+                    .accessibilityValue(filter.title)
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     CargoMediaViewModeMenu(selection: $viewMode)
                     Button {
-                        Task { await model.execute(.refreshWatchlist) }
+                        Task { await model.refreshWatchlist() }
                     } label: {
                         Image(systemName: "arrow.clockwise")
                     }
@@ -1178,7 +1207,8 @@ struct CargoWatchlistView: View {
             metadataLine: item.metadata?.episodeCounts.isEmpty == false ? "TMDB metadata available" : nil,
             externalURL: URL(string: "https://www.imdb.com/title/\(item.id)/"),
             externalLabel: item.id.hasPrefix("tt") ? "Open on IMDb" : nil,
-            action: .searchReleases(query: query)
+            action: .searchReleases(query: query),
+            episodes: []
         )
     }
 }
@@ -1214,16 +1244,84 @@ struct CargoInboxView: View {
 
 struct CargoSettingsView: View {
     @Environment(CargoClientModel.self) private var model
+    @AppStorage(CargoAccentTheme.selectionKey) private var accentRawValue = CargoAccentColor.default.rawValue
+    @State private var watchlistURL = ""
+
+    private var accentSelection: Binding<String> {
+        Binding(
+            get: { accentRawValue },
+            set: { rawValue in
+                accentRawValue = rawValue
+                if let selection = CargoAccentColor(rawValue: rawValue) { CargoAccentTheme.save(selection) }
+            }
+        )
+    }
+
+    private var selectedAccent: CargoAccentColor {
+        CargoAccentColor(rawValue: accentRawValue) ?? .default
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Appearance") {
+                    Picker(selection: accentSelection) {
+                        ForEach(CargoAccentColor.allCases) { option in
+                            Label {
+                                Text(option.displayName)
+                            } icon: {
+                                Circle()
+                                    .fill(CargoIOSAccentColor.swatchColor(for: option))
+                                    .frame(width: 14, height: 14)
+                            }
+                            .tag(option.rawValue)
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text("Accent color")
+                            Spacer(minLength: 8)
+                            Circle()
+                                .fill(CargoIOSAccentColor.swatchColor(for: selectedAccent))
+                                .frame(width: 14, height: 14)
+                            Text(selectedAccent.displayName)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
+                    Text("Saved only on this iPhone and not synced to your account or other Cargo devices.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Section("Connection") {
                     Label(model.connectionState.label, systemImage: "network")
                     LabeledContent("Resident", value: model.residentAddress)
                     if let snapshot = model.snapshot {
                         LabeledContent("Updated", value: snapshot.lastUpdated.formatted(date: .abbreviated, time: .shortened))
                     }
+                }
+                Section("My Watchlist") {
+                    TextField("https://www.imdb.com/user/…/watchlist/", text: $watchlistURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Button("Save and refresh") {
+                        model.setWatchlistURL(watchlistURL)
+                        Task { await model.refreshWatchlist() }
+                    }
+                    Text("Personal to this client. It does not change the resident watchlist or trigger automatic downloads.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    if let snapshot = model.snapshot, !snapshot.watchlistStatus.isEmpty {
+                        Text(snapshot.watchlistStatus)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Section("About") {
+                    LabeledContent("Version", value: CargoAppInfo.version)
+                    LabeledContent("Build", value: CargoAppInfo.build)
+                    LabeledContent("Commit", value: CargoAppInfo.commit)
                 }
                 Section("Startup") {
                     Picker(
@@ -1252,6 +1350,7 @@ struct CargoSettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onAppear { watchlistURL = model.watchlistURL }
         }
     }
 }

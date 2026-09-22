@@ -1,9 +1,10 @@
 import AppKit
 import EasySubsKit
 import HouseKit
+import ItsytvCore
 
 extension SettingsWindowController {
-    /// Put.io · Chill · Library · Automation · General · About.
+    /// Put.io · Chill · Library · Automation · Remote Access · Apple TV · General · About.
     static func cargo(
         coordinator: CargoCoordinator,
         remoteAccessPage: ((RemoteAccessPage) -> Void)? = nil
@@ -17,13 +18,19 @@ extension SettingsWindowController {
             SettingsPage("Library", symbol: "externaldrive", controller: LibraryPage(coordinator: coordinator)),
             SettingsPage("Automation", symbol: "gearshape.2", controller: AutomationPage(coordinator: coordinator)),
             SettingsPage("Remote Access", symbol: "network", controller: remoteAccess),
+            SettingsPage("Apple TV", symbol: "appletv", controller: AppleTVPage(coordinator: coordinator)),
             SettingsPage("General", symbol: "gearshape", controller: GeneralPage(
                 launchAtLogin: (
                     get: { coordinator.state.settings.launchAtLoginEnabled },
                     set: { value in try? coordinator.updateSettings { $0.launchAtLoginEnabled = value } }
                 ),
                 permissions: [.notifications],
-                extras: { form in startPageControl.add(to: form) }
+                extras: { form in
+                    startPageControl.add(to: form)
+                    form.section("Appearance")
+                    form.row("Accent color", CargoMacAccentColorControl())
+                    form.note("This choice is saved only on this Mac and is not synced to your account or other Cargo devices.")
+                }
             )),
             SettingsPage("About", symbol: "info.circle", controller: AboutPage(
                 appName: "Cargo",
@@ -31,6 +38,79 @@ extension SettingsWindowController {
                 links: [("GitHub", URL(string: "https://github.com/michellzappa/cargo")!)]
             ))
         ])
+    }
+}
+
+// MARK: - Apple TV
+
+final class AppleTVPage: CargoPage {
+    private let devicePopup = SettingsForm.popup()
+    private let pinField = SettingsForm.textField(placeholder: "4-digit PIN", width: 120)
+    private let connectionLabel = SettingsForm.caption("")
+    private lazy var refreshButton = SettingsForm.button("Refresh", target: self, action: #selector(refreshDevices))
+    private lazy var connectButton = SettingsForm.button("Connect", target: self, action: #selector(connect))
+    private lazy var submitPINButton = SettingsForm.button("Submit PIN", target: self, action: #selector(submitPIN))
+    private lazy var disconnectButton = SettingsForm.button("Disconnect", target: self, action: #selector(disconnect))
+
+    override func build() {
+        section("Infuse on Apple TV")
+        coordinator.appleTVPlayback.start()
+        row("Apple TV", [devicePopup, connectButton, refreshButton])
+        row("Status", connectionLabel)
+        row("Pairing PIN", [pinField, submitPINButton])
+        row(nil, disconnectButton)
+        note("Cargo discovers Apple TVs on this Mac's local network. Choose one, tap Connect, then enter the four-digit PIN shown on the TV. Pairing credentials are kept in the system Keychain. Library actions use Infuse's TMDB deep links, so the media must already be in the Infuse library.")
+        row(nil, statusLabel)
+    }
+
+    override func refresh() {
+        let service = coordinator.appleTVPlayback
+        let devices = service.devices
+        let selectedID = service.manager.connectedDeviceID ?? service.manager.lastConnectedDeviceID
+
+        devicePopup.removeAllItems()
+        if devices.isEmpty {
+            devicePopup.addItem(withTitle: "Looking for Apple TVs…")
+            devicePopup.isEnabled = false
+            connectButton.isEnabled = false
+        } else {
+            for device in devices {
+                devicePopup.addItem(withTitle: device.name)
+                devicePopup.lastItem?.representedObject = device
+            }
+            devicePopup.isEnabled = true
+            connectButton.isEnabled = true
+            if let selectedID,
+               let index = devices.firstIndex(where: { $0.id == selectedID }) {
+                devicePopup.selectItem(at: index)
+            }
+        }
+        connectionLabel.stringValue = service.statusText
+        connectionLabel.textColor = service.isConnected ? .systemGreen : .secondaryLabelColor
+        disconnectButton.isEnabled = service.manager.connectionStatus != .disconnected
+        submitPINButton.isEnabled = service.manager.connectionStatus == .pairing
+    }
+
+    @objc private func refreshDevices() {
+        coordinator.appleTVPlayback.refresh()
+        refresh()
+    }
+
+    @objc private func connect() {
+        guard let device = devicePopup.selectedItem?.representedObject as? AppleTVDevice else { return }
+        coordinator.appleTVPlayback.connect(to: device)
+        connectionLabel.stringValue = "Connecting to \(device.name)…"
+    }
+
+    @objc private func submitPIN() {
+        coordinator.appleTVPlayback.submitPIN(pinField.stringValue)
+        pinField.stringValue = ""
+        connectionLabel.stringValue = coordinator.appleTVPlayback.statusText
+    }
+
+    @objc private func disconnect() {
+        coordinator.appleTVPlayback.disconnect()
+        refresh()
     }
 }
 
@@ -691,7 +771,7 @@ final class LibraryPage: CargoPage, NSTextFieldDelegate, NSPathControlDelegate {
             field.stringValue = value
         }
         if !isEditing(watchlistURLField) { watchlistURLField.stringValue = settings.imdbWatchlistURL }
-        watchlistStatusLabel.stringValue = coordinator.imdbWatchlistStatus
+        watchlistStatusLabel.stringValue = coordinator.dashboardWatchlistStatus
         let hasKey = coordinator.hasTMDBKey
         if !isEditing(tmdbKeyField) { tmdbKeyField.stringValue = hasKey ? "••••••••••••••••" : "" }
         let enriched = coordinator.state.metadata.count

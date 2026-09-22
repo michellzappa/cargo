@@ -4,6 +4,14 @@ import Foundation
 // Stored state lives in CargoCoordinator.swift; this file holds the behaviour
 // for one concern so the core file stays readable.
 extension CargoCoordinator {
+    private func clientWatchlistKey(_ clientID: UUID) -> String {
+        clientID.uuidString.lowercased()
+    }
+
+    func clientWatchlist(for clientID: UUID) -> CargoClientWatchlist? {
+        state.clientWatchlists[clientWatchlistKey(clientID)]
+    }
+
     func saveIMDbWatchlistURL(_ value: String) throws {
         let trimmedValue = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmedValue),
@@ -25,7 +33,9 @@ extension CargoCoordinator {
 
     func refreshIMDbWatchlist(force: Bool = true) async -> [String] {
         if isRemoteClientMode {
-            _ = try? await remoteClientSession.execute(.refreshWatchlist)
+            _ = try? await remoteClientSession.execute(
+                .refreshPersonalWatchlist(url: state.settings.imdbWatchlistURL)
+            )
             return []
         }
         guard !state.settings.imdbWatchlistURL.isEmpty else {
@@ -69,6 +79,72 @@ extension CargoCoordinator {
             return addedItems.map(\.title)
         } catch {
             imdbWatchlistStatus = error.localizedDescription
+            return []
+        }
+    }
+
+    /// Refreshes a connected client's personal list without changing the
+    /// resident IMDb list or entering the resident download automation.
+    @discardableResult
+    func refreshClientWatchlist(for clientID: UUID, requestedURL: String? = nil) async -> [String] {
+        let key = clientWatchlistKey(clientID)
+        var watchlist = state.clientWatchlists[key] ?? CargoClientWatchlist()
+
+        if let requestedURL {
+            let trimmedValue = requestedURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedValue.isEmpty {
+                watchlist = CargoClientWatchlist(status: "No Watchlist URL")
+                state.clientWatchlists[key] = watchlist
+                persistQuietly()
+                return []
+            }
+            guard let url = URL(string: trimmedValue),
+                  url.scheme == "https",
+                  url.host?.lowercased().hasSuffix("imdb.com") == true,
+                  url.path.lowercased().contains("watchlist") else {
+                watchlist.status = SettingsError.invalidIMDbWatchlistURL.localizedDescription
+                state.clientWatchlists[key] = watchlist
+                persistQuietly()
+                return []
+            }
+            let normalizedURL = url.absoluteString
+            if watchlist.url != normalizedURL {
+                watchlist.url = normalizedURL
+                watchlist.items = []
+                watchlist.lastUpdated = nil
+            }
+        }
+
+        guard !watchlist.url.isEmpty else {
+            watchlist.status = "No Watchlist URL"
+            state.clientWatchlists[key] = watchlist
+            persistQuietly()
+            return []
+        }
+
+        do {
+            let previousIDs = Set(watchlist.items.map(\.id))
+            let items = try await imdbWatchlistService.fetchItems(from: watchlist.url)
+            watchlist.items = items.sorted {
+                if let lhsDate = $0.addedAt, let rhsDate = $1.addedAt, lhsDate != rhsDate {
+                    return lhsDate > rhsDate
+                }
+                if ($0.addedAt != nil) != ($1.addedAt != nil) {
+                    return $0.addedAt != nil
+                }
+                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
+            }
+            watchlist.lastUpdated = Date()
+            watchlist.status = "Updated \(Self.watchlistTimeFormatter.string(from: Date())) · \(items.count) titles"
+            state.clientWatchlists[key] = watchlist
+            persistQuietly()
+
+            let addedItems = items.filter { !previousIDs.contains($0.id) }
+            return addedItems.map(\.title)
+        } catch {
+            watchlist.status = error.localizedDescription
+            state.clientWatchlists[key] = watchlist
+            persistQuietly()
             return []
         }
     }

@@ -59,7 +59,7 @@ Each step is a switch in Settings → Automation.
 | **Files** | Put.io's file tree. Queue a download, request extraction, delete (to trash). |
 | **Inbox** | The `_Inbox` staging folder: downloads with live progress, the proposed destination, Organize. |
 | **Library** | The SSD itself, rescanned each cycle. With a TMDB key: posters, completeness (*Season 2 · 7 of 10*), Find on Put.io for missing episodes. Tabs: All · Movies · TV Shows · Incomplete · Unmatched. Reveal in Finder, Play in Infuse, Open on TMDB, Move to Trash. |
-| **Watchlist** | A public IMDb Watchlist followed as a *desired* list: Wanted → Available → Queued → Downloaded → Organized. |
+| **Watchlist** | The resident's public IMDb Watchlist followed as a *desired* list: Wanted → Available → Queued → Downloaded → Organized. Connected clients can instead configure **My Watchlist**, a personal display-only list that never drives resident downloads. |
 | **History** | What the cycle did, and what needs attention. |
 
 ⌘K searches the cached Library and Watchlist by title, year, path or IMDb id
@@ -76,11 +76,15 @@ name when Tailscale is running. On the client, paste it into *Resident
 address* and Connect — or just open the link.
 
 The client sees the resident's state (refreshed every 15 s) and sends actions
-back: transfers, downloads, organize, delete, watchlist refresh. Discover search
-is the client's own. Put.io, Chill and TMDB credentials, the SSD bookmark and
-local paths never leave the resident; the client only holds the bearer token,
-in Keychain. Loopback is the default scope; local-network scope should sit
-behind the Mac firewall or a tailnet, and the token can be rotated at any time.
+back: transfers, downloads, organize, delete, and watchlist refresh. Each
+client can configure its own public IMDb URL in **Library → IMDb Watchlist** on
+macOS or **Settings → My Watchlist** on iOS. The personal list is persisted by
+the resident under that client's stable ID, but remains display-only: it never
+joins the resident's desired/download list. Discover search is the client's
+own. Put.io, Chill and TMDB credentials, the SSD bookmark and local paths never
+leave the resident; the client only holds the bearer token in Keychain.
+Loopback is the default scope; local-network scope should sit behind the Mac
+firewall or a tailnet, and the token can be rotated at any time.
 
 ## Requirements
 
@@ -124,6 +128,21 @@ xcodebuild test -project Cargo.xcodeproj -scheme Cargo CODE_SIGNING_ALLOWED=NO
 ad-hoc: Keychain and TCC key their grants to the code signature, so an ad-hoc
 build would lose the Put.io token and the folder bookmark on every rebuild.
 Set your own `DEVELOPMENT_TEAM` there.
+
+### Versioning and changelog
+
+The macOS marketing version is the `CFBundleShortVersionString` in
+`Resources/Info.plist`; the current development line is `0.9.0`, following
+the tagged `v0.8.0` release. Release tags must match the plist version.
+`CFBundleVersion` is generated from the Git commit count by
+`scripts/build-number.sh` for local release builds and CI, so it should not be
+hand-edited. The iOS companion uses the same generated build identity while
+keeping its own marketing version in `Resources/CargoIOS-Info.plist`.
+
+Document unreleased work in [CHANGELOG.md](CHANGELOG.md). When cutting a
+release, move its entries from `Unreleased` to a dated version heading, update
+the marketing version, verify both About surfaces, and push the matching
+`vX.Y.Z` tag.
 
 ## Settings
 
@@ -180,8 +199,10 @@ POST /v1/commands                  {"type":"refresh"}
 Commands: `refresh`, `refreshChillCatalog`, `sendChillRelease`,
 `sendChillMovie`, `addTransfer`, `cancelTransfer`, `retryTransfer`,
 `cleanFinishedTransfers`, `requestExtraction`, `deleteRemoteFile`,
-`enqueueLocalSync`, `organizeLocalJob`, `refreshWatchlist`, `clearFailedJobs`,
-`clearHistory`.
+`enqueueLocalSync`, `organizeLocalJob`, `refreshWatchlist`,
+`refreshPersonalWatchlist`, `clearFailedJobs`, `clearHistory`. Client-scoped
+requests carry `X-Cargo-Client-ID`; the resident uses it to select the
+personal watchlist snapshot and persisted URL.
 
 See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
 for the working notes on risks — both are the author's ledgers rather than
@@ -193,7 +214,8 @@ The iOS target is a client only. It never receives Put.io, Chill, TMDB,
 subtitle, or SSD credentials; it stores only the resident address and bearer
 token in the iOS Keychain. Pair it by opening or pasting the resident's
 `cargo://pair` link. The app uses the revisioned `/v1/events` feed while
-foregrounded and shows the last cached snapshot after a relaunch.
+foregrounded and shows the last cached snapshot after a relaunch. Its
+**Settings → My Watchlist** URL is personal to that iPhone.
 
 ## License
 

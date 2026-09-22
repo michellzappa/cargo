@@ -1,4 +1,5 @@
 import AppKit
+import CargoRemoteKit
 
 private extension CargoStartPage {
     var page: Page {
@@ -87,6 +88,12 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             name: CargoCoordinator.didRequestChillSearch,
             object: coordinator
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accentDidChange),
+            name: CargoAccentTheme.didChange,
+            object: nil
+        )
         select(coordinator.state.settings.startPage.page)
         updateFooter()
     }
@@ -115,8 +122,8 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
             ])
         }
 
-        if sidebarTableView.selectedRow != page.rawValue {
-            sidebarTableView.selectRowIndexes(IndexSet(integer: page.rawValue), byExtendingSelection: false)
+        if let row = Page.macSidebarOrder.firstIndex(of: page), sidebarTableView.selectedRow != row {
+            sidebarTableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         onSelectionChange?(page, controller.subtitle)
     }
@@ -124,11 +131,17 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     var currentPage: PageViewController? { pages[selectedPage] }
 
     @objc private func coordinatorDidChange() {
-        sidebarTableView.reloadData(forRowIndexes: IndexSet(0..<Page.allCases.count), columnIndexes: IndexSet(integer: 0))
+        sidebarTableView.reloadData(forRowIndexes: IndexSet(0..<Page.macSidebarOrder.count), columnIndexes: IndexSet(integer: 0))
         updateFooter()
         if let controller = pages[selectedPage] {
             onSelectionChange?(selectedPage, controller.subtitle)
         }
+    }
+
+    @objc private func accentDidChange() {
+        sidebarTableView.reloadData(forRowIndexes: IndexSet(0..<Page.macSidebarOrder.count), columnIndexes: IndexSet(integer: 0))
+        view.needsDisplay = true
+        pages.values.forEach { $0.view.needsDisplay = true }
     }
 
     @objc private func chillSearchRequested() {
@@ -310,11 +323,12 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        Page.allCases.count
+        Page.macSidebarOrder.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let page = Page(rawValue: row) else { return nil }
+        guard Page.macSidebarOrder.indices.contains(row) else { return nil }
+        let page = Page.macSidebarOrder[row]
         let identifier = NSUserInterfaceItemIdentifier("SidebarCell")
         let cell = tableView.makeView(withIdentifier: identifier, owner: nil) as? SidebarCellView
             ?? SidebarCellView(identifier: identifier)
@@ -323,7 +337,9 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let page = Page(rawValue: sidebarTableView.selectedRow), page != selectedPage else { return }
+        guard Page.macSidebarOrder.indices.contains(sidebarTableView.selectedRow) else { return }
+        let page = Page.macSidebarOrder[sidebarTableView.selectedRow]
+        guard page != selectedPage else { return }
         select(page)
     }
 }
@@ -337,7 +353,7 @@ private final class SidebarCellView: NSTableCellView {
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
-        iconView.contentTintColor = .controlAccentColor
+        iconView.contentTintColor = Theme.accentColor
         iconView.translatesAutoresizingMaskIntoConstraints = false
         countLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         countLabel.setContentCompressionResistancePriority(.required, for: .horizontal)

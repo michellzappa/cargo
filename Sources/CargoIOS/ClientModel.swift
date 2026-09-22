@@ -13,19 +13,14 @@ enum CargoStartTab: String, CaseIterable, Identifiable {
     case history
     case settings
 
+    static var allCases: [Self] {
+        CargoNavigationDestination.compactTabOrder.compactMap { Self(rawValue: $0.rawValue) }
+    }
+
     var id: String { rawValue }
 
     var title: String {
-        switch self {
-        case .transfers: "Transfers"
-        case .files: "Files"
-        case .library: "Library"
-        case .discover: "Discover"
-        case .watchlist: "Watchlist"
-        case .inbox: "Inbox"
-        case .history: "History"
-        case .settings: "Settings"
-        }
+        CargoNavigationDestination(rawValue: rawValue)?.title ?? rawValue.capitalized
     }
 }
 
@@ -52,6 +47,7 @@ final class CargoClientModel {
     var searchState: CargoRemoteSearchState?
     var connectionState: ConnectionState = .disconnected
     var residentAddress = ""
+    var watchlistURL = ""
     var startTab: CargoStartTab
     var lastError: String?
     var actionError: String?
@@ -69,6 +65,7 @@ final class CargoClientModel {
 
     init() {
         residentAddress = UserDefaults.standard.string(forKey: "residentAddress") ?? ""
+        watchlistURL = UserDefaults.standard.string(forKey: "watchlistURL") ?? ""
         startTab = CargoStartTab(rawValue: UserDefaults.standard.string(forKey: "startTab") ?? "") ?? .transfers
         clientID = UserDefaults.standard.string(forKey: "clientID").flatMap(UUID.init) ?? UUID()
         UserDefaults.standard.set(clientID.uuidString, forKey: "clientID")
@@ -104,6 +101,15 @@ final class CargoClientModel {
     func setStartTab(_ tab: CargoStartTab) {
         startTab = tab
         UserDefaults.standard.set(tab.rawValue, forKey: "startTab")
+    }
+
+    func setWatchlistURL(_ value: String) {
+        watchlistURL = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(watchlistURL, forKey: "watchlistURL")
+    }
+
+    func refreshWatchlist() async {
+        await execute(.refreshPersonalWatchlist(url: watchlistURL))
     }
 
     private func normalize(_ value: String) -> String {
@@ -147,7 +153,7 @@ final class CargoClientModel {
             return
         }
 
-        let remote = CargoRemoteAPIClient(baseURL: baseURL, token: resolvedToken)
+        let remote = CargoRemoteAPIClient(baseURL: baseURL, token: resolvedToken, clientID: clientID)
         do {
             let health = try await remote.health()
             guard health.apiVersion == "v1" else {
@@ -285,6 +291,10 @@ final class CargoClientModel {
 
     private func updateSnapshot(_ value: CargoRemoteSnapshot) {
         snapshot = value
+        if let remoteURL = value.watchlistURL, !remoteURL.isEmpty, remoteURL != watchlistURL {
+            watchlistURL = remoteURL
+            UserDefaults.standard.set(remoteURL, forKey: "watchlistURL")
+        }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         do {

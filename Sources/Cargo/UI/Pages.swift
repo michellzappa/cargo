@@ -1,64 +1,38 @@
 import AppKit
+import CargoRemoteKit
 
-/// Sidebar destinations. Settings lives in its own window (⌘,).
-enum Page: Int, CaseIterable {
-    case discover
-    case transfers
-    case files
-    case inbox
-    case library
-    case watchlist
-    case history
+/// macOS page behavior layered onto the shared cross-platform destination model.
+typealias Page = CargoNavigationDestination
 
-    var title: String {
-        switch self {
-        case .discover: "Discover"
-        case .transfers: "Transfers"
-        case .files: "Files"
-        case .inbox: "Inbox"
-        case .library: "Library"
-        case .watchlist: "Watchlist"
-        case .history: "History"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .discover: "sparkles"
-        case .transfers: "arrow.down.circle"
-        case .files: "folder"
-        case .inbox: "tray"
-        case .library: "film.stack"
-        case .watchlist: "star"
-        case .history: "clock"
-        }
-    }
-
+extension CargoNavigationDestination {
     @MainActor
     func count(in coordinator: CargoCoordinator) -> Int {
         switch self {
-        case .discover: coordinator.dashboardChillSearchResults.count
         case .transfers: coordinator.dashboardState.transfers.count
+        case .library: coordinator.dashboardState.libraryItems.count
+        case .discover: coordinator.dashboardChillSearchResults.count
+        case .watchlist: coordinator.dashboardState.imdbWatchlistItems.count
         case .files: coordinator.dashboardState.remoteMediaFiles.count
         case .inbox: coordinator.isRemoteClientMode
             ? coordinator.dashboardState.localJobs.filter { $0.status != .completed }.count
             : coordinator.inboxFileURLs().count
-        case .library: coordinator.dashboardState.libraryItems.count
-        case .watchlist: coordinator.dashboardState.imdbWatchlistItems.count
         case .history: coordinator.dashboardState.history.count
+        case .settings: 0
         }
     }
 
     @MainActor
     func makeViewController(coordinator: CargoCoordinator) -> PageViewController {
         switch self {
-        case .discover: DiscoverPageViewController(page: self, coordinator: coordinator)
         case .transfers: TransfersPageViewController(page: self, coordinator: coordinator)
+        case .library: LibraryPageViewController(page: self, coordinator: coordinator)
+        case .discover: DiscoverPageViewController(page: self, coordinator: coordinator)
+        case .watchlist: WatchlistPageViewController(page: self, coordinator: coordinator)
         case .files: FilesPageViewController(page: self, coordinator: coordinator)
         case .inbox: InboxPageViewController(page: self, coordinator: coordinator)
-        case .library: LibraryPageViewController(page: self, coordinator: coordinator)
-        case .watchlist: WatchlistPageViewController(page: self, coordinator: coordinator)
         case .history: HistoryPageViewController(page: self, coordinator: coordinator)
+        case .settings:
+            preconditionFailure("Settings is presented in its own macOS window")
         }
     }
 }
@@ -76,6 +50,27 @@ final class ModernPillControl: NSSegmentedControl {
         didSet { needsDisplay = true }
     }
 
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accentDidChange),
+            name: CargoAccentTheme.didChange,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func accentDidChange() {
+        needsDisplay = true
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: segmentWidths.reduce(0, +) + CGFloat(max(segmentCount - 1, 0)) * segmentGap,
                height: controlHeight)
@@ -88,10 +83,10 @@ final class ModernPillControl: NSSegmentedControl {
         for (index, rect) in rects.enumerated() {
             let isSelected = index == selectedSegment
             let fillColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.12)
+                ? Theme.accentColor.withAlphaComponent(0.12)
                 : NSColor.controlBackgroundColor.withAlphaComponent(0.58)
             let borderColor = isSelected
-                ? NSColor.controlAccentColor.withAlphaComponent(0.30)
+                ? Theme.accentColor.withAlphaComponent(0.30)
                 : NSColor.separatorColor.withAlphaComponent(0.30)
 
             fillColor.setFill()
@@ -106,7 +101,7 @@ final class ModernPillControl: NSSegmentedControl {
             let title = label(forSegment: index) ?? ""
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: isSelected ? NSColor.controlAccentColor : NSColor.secondaryLabelColor
+                .foregroundColor: isSelected ? Theme.accentColor : NSColor.secondaryLabelColor
             ]
             let titleSize = title.size(withAttributes: attributes)
             title.draw(at: NSPoint(x: rect.midX - titleSize.width / 2,
@@ -146,6 +141,27 @@ final class ModernPillControl: NSSegmentedControl {
 @MainActor
 final class ModernPillPopupButton: NSPopUpButton {
     private let controlHeight: CGFloat = 36
+
+    override init(frame frameRect: NSRect, pullsDown flag: Bool) {
+        super.init(frame: frameRect, pullsDown: flag)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accentDidChange),
+            name: CargoAccentTheme.didChange,
+            object: nil
+        )
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func accentDidChange() {
+        needsDisplay = true
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: 180, height: controlHeight)
@@ -254,11 +270,22 @@ class PageViewController: NSViewController {
             name: CargoCoordinator.didChange,
             object: coordinator
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(accentDidChange),
+            name: CargoAccentTheme.didChange,
+            object: nil
+        )
         reload()
     }
 
     @objc private func coordinatorDidChange() {
         reload()
+    }
+
+    @objc private func accentDidChange() {
+        reload()
+        view.needsDisplay = true
     }
 
     func reload() {
@@ -1902,7 +1929,20 @@ final class LibraryPageViewController: PageViewController {
                 }
             }
             let reveal = RowAction(title: "Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
-            let play = RowAction(title: "Play in Infuse", isEnabled: item.kind == .movie) {
+            let playOnAppleTV = RowAction(title: "Play in Infuse on Apple TV", isEnabled: meta != nil) { [weak self] in
+                guard let self, let meta else { return }
+                switch self.coordinator.appleTVPlayback.play(metadata: meta) {
+                case .sent:
+                    break
+                case .needsSetup:
+                    let alert = NSAlert()
+                    alert.messageText = "Pair an Apple TV first"
+                    alert.informativeText = "Open Settings → Apple TV, pair the TV running Infuse, then try again."
+                    alert.addButton(withTitle: "OK")
+                    alert.runModal()
+                }
+            }
+            let playLocally = RowAction(title: "Play in Infuse on This Mac", isEnabled: item.kind == .movie) {
                 var components = URLComponents(string: "infuse://x-callback-url/play")
                 components?.queryItems = [URLQueryItem(name: "url", value: url.absoluteString)]
                 if let infuse = components?.url { NSWorkspace.shared.open(infuse) }
@@ -1910,7 +1950,7 @@ final class LibraryPageViewController: PageViewController {
             let openDetail = RowAction(title: "View Details") { [weak self] in
                 self?.showDetail(for: item, metadata: meta)
             }
-            var menu = [reveal, play]
+            var menu = [reveal, playOnAppleTV, playLocally]
             menu.insert(openDetail, at: 0)
             if let primary { menu.insert(primary, at: 0) }
             if let meta {
@@ -2077,8 +2117,7 @@ final class HistoryPageViewController: PageViewController {
     private static func color(for kind: CargoHistoryKind) -> NSColor? {
         switch kind {
         case .info, .success: nil
-        case .warning: .systemOrange
-        case .failure: .systemRed
+        case .warning, .failure: Theme.accentColor
         }
     }
 

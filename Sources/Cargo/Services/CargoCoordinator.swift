@@ -72,6 +72,7 @@ final class CargoCoordinator {
     let remoteClientSession = CargoRemoteClientSession()
     let remotePresenceRegistry = CargoRemotePresenceRegistry()
     let subtitles = SubtitleService()
+    let appleTVPlayback: AppleTVPlaybackService
     let imdbWatchlistService = IMDbWatchlistService()
     var putIOClient: PutIOClient
     var chillClient: ChillClient
@@ -159,6 +160,10 @@ final class CargoCoordinator {
             self.chillClient = UnconfiguredChillClient()
         }
         self.state = store.snapshot()
+        self.appleTVPlayback = AppleTVPlaybackService()
+        self.appleTVPlayback.onChange = { [weak self] in
+            self?.scheduleChangeNotification()
+        }
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(remoteClientDidChange),

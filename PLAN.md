@@ -77,6 +77,8 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 
 - [x] Sync a public IMDb Watchlist dynamically as a read-only desired list.
 - [x] Compare watchlist titles with recursive Put.io media and local Cargo jobs.
+- [x] Give each connected client its own persistent, display-only IMDb
+  watchlist without changing the resident's automation list.
 - [x] Show Chill release/availability metadata without making Cargo an indexer manager.
 - [x] Show Chill's top movie and series catalogs in Discover, with title/year release search.
 - [x] Send an explicitly selected Chill release URL to Put.io.
@@ -113,6 +115,7 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
   devices per resident.
 - [x] Reconnect: the heartbeat re-registers after a resident restart. Streaming delivery is still open; the revisioned polling feed remains.
 - [x] Validated across two Macs over Tailscale (pairing link, per-client search).
+- [x] Scope personal watchlist snapshots and refreshes by stable client ID.
 
 ### 8. iOS SwiftUI companion
 

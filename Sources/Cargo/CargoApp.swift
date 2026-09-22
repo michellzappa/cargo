@@ -120,13 +120,13 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case "open":
                 // cargo://open?page=library
                 let name = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "page" }?.value
-                mainWindowController.show(page: Page.allCases.first { $0.title.lowercased() == name?.lowercased() })
+                mainWindowController.show(page: Page.macSidebarOrder.first { $0.title.lowercased() == name?.lowercased() })
             case "snapshot":
                 // cargo://snapshot?page=library&to=/path.png — debugging aid: renders the window to a PNG.
                 let items = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
                 let name = items.first { $0.name == "page" }?.value
                 let path = items.first { $0.name == "to" }?.value ?? NSTemporaryDirectory() + "cargo-snapshot.png"
-                mainWindowController.show(page: Page.allCases.first { $0.title.lowercased() == name?.lowercased() })
+                mainWindowController.show(page: Page.macSidebarOrder.first { $0.title.lowercased() == name?.lowercased() })
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [mainWindowController] in
                     guard let view = mainWindowController.window?.contentView?.superview,
                           let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
@@ -256,13 +256,13 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         mainMenu.addItem(withTitle: "Edit", action: nil, keyEquivalent: "").submenu = editMenu
 
         let viewMenu = NSMenu(title: "View")
-        for page in Page.allCases {
+        for (index, page) in Page.macSidebarOrder.enumerated() {
             let item = viewMenu.addItem(
                 withTitle: page.title,
                 action: #selector(MainWindowController.selectPage(_:)),
-                keyEquivalent: String(page.rawValue + 1)
+                keyEquivalent: String(index + 1)
             )
-            item.tag = page.rawValue
+            item.tag = index
             item.target = mainWindowController
         }
         viewMenu.addItem(.separator())

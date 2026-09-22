@@ -3,6 +3,24 @@ import XCTest
 @testable import Cargo
 
 final class CargoTests: XCTestCase {
+    func testCrossPlatformNavigationPolicyStaysAligned() {
+        XCTAssertEqual(
+            CargoNavigationDestination.compactPrimary,
+            [.transfers, .library, .discover, .watchlist]
+        )
+        XCTAssertEqual(
+            CargoNavigationDestination.compactMore,
+            [.files, .inbox, .history, .settings]
+        )
+        XCTAssertEqual(
+            CargoNavigationDestination.macSidebarOrder,
+            [.transfers, .library, .discover, .watchlist, .files, .inbox, .history]
+        )
+        XCTAssertFalse(CargoNavigationDestination.compactPrimary.contains(.files))
+        XCTAssertTrue(CargoNavigationDestination.compactMore.contains(.files))
+        XCTAssertTrue(CargoNavigationDestination.compactPrimary.contains(.watchlist))
+    }
+
     func testChillModelsDecodeProtoJSONShape() throws {
         let resultData = Data(#"""
         {
@@ -234,6 +252,7 @@ final class CargoTests: XCTestCase {
             .enqueueLocalSync(remoteFileID: 99),
             .organizeLocalJob(id: UUID()),
             .refreshWatchlist,
+            .refreshPersonalWatchlist(url: "https://www.imdb.com/user/ur123/watchlist/"),
             .clearFailedJobs,
             .clearHistory
         ]
@@ -295,6 +314,32 @@ final class CargoTests: XCTestCase {
         XCTAssertFalse(json.contains("subtitle-user"))
         XCTAssertFalse(json.contains("subtitle-secret"))
         XCTAssertTrue(json.replacingOccurrences(of: "\\/", with: "/").contains("Movies/Arrival (2016).mkv"))
+    }
+
+    @MainActor
+    func testRemoteSnapshotUsesTheRequestingClientsPersonalWatchlist() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("CargoClientWatchlistTests-\(UUID().uuidString)", isDirectory: true)
+        let store = CargoStore(stateURL: directory.appendingPathComponent("state.json"))
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let clientID = UUID()
+        var state = store.snapshot()
+        state.imdbWatchlistItems = [IMDbWatchlistItem(id: "tt-shared", title: "Shared")]
+        state.clientWatchlists[clientID.uuidString.lowercased()] = CargoClientWatchlist(
+            url: "https://www.imdb.com/user/ur123/watchlist/",
+            items: [IMDbWatchlistItem(id: "tt-personal", title: "Personal")],
+            status: "Updated just now · 1 title"
+        )
+        try store.replace(with: state)
+
+        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        let personal = controller.snapshot(clientID: clientID)
+        let resident = controller.snapshot()
+
+        XCTAssertEqual(personal.watchlist.map(\.id), ["tt-personal"])
+        XCTAssertEqual(personal.watchlistURL, "https://www.imdb.com/user/ur123/watchlist/")
+        XCTAssertEqual(resident.watchlist.map(\.id), ["tt-shared"])
     }
 
     @MainActor
