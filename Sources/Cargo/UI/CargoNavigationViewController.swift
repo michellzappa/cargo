@@ -209,39 +209,53 @@ final class CargoNavigationViewController: NSSplitViewController, NSTableViewDat
         connectionLabel.toolTip = coordinator.dashboardPutIOStatus
         updatedLabel.stringValue = "Updated \(Formatters.time.string(from: coordinator.dashboardState.lastUpdated))"
 
-        if coordinator.isRemoteClientMode {
-            emptyTrashMenuItem.isEnabled = false
-            diskLabel.isHidden = true
-            diskIndicator.isHidden = true
-            ssdLabel.isHidden = true
-            ssdIndicator.isHidden = true
-            return
-        }
-
-        if let disk = coordinator.diskUsage {
+        if let disk = coordinator.dashboardDiskUsage {
             diskLabel.stringValue = "Put.io · \(Formatters.shortBytes(disk.availableBytes)) free"
             diskLabel.toolTip = "\(Formatters.bytes(disk.usedBytes)) used of \(Formatters.bytes(disk.totalBytes))"
             diskIndicator.doubleValue = disk.fraction
-            emptyTrashMenuItem.isEnabled = (coordinator.trashSummary?.count ?? 0) > 0 && !emptyingTrash
+            emptyTrashMenuItem.isEnabled = !coordinator.isRemoteClientMode
+                && (coordinator.trashSummary?.count ?? 0) > 0
+                && !emptyingTrash
             diskLabel.isHidden = false
             diskIndicator.isHidden = false
         } else {
             emptyTrashMenuItem.isEnabled = false
-            diskLabel.isHidden = true
+            diskLabel.stringValue = connected ? "Put.io · Availability unavailable" : "Put.io · Not connected"
+            diskLabel.toolTip = coordinator.dashboardPutIOStatus
+            diskLabel.isHidden = false
             diskIndicator.isHidden = true
+        }
+
+        if coordinator.isRemoteClientMode {
+            ssdLabel.stringValue = "SSD · Resident only"
+            ssdLabel.toolTip = "The resident Mac owns the local SSD."
+            ssdLabel.isHidden = false
+            ssdIndicator.isHidden = true
+            return
         }
 
         // The library volume: same shape as the Put.io line, so the two read together.
         if let root = coordinator.libraryRootURL(),
            let values = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey, .volumeNameKey]),
            let free = values.volumeAvailableCapacityForImportantUsage, let total = values.volumeTotalCapacity, total > 0 {
-            ssdLabel.stringValue = "\(values.volumeName ?? "SSD") · \(Formatters.shortBytes(free)) free"
-            ssdLabel.toolTip = "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total)))"
+            let volumeName = values.volumeName ?? "SSD"
+            let repairSuffix = coordinator.libraryRootBookmarkNeedsRepair ? " · bookmark repair needed" : ""
+            ssdLabel.stringValue = "\(volumeName) · \(Formatters.shortBytes(free)) free\(repairSuffix)"
+            ssdLabel.toolTip = coordinator.libraryRootBookmarkNeedsRepair
+                ? "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total))). The saved path is working without prompting; re-select the library root in Settings only if you want to renew its bookmark."
+                : "\(Formatters.bytes(Int64(total) - free)) used of \(Formatters.bytes(Int64(total)))"
             ssdIndicator.doubleValue = 1 - Double(free) / Double(total)
             ssdLabel.isHidden = false
             ssdIndicator.isHidden = false
         } else {
-            ssdLabel.isHidden = true
+            if coordinator.state.settings.libraryRootPath == nil {
+                ssdLabel.stringValue = "SSD · Library not configured"
+                ssdLabel.toolTip = "Choose a library root in Cargo Settings."
+            } else {
+                ssdLabel.stringValue = "SSD · Access unavailable"
+                ssdLabel.toolTip = "Re-select the library root in Cargo Settings to refresh its permission bookmark."
+            }
+            ssdLabel.isHidden = false
             ssdIndicator.isHidden = true
         }
     }

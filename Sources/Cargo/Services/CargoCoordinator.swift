@@ -126,6 +126,9 @@ final class CargoCoordinator {
     }
     var remoteFolderID = 0
     var remoteFolderName = "Put.io root"
+    private var libraryRootResolutionAttempted = false
+    private var resolvedLibraryRootURL: URL?
+    private(set) var libraryRootBookmarkNeedsRepair = false
 
     var canGoBackRemoteFolder: Bool {
         !remoteFolderStack.isEmpty
@@ -166,7 +169,22 @@ final class CargoCoordinator {
             self.state.settings.stagingDirectoryName = "_Inbox"
             self.persistQuietly()
         }
+        migrateLegacyLibraryRootErrors()
         requeueInterruptedJobs()
+    }
+
+    private func migrateLegacyLibraryRootErrors() {
+        guard let path = state.settings.libraryRootPath else { return }
+        let legacyMessage = "Choose the SSD library root in Settings first."
+        let oldReplacement = "Saved SSD access bookmark could not be resolved for \(path). Re-select the library root in Settings, then tap Retry."
+        let replacement = "Saved SSD access bookmark could not be resolved for \(path). Cargo will use the saved path without prompting; re-select the library root only if that path is no longer available."
+        var changed = false
+        for index in state.localJobs.indices where state.localJobs[index].status == .failed
+            && [legacyMessage, oldReplacement].contains(state.localJobs[index].errorMessage ?? "") {
+            state.localJobs[index].errorMessage = replacement
+            changed = true
+        }
+        if changed { persistQuietly() }
     }
 
     @objc private func remoteClientDidChange() {
@@ -192,6 +210,9 @@ final class CargoCoordinator {
 
     func refresh() {
         state = store.snapshot()
+        libraryRootResolutionAttempted = false
+        resolvedLibraryRootURL = nil
+        libraryRootBookmarkNeedsRepair = false
     }
 
     var isConnected: Bool {
@@ -217,6 +238,17 @@ final class CargoCoordinator {
 
     var dashboardPutIOStatus: String {
         remoteClientSession.snapshot?.putIO.status ?? putIOStatus
+    }
+
+    var dashboardDiskUsage: PutIODiskUsage? {
+        if let disk = remoteClientSession.snapshot?.disk {
+            return PutIODiskUsage(
+                availableBytes: disk.availableBytes,
+                usedBytes: disk.usedBytes,
+                totalBytes: disk.totalBytes
+            )
+        }
+        return diskUsage
     }
 
     var dashboardIsChillConnected: Bool {
@@ -361,6 +393,9 @@ final class CargoCoordinator {
         )
         state.settings.libraryRootBookmark = bookmark
         state.settings.libraryRootPath = url.path
+        libraryRootResolutionAttempted = true
+        resolvedLibraryRootURL = url
+        libraryRootBookmarkNeedsRepair = false
         try persist()
     }
 
@@ -409,24 +444,61 @@ final class CargoCoordinator {
     func clearLibraryRoot() throws {
         state.settings.libraryRootBookmark = nil
         state.settings.libraryRootPath = nil
+        libraryRootResolutionAttempted = true
+        resolvedLibraryRootURL = nil
+        libraryRootBookmarkNeedsRepair = false
         try persist()
     }
 
     func libraryRootURL() -> URL? {
+        if libraryRootResolutionAttempted {
+            return resolvedLibraryRootURL
+        }
+        libraryRootResolutionAttempted = true
+
+        let savedPath = state.settings.libraryRootPath
+
         if let bookmark = state.settings.libraryRootBookmark {
             var isStale = false
-            if let resolvedURL = try? URL(
+            guard let resolvedURL = try? URL(
                 resolvingBookmarkData: bookmark,
                 options: [.withSecurityScope, .withoutUI],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            ) {
-                return resolvedURL
+            ) else {
+                // Cargo is deliberately not sandboxed. If macOS cannot
+                // resolve an old scoped bookmark (for example after a volume
+                // or signing change), the persisted path is still usable and
+                // lets the app recover without opening a permission dialog.
+                guard let savedPath else { return nil }
+                let fallbackURL = URL(fileURLWithPath: savedPath, isDirectory: true)
+                guard FileManager.default.fileExists(atPath: fallbackURL.path) else { return nil }
+                libraryRootBookmarkNeedsRepair = true
+                resolvedLibraryRootURL = fallbackURL
+                return fallbackURL
             }
+
+            if isStale,
+               let refreshedBookmark = try? resolvedURL.bookmarkData(
+                   options: [.withSecurityScope],
+                   includingResourceValuesForKeys: nil,
+                   relativeTo: nil
+               ) {
+                state.settings.libraryRootBookmark = refreshedBookmark
+                state.settings.libraryRootPath = resolvedURL.path
+                persistQuietly()
+            }
+
+            resolvedLibraryRootURL = resolvedURL
+            libraryRootBookmarkNeedsRepair = false
+            return resolvedURL
         }
 
-        guard let path = state.settings.libraryRootPath else { return nil }
-        return URL(fileURLWithPath: path, isDirectory: true)
+        guard let path = savedPath else { return nil }
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        libraryRootBookmarkNeedsRepair = false
+        resolvedLibraryRootURL = url
+        return url
     }
 
     func inboxFileURLs() -> [URL] {

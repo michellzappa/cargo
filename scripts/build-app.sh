@@ -1,15 +1,28 @@
 #!/bin/zsh
-# Build Cargo.app and install it to /Applications, signed with the stable
-# Apple Development identity from project.yml (so the Accessibility grant
-# survives rebuilds). Regenerates the Xcode project and the icon every time.
+# Build Cargo.app and install it to ~/Applications by default, signed with the
+# stable Apple Development identity from project.yml (so Keychain and TCC
+# grants survive rebuilds). Use --system only when a /Applications install is
+# explicitly wanted.
 #
-#   ./scripts/build-app.sh            # Release → /Applications/Cargo.app
+#   ./scripts/build-app.sh            # Release → ~/Applications/Cargo.app
 #   ./scripts/build-app.sh --debug
+#   ./scripts/build-app.sh --system   # Release → /Applications/Cargo.app
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 housekit="${HOUSEKIT_PATH:-$here/../housekit}"
 config=Release
-[[ "${1:-}" == "--debug" ]] && config=Debug
+installRoot="/Users/${USER}/Applications"
+privilegedInstall=false
+for argument in "$@"; do
+  case "$argument" in
+    --debug) config=Debug ;;
+    --system)
+      installRoot=/Applications
+      privilegedInstall=true
+      ;;
+    *) print -u2 "Unknown option: $argument"; exit 2 ;;
+  esac
+done
 
 swift build -c release --package-path "$housekit" >/dev/null
 "$(swift build -c release --package-path "$housekit" --show-bin-path)/housekit-icon" cargo "$here/Resources/AppIcon.icns" >/dev/null
@@ -31,10 +44,20 @@ for nested in "$app/Contents/MacOS"/*.dylib "$app/Contents/Frameworks"/*.dylib; 
 done
 codesign --force --sign "Apple Development" --entitlements Resources/Cargo.entitlements --options runtime "$app"
 
-target=/Applications/Cargo.app
+target="$installRoot/Cargo.app"
 if pgrep -xq Cargo; then osascript -e 'tell application "Cargo" to quit' >/dev/null 2>&1 || true; sleep 0.5; fi
-rm -rf "$target"
-/usr/bin/ditto "$app" "$target"
-codesign --verify --strict "$target"
+if [[ "$privilegedInstall" == true ]]; then
+  # This is intentionally the only privileged step: users who choose the
+  # system-wide location authenticate once for the replacement, not at launch.
+  sudo -v
+  sudo rm -rf -- "$target"
+  sudo /usr/bin/ditto "$app" "$target"
+  sudo codesign --verify --strict "$target"
+else
+  mkdir -p "$installRoot"
+  rm -rf -- "$target"
+  /usr/bin/ditto "$app" "$target"
+  codesign --verify --strict "$target"
+fi
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")"
 printf '%s (version %s, build %s, %s)\n' "$target" "$version" "$build" "$commit"

@@ -13,8 +13,27 @@ extension CargoCoordinator {
     }
 
     func enqueueLocalSync(remoteFile: RemoteFile) {
-        guard remoteFile.isMediaFile,
-              !state.localJobs.contains(where: { $0.remoteFileID == remoteFile.id }) else {
+        guard remoteFile.isMediaFile else {
+            return
+        }
+
+        if let existingIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFile.id }) {
+            // A failed local job is retryable. Keep completed, in-flight and
+            // needs-review jobs idempotent so a repeated refresh cannot start
+            // a second copy of the same file.
+            guard state.localJobs[existingIndex].status == .failed else { return }
+            state.localJobs[existingIndex].status = .queued
+            state.localJobs[existingIndex].progress = 0
+            state.localJobs[existingIndex].destination = state.settings.libraryRootPath.map {
+                URL(fileURLWithPath: $0, isDirectory: true)
+                    .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
+                    .appendingPathComponent(Self.safeFilename(remoteFile.name))
+                    .path
+            }
+            state.localJobs[existingIndex].errorMessage = nil
+            state.localJobs[existingIndex].attempts = 0
+            state.localJobs[existingIndex].updatedAt = Date()
+            persistQuietly()
             return
         }
 
@@ -47,12 +66,19 @@ extension CargoCoordinator {
         let jobName = state.localJobs[jobIndex].name
 
         guard let rootURL = libraryRootURL() else {
+            let message: String
+            if let path = state.settings.libraryRootPath {
+                let location = FileManager.default.fileExists(atPath: path) ? "The folder is present" : "The folder is not currently mounted"
+                message = "Saved SSD access bookmark could not be resolved for \(path). \(location). Re-select the library root in Settings, then tap Retry."
+            } else {
+                message = "No SSD library root is configured. Choose the library root in Settings, then tap Retry."
+            }
             updateLocalJob(
                 at: jobIndex,
                 status: .failed,
                 progress: 0,
                 destination: nil,
-                errorMessage: "Choose the SSD library root in Settings first."
+                errorMessage: message
             )
             return
         }

@@ -100,10 +100,15 @@ Tagged releases ship a notarized zip through GitHub Releases. To build it
 yourself:
 
 ```sh
-./scripts/build-app.sh      # → /Applications/Cargo.app, signed, icon regenerated
+./scripts/build-app.sh      # → ~/Applications/Cargo.app, signed, icon regenerated
+# ./scripts/build-app.sh --system  # optional: one admin authorization → /Applications/Cargo.app
 xcodegen generate
 xcodebuild -project Cargo.xcodeproj -scheme CargoIOS -sdk iphonesimulator
 ```
+
+Use the same signed install path on every rebuild. The first SSD selection is
+stored as a security-scoped bookmark; changing to unsigned or ad-hoc builds,
+or launching the old copy from another location, can make macOS ask again.
 
 Needs `xcodegen` and two sibling checkouts next to this repo:
 [`../housekit`](https://github.com/michellzappa/housekit) (menu-bar plate, app

@@ -210,9 +210,10 @@ public struct CargoRemoteSyncJob: Codable, Equatable, Sendable, Identifiable {
     public let statusLabel: String
     public let progress: Double
     public let hasError: Bool
+    public let errorMessage: String?
     public let updatedAt: Date
 
-    public init(id: UUID, remoteFileID: Int, name: String, status: CargoRemoteLocalSyncStatus, statusLabel: String, progress: Double, hasError: Bool, updatedAt: Date) {
+    public init(id: UUID, remoteFileID: Int, name: String, status: CargoRemoteLocalSyncStatus, statusLabel: String, progress: Double, hasError: Bool, errorMessage: String? = nil, updatedAt: Date) {
         self.id = id
         self.remoteFileID = remoteFileID
         self.name = name
@@ -220,7 +221,52 @@ public struct CargoRemoteSyncJob: Codable, Equatable, Sendable, Identifiable {
         self.statusLabel = statusLabel
         self.progress = progress
         self.hasError = hasError
+        self.errorMessage = errorMessage
         self.updatedAt = updatedAt
+    }
+}
+
+public struct CargoRemoteDiskUsage: Codable, Equatable, Sendable {
+    public let availableBytes: Int64
+    public let usedBytes: Int64
+    public let totalBytes: Int64
+
+    public var fraction: Double {
+        totalBytes > 0 ? Double(usedBytes) / Double(totalBytes) : 0
+    }
+
+    public init(availableBytes: Int64, usedBytes: Int64, totalBytes: Int64) {
+        self.availableBytes = availableBytes
+        self.usedBytes = usedBytes
+        self.totalBytes = totalBytes
+    }
+}
+
+public struct CargoRemoteTitleMetadata: Codable, Equatable, Sendable {
+    public let tmdbID: Int
+    public let mediaType: String
+    public let posterURL: String?
+    public let overview: String?
+    public let rating: Double?
+    public let externalURL: String
+    public let episodeCounts: [Int: Int]
+
+    public init(
+        tmdbID: Int,
+        mediaType: String,
+        posterURL: String?,
+        overview: String?,
+        rating: Double?,
+        externalURL: String,
+        episodeCounts: [Int: Int]
+    ) {
+        self.tmdbID = tmdbID
+        self.mediaType = mediaType
+        self.posterURL = posterURL
+        self.overview = overview
+        self.rating = rating
+        self.externalURL = externalURL
+        self.episodeCounts = episodeCounts
     }
 }
 
@@ -235,8 +281,9 @@ public struct CargoRemoteLibraryItem: Codable, Equatable, Sendable, Identifiable
     public let seasonCount: Int
     public let episodeCount: Int
     public let episodes: [Int: [Int]]
+    public let metadata: CargoRemoteTitleMetadata?
 
-    public init(id: String, kind: CargoRemoteLibraryKind, title: String, year: Int?, relativePath: String, sizeBytes: Int64, addedAt: Date, seasonCount: Int, episodeCount: Int, episodes: [Int: [Int]]) {
+    public init(id: String, kind: CargoRemoteLibraryKind, title: String, year: Int?, relativePath: String, sizeBytes: Int64, addedAt: Date, seasonCount: Int, episodeCount: Int, episodes: [Int: [Int]], metadata: CargoRemoteTitleMetadata? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -247,6 +294,7 @@ public struct CargoRemoteLibraryItem: Codable, Equatable, Sendable, Identifiable
         self.seasonCount = seasonCount
         self.episodeCount = episodeCount
         self.episodes = episodes
+        self.metadata = metadata
     }
 }
 
@@ -256,13 +304,15 @@ public struct CargoRemoteWatchlistItem: Codable, Equatable, Sendable, Identifiab
     public let year: Int?
     public let titleType: String?
     public let addedAt: Date?
+    public let metadata: CargoRemoteTitleMetadata?
 
-    public init(id: String, title: String, year: Int?, titleType: String?, addedAt: Date?) {
+    public init(id: String, title: String, year: Int?, titleType: String?, addedAt: Date?, metadata: CargoRemoteTitleMetadata? = nil) {
         self.id = id
         self.title = title
         self.year = year
         self.titleType = titleType
         self.addedAt = addedAt
+        self.metadata = metadata
     }
 }
 
@@ -373,6 +423,7 @@ public struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     public let lastUpdated: Date
     public let putIO: CargoRemoteConnection
     public let chill: CargoRemoteConnection
+    public let disk: CargoRemoteDiskUsage?
     public let remoteFolderID: Int
     public let remoteFolderName: String
     public let canGoBackRemoteFolder: Bool

@@ -963,7 +963,17 @@ final class FilesPageViewController: PageViewController {
                 nil
             }
 
-            let sync = RowAction(title: job == nil ? "Sync" : "Downloaded", isEnabled: job == nil && !deleted) { [weak self] in
+            let syncTitle: String = switch job?.status {
+            case nil: "Sync"
+            case .queued: "Queued"
+            case .downloading: "Downloading…"
+            case .importing: "Importing…"
+            case .needsReview: "In Inbox"
+            case .completed: "Downloaded"
+            case .failed: "Retry"
+            }
+            let canSync = !deleted && (job == nil || job?.status == .failed)
+            let sync = RowAction(title: syncTitle, isEnabled: canSync) { [weak self] in
                 guard let self else { return }
                 if coordinator.isRemoteClientMode {
                     self.run { try await self.coordinator.executeRemoteCommand(.enqueueLocalSync(remoteFileID: file.id)) }
@@ -1000,7 +1010,10 @@ final class FilesPageViewController: PageViewController {
             return ListRow(
                 id: String(file.id),
                 title: file.displayPath,
-                details: ["\(file.type.displayName) · \(Formatters.bytes(file.sizeBytes))"],
+                details: [
+                    "\(file.type.displayName) · \(Formatters.bytes(file.sizeBytes))",
+                    job?.errorMessage
+                ].compactMap { $0 },
                 badge: badge,
                 progress: job.map { $0.status == .downloading ? $0.progress : nil } ?? nil,
                 primaryAction: sync,

@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 final class KeychainStore {
@@ -13,11 +14,14 @@ final class KeychainStore {
     private let remoteClientIDAccount = "remote-client-id"
 
     enum KeychainError: LocalizedError {
+        case readFailure(OSStatus)
         case saveFailure(OSStatus)
         case deleteFailure(OSStatus)
 
         var errorDescription: String? {
             switch self {
+            case .readFailure(let status):
+                "Could not read the credential from Keychain without interaction (\(status)). Re-save it in Cargo Settings."
             case .saveFailure(let status):
                 "Could not save the credential to Keychain (\(status))."
             case .deleteFailure(let status):
@@ -57,17 +61,35 @@ final class KeychainStore {
     func deleteRemoteClientToken() throws { try delete(account: remoteClientTokenAccount) }
 
     func ensureRemoteClientID() throws -> UUID {
-        if let value = read(account: remoteClientIDAccount), let id = UUID(uuidString: value) {
+        let existing = readResult(account: remoteClientIDAccount)
+        if existing.status == errSecSuccess,
+           let value = existing.value,
+           let id = UUID(uuidString: value) {
             return id
         }
+
+        // Client presence is not a startup-critical credential. If the
+        // existing item is protected by a Keychain ACL, never fall through to
+        // SecItemAdd/SecItemUpdate here: that turns a harmless read failure
+        // into a password dialog during every launch. A fresh in-memory ID is
+        // sufficient for this process; an explicit settings save can repair
+        // the persisted item later.
+        guard existing.status == errSecItemNotFound else {
+            return UUID()
+        }
+
         let id = UUID()
         try save(id.uuidString.lowercased(), account: remoteClientIDAccount)
         return id
     }
 
     func ensureRemoteAPIToken() throws -> String {
-        if let token = readRemoteAPIToken(), !token.isEmpty {
+        let existing = readResult(account: remoteAPIAccount)
+        if existing.status == errSecSuccess, let token = existing.value, !token.isEmpty {
             return token
+        }
+        guard existing.status == errSecItemNotFound else {
+            throw KeychainError.readFailure(existing.status)
         }
         return try rotateRemoteAPIToken()
     }
@@ -87,20 +109,29 @@ final class KeychainStore {
     }
 
     private func read(account: String) -> String? {
-        let query: [CFString: Any] = [
+        readResult(account: account).value
+    }
+
+    private func readResult(account: String) -> (status: OSStatus, value: String?) {
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecReturnData: true,
             kSecMatchLimit: kSecMatchLimitOne
         ]
+        // Never interrupt application startup with a Keychain dialog.
+        // Explicit saves from Settings may still authenticate normally.
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        query[kSecUseAuthenticationContext] = context
 
         var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else {
-            return nil
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            return (status, nil)
         }
-        return String(data: data, encoding: .utf8)
+        return (status, String(data: data, encoding: .utf8))
     }
 
     private func save(_ token: String, account: String) throws {

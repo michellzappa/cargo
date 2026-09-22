@@ -124,6 +124,9 @@ The core promise is: **make it obvious what is happening in Put.io, and make bri
 - [x] Add SwiftUI screens for Transfers, Files, Library, Discover, Watchlist,
   Inbox, History, and Settings.
 - [x] Route folder navigation and long-running local sync through the resident.
+- [x] Expose remote-safe TMDB metadata for Library and Watchlist titles.
+- [x] Add cached iOS poster cards, poster grids, filters, and title detail sheets
+  for Discover, Library, and Watchlist.
 - [ ] Validate pairing and commands against a real resident from an iPhone.
 - [ ] Replace long-lived bearer tokens in pairing URLs with one-time exchange
   codes before broad distribution.

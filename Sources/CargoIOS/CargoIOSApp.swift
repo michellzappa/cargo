@@ -8,6 +8,7 @@ struct CargoIOSApp: App {
         WindowGroup {
             CargoRootView()
                 .environment(model)
+                .preferredColorScheme(.dark)
                 .onOpenURL { url in
                     Task { await model.connect(pairingURL: url) }
                 }

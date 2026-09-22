@@ -187,6 +187,7 @@ struct CargoRemoteSyncJob: Codable, Equatable, Sendable {
     let statusLabel: String
     let progress: Double
     let hasError: Bool
+    let errorMessage: String?
     let updatedAt: Date
 
     init(_ job: LocalSyncJob) {
@@ -197,7 +198,40 @@ struct CargoRemoteSyncJob: Codable, Equatable, Sendable {
         statusLabel = job.status.displayName
         progress = job.progress
         hasError = job.errorMessage != nil
+        errorMessage = job.errorMessage
         updatedAt = job.updatedAt
+    }
+}
+
+struct CargoRemoteDiskUsage: Codable, Equatable, Sendable {
+    let availableBytes: Int64
+    let usedBytes: Int64
+    let totalBytes: Int64
+
+    init(_ disk: PutIODiskUsage) {
+        availableBytes = disk.availableBytes
+        usedBytes = disk.usedBytes
+        totalBytes = disk.totalBytes
+    }
+}
+
+struct CargoRemoteTitleMetadata: Codable, Equatable, Sendable {
+    let tmdbID: Int
+    let mediaType: String
+    let posterURL: String?
+    let overview: String?
+    let rating: Double?
+    let externalURL: String
+    let episodeCounts: [Int: Int]
+
+    init(_ metadata: TMDBMetadata) {
+        tmdbID = metadata.tmdbID
+        mediaType = metadata.mediaType.rawValue
+        posterURL = metadata.posterURL?.absoluteString
+        overview = metadata.overview
+        rating = metadata.voteAverage
+        externalURL = metadata.pageURL.absoluteString
+        episodeCounts = metadata.episodeCounts
     }
 }
 
@@ -213,8 +247,9 @@ struct CargoRemoteLibraryItem: Codable, Equatable, Sendable {
     let seasonCount: Int
     let episodeCount: Int
     let episodes: [Int: [Int]]
+    let metadata: CargoRemoteTitleMetadata?
 
-    init(_ item: LibraryItem) {
+    init(_ item: LibraryItem, metadata: TMDBMetadata? = nil) {
         id = item.id
         kind = item.kind
         title = item.title
@@ -225,10 +260,11 @@ struct CargoRemoteLibraryItem: Codable, Equatable, Sendable {
         seasonCount = item.seasonCount
         episodeCount = item.episodeCount
         episodes = item.episodes
+        self.metadata = metadata.map(CargoRemoteTitleMetadata.init)
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, title, year, relativePath, sizeBytes, addedAt, seasonCount, episodeCount, episodes
+        case id, kind, title, year, relativePath, sizeBytes, addedAt, seasonCount, episodeCount, episodes, metadata
     }
 
     init(from decoder: Decoder) throws {
@@ -243,6 +279,7 @@ struct CargoRemoteLibraryItem: Codable, Equatable, Sendable {
         seasonCount = try values.decodeIfPresent(Int.self, forKey: .seasonCount) ?? 0
         episodeCount = try values.decodeIfPresent(Int.self, forKey: .episodeCount) ?? 0
         episodes = try values.decodeIfPresent([Int: [Int]].self, forKey: .episodes) ?? [:]
+        metadata = try values.decodeIfPresent(CargoRemoteTitleMetadata.self, forKey: .metadata)
     }
 }
 
@@ -252,13 +289,15 @@ struct CargoRemoteWatchlistItem: Codable, Equatable, Sendable {
     let year: Int?
     let titleType: String?
     let addedAt: Date?
+    let metadata: CargoRemoteTitleMetadata?
 
-    init(_ item: IMDbWatchlistItem) {
+    init(_ item: IMDbWatchlistItem, metadata: TMDBMetadata? = nil) {
         id = item.id
         title = item.title
         year = item.year
         titleType = item.titleType
         addedAt = item.addedAt
+        self.metadata = metadata.map(CargoRemoteTitleMetadata.init)
     }
 }
 
@@ -443,6 +482,7 @@ struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     let lastUpdated: Date
     let putIO: CargoRemoteConnection
     let chill: CargoRemoteConnection
+    let disk: CargoRemoteDiskUsage?
     let remoteFolderID: Int
     let remoteFolderName: String
     let canGoBackRemoteFolder: Bool
@@ -804,6 +844,7 @@ final class CargoRemoteController: CargoRemoteControlling {
             lastUpdated: state.lastUpdated,
             putIO: CargoRemoteConnection(connected: coordinator.isConnected, status: coordinator.putIOStatus),
             chill: CargoRemoteConnection(connected: coordinator.isChillConnected, status: coordinator.chillStatus),
+            disk: coordinator.diskUsage.map(CargoRemoteDiskUsage.init),
             remoteFolderID: coordinator.remoteFolderID,
             remoteFolderName: coordinator.remoteFolderName,
             canGoBackRemoteFolder: coordinator.canGoBackRemoteFolder,
@@ -811,8 +852,8 @@ final class CargoRemoteController: CargoRemoteControlling {
             files: state.remoteFiles.map(CargoRemoteFile.init),
             mediaFiles: state.remoteMediaFiles.map(CargoRemoteFile.init),
             syncJobs: state.localJobs.map(CargoRemoteSyncJob.init),
-            library: state.libraryItems.map(CargoRemoteLibraryItem.init),
-            watchlist: state.imdbWatchlistItems.map(CargoRemoteWatchlistItem.init),
+            library: state.libraryItems.map { CargoRemoteLibraryItem($0, metadata: state.metadata[$0.id]) },
+            watchlist: state.imdbWatchlistItems.map { CargoRemoteWatchlistItem($0, metadata: state.metadata[$0.id]) },
             history: state.history.map(CargoRemoteHistoryEntry.init),
             chillSearch: CargoRemoteSearchState(
                 query: coordinator.chillSearchQuery,
