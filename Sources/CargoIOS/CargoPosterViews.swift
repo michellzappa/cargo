@@ -102,6 +102,69 @@ struct CargoPosterCard: View {
     }
 }
 
+enum CargoMediaViewMode: String, CaseIterable, Identifiable {
+    case list
+    case posters
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .list: "List"
+        case .posters: "Posters"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .list: "list.bullet"
+        case .posters: "square.grid.2x2"
+        }
+    }
+}
+
+/// The compact iOS equivalent of macOS's always-available List | Posters control.
+struct CargoMediaViewModeMenu: View {
+    @Binding var selection: CargoMediaViewMode
+
+    var body: some View {
+        Menu {
+            ForEach(CargoMediaViewMode.allCases) { option in
+                Button {
+                    selection = option
+                } label: {
+                    Label(
+                        option.title,
+                        systemImage: selection == option ? "checkmark" : option.symbolName
+                    )
+                }
+            }
+        } label: {
+            Image(systemName: selection.symbolName)
+        }
+        .accessibilityLabel("View as \(selection.title)")
+        .accessibilityHint("Choose List or Posters")
+    }
+}
+
+struct CargoPosterGrid<Content: View>: View {
+    let content: () -> Content
+
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        LazyVGrid(
+            columns: [GridItem(.adaptive(minimum: 128), spacing: 16)],
+            alignment: .leading,
+            spacing: 20,
+            content: content
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
 /// The shared media row used by every media list. Keeping artwork, title,
 /// status, progress and errors in one component makes Transfers, Inbox,
 /// Put.io files, Library, Watchlist and Discover read as one product.

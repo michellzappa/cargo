@@ -288,6 +288,7 @@ private enum CargoLibraryFilter: String, CaseIterable, Identifiable {
 struct CargoLibraryView: View {
     @Environment(CargoClientModel.self) private var model
     @State private var filter: CargoLibraryFilter = .all
+    @State private var viewMode: CargoMediaViewMode = .posters
     @State private var selectedDetail: CargoTitleDetail?
 
     private var visibleItems: [CargoRemoteLibraryItem] {
@@ -304,30 +305,7 @@ struct CargoLibraryView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if visibleItems.isEmpty {
-                    ContentUnavailableView(
-                        "No library titles",
-                        systemImage: "film.stack",
-                        description: Text(filter == .all ? "The resident library is empty." : "No titles match this filter.")
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 220)
-                } else {
-                    ForEach(visibleItems) { item in
-                        Button {
-                            selectedDetail = detail(for: item)
-                        } label: {
-                            CargoMediaLine(
-                                title: item.title,
-                                subtitle: detail(for: item),
-                                posterURL: item.metadata?.posterURL,
-                                badge: badge(for: item)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            libraryContent
             .refreshable { await model.refresh() }
             .navigationTitle("Library")
             .toolbar {
@@ -348,8 +326,11 @@ struct CargoLibraryView: View {
                         Label(filter.title, systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await model.refresh() } } label: {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    CargoMediaViewModeMenu(selection: $viewMode)
+                    Button {
+                        Task { await model.refresh() }
+                    } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
@@ -358,6 +339,63 @@ struct CargoLibraryView: View {
                 CargoTitleDetailView(detail: detail) { _ in }
             }
         }
+    }
+
+    @ViewBuilder
+    private var libraryContent: some View {
+        if viewMode == .posters {
+            ScrollView {
+                if visibleItems.isEmpty {
+                    libraryEmptyState
+                } else {
+                    CargoPosterGrid {
+                        ForEach(visibleItems) { item in
+                            Button {
+                                selectedDetail = detail(for: item)
+                            } label: {
+                                CargoPosterCard(
+                                    title: item.title,
+                                    subtitle: detail(for: item),
+                                    posterURL: item.metadata?.posterURL,
+                                    badge: badge(for: item)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding()
+        } else {
+            List {
+                if visibleItems.isEmpty {
+                    libraryEmptyState
+                } else {
+                    ForEach(visibleItems) { item in
+                        Button {
+                            selectedDetail = detail(for: item)
+                        } label: {
+                            CargoMediaLine(
+                                title: item.title,
+                                subtitle: detail(for: item),
+                                posterURL: item.metadata?.posterURL,
+                                badge: badge(for: item)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var libraryEmptyState: some View {
+        ContentUnavailableView(
+            "No library titles",
+            systemImage: "film.stack",
+            description: Text(filter == .all ? "The resident library is empty." : "No titles match this filter.")
+        )
+        .frame(maxWidth: .infinity, minHeight: 220)
     }
 
     private func detail(for item: CargoRemoteLibraryItem) -> String {
@@ -596,6 +634,7 @@ struct CargoDiscoverView: View {
     @State private var query = ""
     @State private var selectedCatalog: CargoDiscoverCatalog = .movies
     @State private var selectedFilter = ""
+    @State private var viewMode: CargoMediaViewMode = .posters
     @State private var selectedDetail: CargoTitleDetail?
 
     private var showingSearchResults: Bool {
@@ -663,7 +702,10 @@ struct CargoDiscoverView: View {
             }
             .refreshable { await model.refresh() }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if !showingSearchResults {
+                        CargoMediaViewModeMenu(selection: $viewMode)
+                    }
                     Button {
                         Task { await model.execute(.refreshChillCatalog) }
                     } label: {
@@ -761,17 +803,16 @@ struct CargoDiscoverView: View {
                 .frame(maxWidth: .infinity, minHeight: 260)
             } else {
                 CargoDiscoverSection(title: "Top movies") {
-                    ForEach(visibleMovies) { movie in
-                        Button {
-                            selectedDetail = detail(for: movie)
-                        } label: {
-                            CargoMediaLine(
-                                title: movie.displayTitle,
-                                subtitle: movieSubtitle(movie),
-                                posterURL: movie.posterURL
-                            )
+                    if viewMode == .posters {
+                        CargoPosterGrid {
+                            ForEach(visibleMovies) { movie in
+                                movieCard(movie)
+                            }
                         }
-                        .buttonStyle(.plain)
+                    } else {
+                        ForEach(visibleMovies) { movie in
+                            movieRow(movie)
+                        }
                     }
                 }
             }
@@ -785,22 +826,74 @@ struct CargoDiscoverView: View {
                 .frame(maxWidth: .infinity, minHeight: 260)
             } else {
                 CargoDiscoverSection(title: "Top series") {
-                    ForEach(visibleSeries) { series in
-                        Button {
-                            selectedDetail = detail(for: series)
-                        } label: {
-                            CargoMediaLine(
-                                title: series.title,
-                                subtitle: seriesSubtitle(series),
-                                posterURL: series.posterURL,
-                                badge: series.statusLabel.isEmpty ? nil : series.statusLabel
-                            )
+                    if viewMode == .posters {
+                        CargoPosterGrid {
+                            ForEach(visibleSeries) { series in
+                                seriesCard(series)
+                            }
                         }
-                        .buttonStyle(.plain)
+                    } else {
+                        ForEach(visibleSeries) { series in
+                            seriesRow(series)
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func movieRow(_ movie: CargoRemoteMovie) -> some View {
+        Button {
+            selectedDetail = detail(for: movie)
+        } label: {
+            CargoMediaLine(
+                title: movie.displayTitle,
+                subtitle: movieSubtitle(movie),
+                posterURL: movie.posterURL
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func movieCard(_ movie: CargoRemoteMovie) -> some View {
+        Button {
+            selectedDetail = detail(for: movie)
+        } label: {
+            CargoPosterCard(
+                title: movie.displayTitle,
+                subtitle: movieSubtitle(movie),
+                posterURL: movie.posterURL
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func seriesRow(_ series: CargoRemoteSeries) -> some View {
+        Button {
+            selectedDetail = detail(for: series)
+        } label: {
+            CargoMediaLine(
+                title: series.title,
+                subtitle: seriesSubtitle(series),
+                posterURL: series.posterURL,
+                badge: series.statusLabel.isEmpty ? nil : series.statusLabel
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func seriesCard(_ series: CargoRemoteSeries) -> some View {
+        Button {
+            selectedDetail = detail(for: series)
+        } label: {
+            CargoPosterCard(
+                title: series.title,
+                subtitle: seriesSubtitle(series),
+                posterURL: series.posterURL,
+                badge: series.statusLabel.isEmpty ? nil : series.statusLabel
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -925,6 +1018,7 @@ private enum CargoWatchlistFilter: String, CaseIterable, Identifiable {
 struct CargoWatchlistView: View {
     @Environment(CargoClientModel.self) private var model
     @State private var filter: CargoWatchlistFilter = .all
+    @State private var viewMode: CargoMediaViewMode = .posters
     @State private var selectedDetail: CargoTitleDetail?
 
     private var visibleItems: [(item: CargoRemoteWatchlistItem, status: String)] {
@@ -944,30 +1038,7 @@ struct CargoWatchlistView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if visibleItems.isEmpty {
-                    ContentUnavailableView(
-                        "No watchlist titles",
-                        systemImage: "star",
-                        description: Text(filter == .all ? "The resident watchlist is empty." : "No titles match this filter.")
-                    )
-                    .frame(maxWidth: .infinity, minHeight: 220)
-                } else {
-                    ForEach(visibleItems, id: \.item.id) { entry in
-                        Button {
-                            selectedDetail = detail(for: entry.item, status: entry.status)
-                        } label: {
-                            CargoMediaLine(
-                                title: entry.item.title,
-                                subtitle: subtitle(for: entry.item),
-                                posterURL: entry.item.metadata?.posterURL,
-                                badge: entry.status
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
+            watchlistContent
             .refreshable { await model.refresh() }
             .navigationTitle("Watchlist")
             .toolbar {
@@ -988,7 +1059,8 @@ struct CargoWatchlistView: View {
                         Label(filter.title, systemImage: "line.3.horizontal.decrease.circle")
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    CargoMediaViewModeMenu(selection: $viewMode)
                     Button {
                         Task { await model.execute(.refreshWatchlist) }
                     } label: {
@@ -1004,6 +1076,63 @@ struct CargoWatchlistView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var watchlistContent: some View {
+        if viewMode == .posters {
+            ScrollView {
+                if visibleItems.isEmpty {
+                    watchlistEmptyState
+                } else {
+                    CargoPosterGrid {
+                        ForEach(visibleItems, id: \.item.id) { entry in
+                            Button {
+                                selectedDetail = detail(for: entry.item, status: entry.status)
+                            } label: {
+                                CargoPosterCard(
+                                    title: entry.item.title,
+                                    subtitle: subtitle(for: entry.item),
+                                    posterURL: entry.item.metadata?.posterURL,
+                                    badge: entry.status
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding()
+        } else {
+            List {
+                if visibleItems.isEmpty {
+                    watchlistEmptyState
+                } else {
+                    ForEach(visibleItems, id: \.item.id) { entry in
+                        Button {
+                            selectedDetail = detail(for: entry.item, status: entry.status)
+                        } label: {
+                            CargoMediaLine(
+                                title: entry.item.title,
+                                subtitle: subtitle(for: entry.item),
+                                posterURL: entry.item.metadata?.posterURL,
+                                badge: entry.status
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private var watchlistEmptyState: some View {
+        ContentUnavailableView(
+            "No watchlist titles",
+            systemImage: "star",
+            description: Text(filter == .all ? "The resident watchlist is empty." : "No titles match this filter.")
+        )
+        .frame(maxWidth: .infinity, minHeight: 220)
     }
 
     private func subtitle(for item: CargoRemoteWatchlistItem) -> String {
