@@ -6,7 +6,7 @@ when creating the next release.
 
 ## [Unreleased]
 
-The next macOS marketing version is `0.9.0`; the iOS companion continues its
+The next macOS marketing version is `0.9.1`; the iOS companion continues its
 independent `0.1.0` marketing line.
 
 ### Added
@@ -34,6 +34,8 @@ independent `0.1.0` marketing line.
 
 ### Fixed
 
+- Fixed episodic transfer titles to show the series and episode instead of unresolved placeholders.
+- Fixed transfers and watchlist items matching the wrong poster or file when a short title (such as "Pi") appeared inside another word.
 - Kept remote and local dashboard navigation in the same stable product order.
 - Preserved the resident's source-of-truth boundaries while adding the mobile
   client, so credentials, bookmarks, and absolute paths stay resident-side.

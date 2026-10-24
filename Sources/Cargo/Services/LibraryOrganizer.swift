@@ -83,7 +83,7 @@ enum LibraryOrganizer {
         let safeName = safeFilename(fileName)
         if let episode = episodeMarker(in: safeName) {
             let showName = normalizedShowTitle(episode.prefix)
-            if !showName.isEmpty { return "(showName) · (episode.marker)" }
+            if !showName.isEmpty { return "\(showName) · \(episode.marker)" }
         }
 
         let cleaned = cleanedMovieFilename(safeName)
@@ -95,20 +95,14 @@ enum LibraryOrganizer {
         library: [LibraryItem],
         metadata: [String: TMDBMetadata]
     ) -> URL? {
-        let wanted = normalizedForMatching(displayTitle(for: fileName))
-        guard !wanted.isEmpty else { return nil }
+        let wanted = displayTitle(for: fileName)
 
-        if let item = library.first(where: {
-            let title = normalizedForMatching($0.displayTitle)
-            return title == wanted || title.contains(wanted) || wanted.contains(title)
-        }), let poster = metadata[item.id]?.posterURL {
+        if let item = library.first(where: { CargoTitleMatch.matches($0.displayTitle, wanted) }),
+           let poster = metadata[item.id]?.posterURL {
             return poster
         }
 
-        return metadata.values.first(where: {
-            let title = normalizedForMatching($0.title)
-            return title == wanted || title.contains(wanted) || wanted.contains(title)
-        })?.posterURL
+        return metadata.values.first(where: { CargoTitleMatch.matches($0.title, wanted) })?.posterURL
     }
 
     private static func episodeMarker(in fileName: String) -> (season: Int, marker: String, prefix: String)? {
@@ -173,14 +167,6 @@ enum LibraryOrganizer {
             .joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: .punctuationCharacters)
-    }
-
-    private static func normalizedForMatching(_ value: String) -> String {
-        value
-            .lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .split(separator: " ")
-            .joined(separator: " ")
     }
 
     private static func removeReleaseMetadata(from value: String) -> String {

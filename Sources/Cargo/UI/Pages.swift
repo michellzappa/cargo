@@ -1599,8 +1599,7 @@ final class WatchlistPageViewController: PageViewController {
     }
 
     private static func matches(_ title: String, filename: String) -> Bool {
-        let normalizedTitle = normalize(title)
-        return !normalizedTitle.isEmpty && normalize(filename).contains(normalizedTitle)
+        CargoTitleMatch.contains(filename, title: title)
     }
 
     private static func normalize(_ value: String) -> String {

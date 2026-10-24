@@ -89,12 +89,11 @@ final class CargoClientModel {
     }
 
     func posterURL(for rawName: String) -> String? {
-        let wanted = normalize(displayTitle(for: rawName))
-        guard !wanted.isEmpty else { return nil }
+        let wanted = displayTitle(for: rawName)
         return snapshot?.library.compactMap { item -> String? in
             guard let poster = item.metadata?.posterURL else { return nil }
-            let candidate = normalize([item.title, item.year.map(String.init)].compactMap { $0 }.joined(separator: " "))
-            return candidate == wanted || candidate.contains(wanted) || wanted.contains(candidate) ? poster : nil
+            let candidate = [item.title, item.year.map(String.init)].compactMap { $0 }.joined(separator: " ")
+            return CargoTitleMatch.matches(candidate, wanted) ? poster : nil
         }.first
     }
 
@@ -110,13 +109,6 @@ final class CargoClientModel {
 
     func refreshWatchlist() async {
         await execute(.refreshPersonalWatchlist(url: watchlistURL))
-    }
-
-    private func normalize(_ value: String) -> String {
-        value.lowercased()
-            .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
-            .split(separator: " ")
-            .joined(separator: " ")
     }
 
     func restoreConnection() async {
