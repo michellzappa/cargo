@@ -7,15 +7,18 @@
 #   ./scripts/build-app.sh --debug
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-housekit="${HOUSEKIT_PATH:-$here/../housekit}"
 config=Release
 [[ "${1:-}" == "--debug" ]] && config=Debug
 
+cd "$here"
+xcodegen generate --quiet
+# HouseKit is the tag pinned in project.yml. Resolve it, then build
+# housekit-icon from that same checkout. HOUSEKIT_PATH overrides it.
+xcodebuild -resolvePackageDependencies -project Cargo.xcodeproj -scheme Cargo -derivedDataPath build/DerivedData -quiet >/dev/null
+housekit="${HOUSEKIT_PATH:-$here/build/DerivedData/SourcePackages/checkouts/housekit}"
 swift build -c release --package-path "$housekit" >/dev/null
 "$(swift build -c release --package-path "$housekit" --show-bin-path)/housekit-icon" cargo "$here/Resources/AppIcon.icns" >/dev/null
 
-cd "$here"
-xcodegen generate --quiet
 { read -r build; read -r commit; } < <(./scripts/build-number.sh)
 xcodebuild -project Cargo.xcodeproj -scheme Cargo -configuration "$config" \
   -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$build" CARGO_COMMIT="$commit" \
