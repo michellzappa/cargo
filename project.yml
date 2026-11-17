@@ -24,7 +24,7 @@ settings:
   base:
     # Sparkle's EdDSA public key (Info.plist SUPublicEDKey). Empty keeps
     # the updater off. housekit/scripts/sparkle-key.sh makes the pair.
-    SPARKLE_PUBLIC_ED_KEY: ""
+    SPARKLE_PUBLIC_ED_KEY: "PwmTWzBNkpSieVWlOvF3wJs2IbKH5bXaXNv2GNCBxrM="
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # Same lesson as Tessellate: TCC and Keychain key their grants to the code
