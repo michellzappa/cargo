@@ -30,6 +30,9 @@ app="build/DerivedData/Build/Products/$config/Cargo.app"
 setopt null_glob
 for nested in "$app/Contents/MacOS"/*.dylib "$app/Contents/Frameworks"/*.dylib; do
   [[ -e "$nested" ]] || continue
+# Sparkle ships signed by its own team; hardened runtime refuses to load
+# a framework from another team, so sign it with ours first.
+codesign --force --deep --options runtime --sign "Apple Development" "$app/Contents/Frameworks/Sparkle.framework"
   codesign --force --sign "Apple Development" --options runtime "$nested"
 done
 codesign --force --sign "Apple Development" --entitlements Resources/Cargo.entitlements --options runtime "$app"

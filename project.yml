@@ -14,7 +14,7 @@ packages:
   # laptop build the same code; move the pin on purpose.
   HouseKit:
     url: https://github.com/michellzappa/housekit
-    exactVersion: 0.1.0
+    exactVersion: 0.2.0
   EasySubsKit:
     path: ../easysubs
   SwiftNIO:
@@ -22,6 +22,9 @@ packages:
     version: 2.103.0
 settings:
   base:
+    # Sparkle's EdDSA public key (Info.plist SUPublicEDKey). Empty keeps
+    # the updater off. housekit/scripts/sparkle-key.sh makes the pair.
+    SPARKLE_PUBLIC_ED_KEY: ""
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # Same lesson as Tessellate: TCC and Keychain key their grants to the code
@@ -58,6 +61,8 @@ targets:
     dependencies:
       - package: HouseKit
         product: HouseKit
+      - package: HouseKit
+        product: HouseKitSparkle
       - package: EasySubsKit
         product: EasySubsKit
       - package: SwiftNIO

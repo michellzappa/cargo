@@ -1,9 +1,12 @@
 import AppKit
 import HouseKit
+import HouseKitSparkle
 
 @main
 @MainActor
 final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+    /// Sparkle. Feed and key come from Info.plist (housekit docs/releasing.md).
+    private let updates = SparkleUpdater(appName: "Cargo")
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
     private var statusHeaderItem: NSMenuItem!
@@ -71,7 +74,8 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings: #selector(showSettings(_:)),
             launchAtLogin: #selector(toggleLaunchAtLogin(_:)),
             launchAtLoginEnabled: coordinator.state.settings.launchAtLoginEnabled,
-            quit: #selector(quitCargo(_:))
+            quit: #selector(quitCargo(_:)),
+            updates: updates
         )
         launchAtLoginItem = statusMenu.items.first { $0.title == "Launch at Login" }
         statusMenu.delegate = self
