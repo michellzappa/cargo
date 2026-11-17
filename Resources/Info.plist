@@ -56,5 +56,11 @@
 			</dict>
 		</dict>
 	</dict>
+	<key>SUFeedURL</key>
+	<string>https://github.com/michellzappa/cargo/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>$(SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>
