@@ -902,10 +902,11 @@ final class CargoTests: XCTestCase {
         let job = try XCTUnwrap(coordinator.state.localJobs.first)
         XCTAssertEqual(job.status, .needsReview)
         XCTAssertEqual(job.progress, 1)
-        XCTAssertEqual(job.destination?.hasSuffix("_Inbox/Movie-2026.mkv"), true)
+        // Each download gets its own inbox folder, named by Put.io file ID.
+        XCTAssertEqual(job.destination?.hasSuffix("_Inbox/55/Movie-2026.mkv"), true)
         XCTAssertEqual(
-            try String(contentsOfFile: job.destination!),
-            "test file"
+            try Data(contentsOf: URL(fileURLWithPath: job.destination!)),
+            StubPutIOClient.videoPayload(for: "mkv")
         )
     }
 
@@ -956,8 +957,8 @@ final class CargoTests: XCTestCase {
         await coordinator.processLocalSync(remoteFileID: file.id)
 
         XCTAssertEqual(recorder.ids, [file.id, folder.id])
-        // Cargo's own cleanup must not park files in the trash, or the quota never frees.
-        XCTAssertEqual(recorder.skippedTrash, [true, true])
+        // Cleanup sends to the Put.io trash, so a bad cleanup can be undone.
+        XCTAssertEqual(recorder.skippedTrash, [false, false])
         XCTAssertEqual(coordinator.state.deletedRemoteFileIDs, [file.id])
         XCTAssertEqual(coordinator.state.deletedRemoteFolderIDs, [folder.id])
         XCTAssertEqual(coordinator.state.localJobs.first?.status, .needsReview)
@@ -1164,12 +1165,12 @@ extension CargoTests {
         XCTAssertEqual(coordinator.state.requestedExtractionFileIDs, [archive.id])
         XCTAssertTrue(recorder.ids.isEmpty)
 
-        // Put.io reports it done: the archive is deleted, skipping the trash.
+        // Put.io reports it done: the archive goes to the Put.io trash.
         recorder.extractions = [PutIOExtraction(id: 1, name: archive.name, status: .completed, message: nil)]
         _ = await coordinator.runBackgroundCycle()
         XCTAssertEqual(recorder.extracted, [archive.id], "no second extraction request")
         XCTAssertEqual(recorder.ids, [archive.id])
-        XCTAssertEqual(recorder.skippedTrash, [true])
+        XCTAssertEqual(recorder.skippedTrash, [false])
         XCTAssertTrue(coordinator.state.requestedExtractionFileIDs.isEmpty)
     }
 }
@@ -1217,7 +1218,18 @@ private struct StubPutIOClient: PutIOClient {
             at: destinationURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try Data("test file".utf8).write(to: destinationURL)
+        try Self.videoPayload(for: destinationURL.pathExtension).write(to: destinationURL)
+    }
+
+    /// Nine bytes, the size the fixtures declare, that open like the named
+    /// container so `DownloadCheck` accepts them.
+    static func videoPayload(for fileExtension: String) -> Data {
+        let header: [UInt8] = switch fileExtension.lowercased() {
+        case "mkv", "webm": [0x1A, 0x45, 0xDF, 0xA3]
+        case "mp4", "m4v", "mov": [0x00, 0x00, 0x00, 0x09] + Array("ftyp".utf8)
+        default: []
+        }
+        return Data((header + Array("test file".utf8)).prefix(9))
     }
 
     func deleteFile(fileID: Int, skipTrash: Bool) async throws {
