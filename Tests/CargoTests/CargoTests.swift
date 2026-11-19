@@ -357,7 +357,11 @@ final class CargoTests: XCTestCase {
         )
         try store.replace(with: state)
 
-        let controller = CargoRemoteController(coordinator: CargoCoordinator(store: store))
+        // Stub clients: without them the test reads the Keychain token and calls
+        // the live Chill API, which CI cannot do.
+        let coordinator = CargoCoordinator(store: store, client: StubPutIOClient(), chillClient: StubChillClient())
+        await coordinator.verifyChillConnection()
+        let controller = CargoRemoteController(coordinator: coordinator)
         let router = CargoRemoteAPIRouter(controller: controller, token: "test-token")
 
         let unauthorized = await router.handle(
@@ -1173,6 +1177,15 @@ extension CargoTests {
         XCTAssertEqual(recorder.skippedTrash, [false])
         XCTAssertTrue(coordinator.state.requestedExtractionFileIDs.isEmpty)
     }
+}
+
+private struct StubChillClient: ChillClient {
+    func fetchProfile() async throws -> ChillProfile {
+        try JSONDecoder().decode(ChillProfile.self, from: Data(#"{"userId":"1","username":"test"}"#.utf8))
+    }
+    func search(query: String) async throws -> [ChillSearchResult] { [] }
+    func fetchMovies() async throws -> [ChillMovie] { [] }
+    func fetchTVShows() async throws -> [ChillTVShow] { [] }
 }
 
 private struct StubPutIOClient: PutIOClient {
