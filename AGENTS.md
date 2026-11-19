@@ -1,89 +1,92 @@
-# Cargo agent rules
+# Working on Cargo
 
-Cargo is a native macOS resident app with an iOS companion. The resident owns
-Put.io, Chill, metadata, the local library, and the authenticated remote API;
-the iOS app is a remote client and must not receive resident credentials or
-absolute local paths.
+Cargo moves media from Put.io to a local SSD library, with an IMDb watchlist,
+TMDB metadata, subtitles and a remote API over Tailscale. AppKit, Swift 6,
+macOS 14, bundle id `app.cargo.Cargo`. `PLAN.md` and `BUILD_ISSUES.md` hold
+the design and the open risks.
 
-## Inspect the app with `cargoctl`
+## Build
 
-Use `cargoctl` to see what Cargo sees. Run `cargoctl help` for the commands. Do
-not read `state.json` by hand or ask for tokens. `scripts/build-app.sh` installs
-it to `~/.local/bin`. It runs inside the app binary (`Cargo --cli`) and keeps the
-app's Keychain grants, so it needs no prompt and no token file. Cargo must run
-for the resident commands. `local`, `putio` and `logs` work without it.
+XcodeGen owns the project. Edit `project.yml`, then run `xcodegen generate`.
+`Cargo.xcodeproj` is not in git. Never hand-edit it.
 
-MCP clients use `cargo-mcp` (`Cargo --mcp`), a stdio MCP server that
-`scripts/build-app.sh` installs next to `cargoctl`. Each tool runs a `cargoctl`
-command through `CargoCLI.output(of:)`. Add a new capability to the CLI first,
-then expose it as a tool in `CargoMCP.swift`.
+- `./scripts/build-app.sh` regenerates the project and the icon, builds
+  Release, signs with the stable Apple Development identity and installs to
+  `~/Applications/Cargo.app` (`--system` for `/Applications`). `--debug`
+  builds Debug. It also installs `cargoctl` and `cargo-mcp` to `~/.local/bin`.
+  This is for mz's Mac.
+- The green gate is the CI build (`.github/workflows/build.yml`):
 
-## Preserve the worktree
-
-- Treat existing uncommitted changes as user-owned. Inspect them before
-  editing and do not reset, discard, or reformat unrelated files.
-- Keep changes scoped to the request. Do not create commits or tags unless the
-  user explicitly asks for them.
-- Regenerate `Cargo.xcodeproj` with `xcodegen generate` after changing
-  `project.yml`; the generated project is ignored and should not be hand-edited.
-
-## Versioning
-
-- The current macOS development version is `0.9.0`; the latest tagged macOS
-  release is `v0.8.0`.
-- The macOS marketing version is the `CFBundleShortVersionString` in
-  `Resources/Info.plist`. Release tags must be exactly `vX.Y.Z` for that value.
-- The iOS companion has its own marketing version in
-  `Resources/CargoIOS-Info.plist`. Keep it independent until an iOS/App Store
-  release needs a coordinated version.
-- Use semantic versioning: patch for fixes, minor for compatible features,
-  major for breaking product or data-contract changes. Do not bump the
-  marketing version for every commit; bump it when preparing a release.
-
-## Build numbers
-
-- Never hand-edit `CFBundleVersion` for a normal build.
-- `scripts/build-number.sh` derives the build from the Git commit count and
-  returns the short commit as a second line. Local release builds and CI must
-  pass both values as `CURRENT_PROJECT_VERSION` and `CARGO_COMMIT`.
-- Every target that ships or is tested should use the same commit-derived build
-  identity. About screens and health responses should make the version, build,
-  and source commit visible.
-
-## Changelog
-
-- Keep user-visible work in `CHANGELOG.md` under `[Unreleased]` as it lands.
-- Write entries by outcome, not by internal file or commit. Include notable
-  features, behavior changes, fixes, safety changes, and migration concerns.
-- When preparing a release, move `[Unreleased]` under a dated `X.Y.Z` heading,
-  update the marketing version, verify the build workflow, and push the
-  matching tag. Start a fresh `[Unreleased]` section immediately afterward.
-- Keep the historical sections detailed enough to explain what a user got in
-  each milestone between tags.
-
-## About surfaces
-
-- The macOS Settings About page uses HouseKit's `AboutPage`; keep the bundle
-  metadata populated so it shows the current version and build.
-- The iOS Settings page must include an About section showing version, build,
-  and commit. Use the shared `CargoAppInfo` helper instead of duplicating
-  `Bundle` parsing.
-
-## Validation
-
-For versioning or release changes, run at minimum:
-
-```sh
-xcodegen generate
-./scripts/build-number.sh
-plutil -lint Resources/Info.plist Resources/CargoIOS-Info.plist
-zsh -n scripts/build-number.sh scripts/build-app.sh
-xcodebuild build -project Cargo.xcodeproj -scheme Cargo \
-  -configuration Debug CURRENT_PROJECT_VERSION=... CARGO_COMMIT=... \
-  CODE_SIGNING_ALLOWED=NO
-xcodebuild build -project Cargo.xcodeproj -scheme CargoIOS \
-  -sdk iphonesimulator CURRENT_PROJECT_VERSION=... CARGO_COMMIT=... \
-  CODE_SIGNING_ALLOWED=NO
+```bash
+xcodegen generate && xcodebuild build -project Cargo.xcodeproj -scheme Cargo -configuration Debug -derivedDataPath build/DerivedData CODE_SIGNING_ALLOWED=NO -quiet
 ```
 
-Use the repository's existing sibling checkouts for `HouseKit` and `EasySubsKit`.
+Run it on mz-mini with `remote-build '<command>'` from inside the clone. Do
+not build Swift on the laptop.
+
+CI also runs `xcodebuild test` and a Release build. Release can fail where
+Debug passes (`-O`, strict concurrency), so run both.
+
+## Inspect and drive the app
+
+Use `cargoctl` to see what Cargo sees. Run `cargoctl help` for the commands. Do
+not read `state.json` by hand or ask for tokens. It runs inside the app binary
+(`Cargo --cli`) and keeps the app's Keychain grants, so it needs no prompt and
+no token file. Cargo must run for the resident commands. `local`, `putio` and
+`logs` work without it.
+
+MCP clients use `cargo-mcp` (`Cargo --mcp`), a stdio MCP server. Each tool runs
+a `cargoctl` command through `CargoCLI.output(of:)`. Add a new capability to
+the CLI first, then expose it as a tool in `CargoMCP.swift`.
+
+## Shared package
+
+HouseKit (`michellzappa/housekit`) supplies the menu bar plate, the app icon,
+the status menu tail, the settings window, launch at login and the changelog
+parser. `project.yml` pins a HouseKit release tag by URL (`exactVersion`), so
+CI, mz-mini and the laptop build the same code.
+
+- To change HouseKit: merge in its repo, tag a new release, then move the pin
+  here on purpose. Never go back to `path: ../housekit`.
+- `scripts/build-app.sh` builds `housekit-icon` from the resolved package
+  checkout in `build/DerivedData`. Set `HOUSEKIT_PATH` to try a local
+  HouseKit clone.
+- EasySubsKit (`michellzappa/easysubs`) is still a path dependency
+  (`../easysubs`). Clone it next to this repo. CI checks it out as a sibling.
+- SwiftNIO is pinned by version in `project.yml` (the remote API server).
+
+## Release
+
+`.github/workflows/release.yml` runs on a `v*` tag. The tag must match
+`CFBundleShortVersionString` in `Resources/Info.plist`. The workflow archives a
+universal app, signs it with Developer ID, notarizes, staples and publishes a
+zip plus `SHA256SUMS` to GitHub Releases.
+
+- Add a `CHANGELOG.md` entry `## X.Y.Z - YYYY-MM-DD` before you tag. The app
+  bundles the file for HouseKit's About pane.
+- The workflow needs six secrets: `APPLE_TEAM_ID`,
+  `APPLE_DEVELOPER_CERTIFICATE_P12_BASE64`, `APPLE_DEVELOPER_CERTIFICATE_PASSWORD`,
+  `APPLE_API_KEY_ID`, `APPLE_API_ISSUER_ID`, `APPLE_API_PRIVATE_KEY_BASE64`.
+
+## Traps
+
+- This repo has no Actions secrets. Every release run failed, so `v0.4.0`
+  and `v0.8.0` are tags with no GitHub release.
+- `scripts/build-number.sh` prints the build number (commit count) and the
+  short SHA. The SHA ends in `-dirty` when the tree has changes.
+- Debug builds load `Cargo.debug.dylib`. `build-app.sh` signs nested code
+  first, else dyld rejects the dylib.
+- The App Store Tailscale binary acts as a CLI only when `SHLVL` is set.
+  Cargo sets it. Plain HTTP to a tailnet name needs the `ts.net` ATS
+  exception in `Info.plist`.
+- Deleting on Put.io cannot be undone. Keep remote deletion behind its
+  setting and a confirmation.
+- The Put.io token and the OpenSubtitles password live in the Keychain.
+  Never write them to the JSON state file or to logs.
+- Settings still uses the deprecated AppKit `SettingsWindowController` and
+  `AboutPage`. They do not show the changelog.
+
+## Writing
+
+Docs, comments and commit messages use Simplified Technical English: active
+voice, short sentences, one word for one thing. No em dashes in UI copy.

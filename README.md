@@ -114,10 +114,10 @@ Use the same signed install path on every rebuild. The first SSD selection is
 stored as a security-scoped bookmark; changing to unsigned or ad-hoc builds,
 or launching the old copy from another location, can make macOS ask again.
 
-Needs `xcodegen` and two sibling checkouts next to this repo:
-[`../housekit`](https://github.com/michellzappa/housekit) (menu-bar plate, app
-icon, settings window chrome, launch-at-login — shared with the author's other
-Mac apps) and [`../easysubs`](https://github.com/michellzappa/easysubs)
+Needs `xcodegen`. [HouseKit](https://github.com/michellzappa/housekit) comes from
+a release tag pinned in `project.yml` (menu-bar plate, app icon, settings
+window chrome, launch-at-login, shared with the author's other Mac apps).
+EasySubsKit needs a sibling checkout next to this repo: [`../easysubs`](https://github.com/michellzappa/easysubs)
 (subtitles). To work in Xcode: `xcodegen generate && open Cargo.xcodeproj`.
 
 ```sh

@@ -1,13 +1,9 @@
 # Changelog
 
-All notable Cargo changes are documented here. The `Unreleased` section covers
-work since the latest tagged release; move it under a dated version heading
-when creating the next release.
+Every entry below is a `v`-prefixed git tag. Add an entry here before you cut
+a tag. The app bundles this file for HouseKit (`Changelog.load`).
 
-## [Unreleased]
-
-The next macOS marketing version is `0.9.1`; the iOS companion continues its
-independent `0.1.0` marketing line.
+## Unreleased
 
 ### Added
 
@@ -70,110 +66,53 @@ independent `0.1.0` marketing line.
 - Preserved the resident's source-of-truth boundaries while adding the mobile
   client, so credentials, bookmarks, and absolute paths stay resident-side.
 
-## [0.8.0] - 2026-09-21
+## 0.8.0 - 2026-09-21
 
 ### Added
 
-- Added the authenticated resident HTTP API and remote-safe snapshot model.
-- Added remote client mode for another Mac, including pairing links, presence
-  registration, heartbeat leases, remote dashboard actions, and per-client
-  Chill search.
-- Added Chill discovery catalogs and release search with explicit Put.io
-  handoff.
-- Added resumable downloads, archive extraction, subtitle handling, library
-  metadata, and richer watchlist/library workflow views.
-- Added transfer cleanup, failed-job cleanup, interrupted-download recovery,
-  SSD free-space visibility, and safe remote deletion after local verification.
-- Added Tailscale discovery, pairing URLs, network-scope controls, token
-  rotation, presence leases, reconnect registration, and event-feed polling.
-
-### Changed
-
-- Made state saves recoverable with backups and preserved corrupt state files.
-- Stamped release builds with their source commit and moved the coordinator
-  into concern-specific files.
+- Chill discovery: browse movie catalogs with filters, and search per client.
+- A local remote API with authentication, so a remote client can control
+  Cargo over Tailscale. A pairing link connects a client.
+- Downloads resume after an interruption and show live progress.
+- Builds carry the git commit they came from.
+- Subtitles through EasySubsKit: Put.io's own after a download,
+  OpenSubtitles after organize, and Get Subtitles on Library rows.
+- Watchlist tabs: All, Wanted, On Put.io and In Library.
+- The sidebar footer shows free space on the library volume next to Put.io's.
+- Clear Finished (Transfers) and Clear Failed (Inbox) in the page bar.
 
 ### Fixed
 
-- Hardened state persistence by surfacing save failures, retaining backups, and
-  preserving undecodable state files instead of overwriting them.
-- Made Chill search per-client so searches on connected devices do not fight
-  over the resident's Discover page.
-- Made the HTTP server rebind reliably after restart and tolerated Tailscale
-  status and empty-peer-list variations.
+- Downloads that a quit interrupted go back in the queue on launch.
+- Cargo does not empty the trash twice.
+- Changes in the Tailscale status format and empty peer lists no longer break
+  the remote API.
+- Failed state saves show an error. The resident API registers again after a
+  restart and rebinds its port at once.
+- Plain HTTP is allowed to ts.net and local hosts for the resident API.
 
-## [0.7.0] - 2026-09-20 milestone
-
-### Added
-
-- Added Chill discovery with searchable release results, movie and series
-  catalogs, metadata, filters, and explicit Put.io handoff.
-- Added the authenticated local remote-control API foundation and remote-safe
-  snapshot contract.
-
-### Changed
-
-- Refined Discover browsing and filter controls around title/year release
-  selection rather than making Cargo an indexer manager.
-
-## [0.4.0] - 2026-09-14
+## 0.4.0 - 2026-09-14
 
 ### Added
 
-- Added the local SSD library workflow: staging, organization, verification,
-  cleanup, and library browsing.
-- Added public IMDb watchlist synchronization and wanted-title tracking.
-- Added Put.io transfer, file, inbox, and background automation workflows.
+- Cargo joins the house apps: XcodeGen, bundle id `app.cargo.Cargo`, HouseKit
+  and an install to /Applications.
+- Put.io: an activity feed, archive extraction, cleanup that skips the trash,
+  and a filtered listing. Background workflow automation.
+- Library: the SSD is the source of truth, with TMDB posters, season
+  completeness, and tabs for All, Movies, TV Shows, Incomplete and Unmatched.
+  Find on Put.io queues missing episodes.
+- Watchlist: syncs a public IMDb watchlist, sorts by Recently Added, Year,
+  Title or Status, and opens on IMDb for edits.
+- History with a Clear button and 30 or 90 day pruning. Inbox can clear
+  failed items. Finished transfers can clean up on their own.
+- Lists allow multiple selection. Context menu actions apply to every
+  selected row, and destructive actions confirm once with the count.
+- `cargo://open` and `cargo://snapshot` URLs.
 
-### Changed
+### Fixed
 
-- Reworked the dashboard around workflow pages with native AppKit tables,
-  sidebar navigation, toolbar actions, selection handling, and a persistent
-  menu-bar resident.
-- Added XcodeGen, HouseKit integration, stable signed local builds, CI
-  build/test validation, and the first notarized-release workflow.
-
-## [0.3.6] - 2026-09-13 milestone
-
-### Added
-
-- Added library folder selection, IMDb watchlist editing/opening, sorting,
-  TMDB-backed posters and completeness, unmatched-title handling, and
-  multi-selection actions.
-- Added the first public-release packaging path: generated Xcode projects,
-  signed app installation, app icon generation, and About-page repository
-  links.
-
-### Changed
-
-- Consolidated Cargo around the menu-bar workflow and shared HouseKit settings
-  chrome, with launch-at-login and notification controls.
-
-## [0.3.0] - 2026-09-12 milestone
-
-### Added
-
-- Added browser-based Put.io authorization, account/transfer refresh, remote
-  folder navigation, and the initial periodic background cycle.
-- Added the local `_Inbox` staging workflow with release-name parsing,
-  movie/TV organization previews, actionable organization, and video-only
-  inventory tracking.
-- Added recursive Put.io media inventory, a public IMDb watchlist source, and
-  the first watchlist-to-download matching workflow.
-
-### Changed
-
-- Moved from a prototype dashboard to a safe automation model that only
-  deletes remote media after the local copy has been verified.
-
-## Initial foundation - 2026-09-12
-
-- Established the native AppKit menu-bar shell, dashboard window, settings
-  window, transfer list, Put.io client boundary, and local state model.
-- Added reproducible build identity stamping and the first About/build
-  information surface.
-
-[Unreleased]: https://github.com/michellzappa/cargo/compare/v0.8.0...HEAD
-[0.8.0]: https://github.com/michellzappa/cargo/releases/tag/v0.8.0
-[0.7.0]: https://github.com/michellzappa/cargo/compare/v0.4.0...0e20793
-[0.4.0]: https://github.com/michellzappa/cargo/releases/tag/v0.4.0
+- Settings text fields show their values the first time the window opens.
+- List rows keep a fixed 40 by 60 thumbnail.
+- The page bar sits below the title bar, not behind it.
+- TMDB misses are cached and no longer use up the lookup budget.

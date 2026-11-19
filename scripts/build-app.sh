@@ -9,7 +9,6 @@
 #   ./scripts/build-app.sh --system   # Release → /Applications/Cargo.app
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-housekit="${HOUSEKIT_PATH:-$here/../housekit}"
 config=Release
 installRoot="/Users/${USER}/Applications"
 privilegedInstall=false
@@ -24,11 +23,15 @@ for argument in "$@"; do
   esac
 done
 
+cd "$here"
+xcodegen generate --quiet
+# HouseKit is the tag pinned in project.yml. Resolve it, then build
+# housekit-icon from that same checkout. HOUSEKIT_PATH overrides it.
+xcodebuild -resolvePackageDependencies -project Cargo.xcodeproj -scheme Cargo -derivedDataPath build/DerivedData -quiet >/dev/null
+housekit="${HOUSEKIT_PATH:-$here/build/DerivedData/SourcePackages/checkouts/housekit}"
 swift build -c release --package-path "$housekit" >/dev/null
 "$(swift build -c release --package-path "$housekit" --show-bin-path)/housekit-icon" cargo "$here/Resources/AppIcon.icns" >/dev/null
 
-cd "$here"
-xcodegen generate --quiet
 { read -r build; read -r commit; } < <(./scripts/build-number.sh)
 xcodebuild -project Cargo.xcodeproj -scheme Cargo -configuration "$config" \
   -derivedDataPath build/DerivedData CURRENT_PROJECT_VERSION="$build" CARGO_COMMIT="$commit" \
@@ -43,6 +46,11 @@ app="build/DerivedData/Build/Products/$config/Cargo.app"
 identity="${CARGO_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/"Apple Development:/ { print $2; exit }')}"
 [[ -n "$identity" ]] || { print -u2 "No Apple Development signing identity found."; exit 1; }
 setopt null_glob
+# Sparkle ships signed by its own team; hardened runtime refuses to load
+# a framework from another team, so sign it with ours first.
+if [[ -d "$app/Contents/Frameworks/Sparkle.framework" ]]; then
+  codesign --force --deep --options runtime --sign "$identity" "$app/Contents/Frameworks/Sparkle.framework"
+fi
 for nested in "$app/Contents/MacOS"/*.dylib "$app/Contents/Frameworks"/*.dylib; do
   [[ -e "$nested" ]] || continue
   codesign --force --sign "$identity" --options runtime "$nested"

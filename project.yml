@@ -9,8 +9,12 @@ configs:
   Debug: debug
   Release: release
 packages:
+  # The house settings shell, glyphs and changelog view
+  # (michellzappa/housekit). Pinned to a release tag so CI, the mini and the
+  # laptop build the same code; move the pin on purpose.
   HouseKit:
-    path: ../housekit
+    url: https://github.com/michellzappa/housekit
+    exactVersion: 0.2.0
   EasySubsKit:
     path: ../easysubs
   SwiftNIO:
@@ -22,6 +26,9 @@ packages:
     path: Packages/CargoRemoteKit
 settings:
   base:
+    # Sparkle's EdDSA public key (Info.plist SUPublicEDKey). Empty keeps
+    # the updater off. housekit/scripts/sparkle-key.sh makes the pair.
+    SPARKLE_PUBLIC_ED_KEY: "PwmTWzBNkpSieVWlOvF3wJs2IbKH5bXaXNv2GNCBxrM="
     SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     # Same lesson as Tessellate: TCC and Keychain key their grants to the code
@@ -53,9 +60,14 @@ targets:
       - path: Sources/CargoShared
       - path: Resources/AppIcon.icns
         buildPhase: resources
+      # HouseKit Changelog.load() reads the bundled release notes.
+      - path: CHANGELOG.md
+        buildPhase: resources
     dependencies:
       - package: HouseKit
         product: HouseKit
+      - package: HouseKit
+        product: HouseKitSparkle
       - package: EasySubsKit
         product: EasySubsKit
       - package: ItsytvCore
