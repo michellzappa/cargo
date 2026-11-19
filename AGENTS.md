@@ -13,6 +13,11 @@ it to `~/.local/bin`. It runs inside the app binary (`Cargo --cli`) and keeps th
 app's Keychain grants, so it needs no prompt and no token file. Cargo must run
 for the resident commands. `local`, `putio` and `logs` work without it.
 
+MCP clients use `cargo-mcp` (`Cargo --mcp`), a stdio MCP server that
+`scripts/build-app.sh` installs next to `cargoctl`. Each tool runs a `cargoctl`
+command through `CargoCLI.output(of:)`. Add a new capability to the CLI first,
+then expose it as a tool in `CargoMCP.swift`.
+
 ## Preserve the worktree
 
 - Treat existing uncommitted changes as user-owned. Inspect them before

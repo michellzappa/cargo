@@ -25,6 +25,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     static func main() {
         if CargoCLI.isInvocation { CargoCLI.runAndExit() }
+        if CargoMCP.isInvocation { CargoMCP.runAndExit() }
         let application = NSApplication.shared
         let delegate = CargoAppDelegate()
         application.delegate = delegate

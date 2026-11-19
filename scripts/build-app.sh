@@ -65,8 +65,10 @@ else
   codesign --verify --strict "$target"
 fi
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")"
-# Cargo's CLI runs inside the app binary so that it keeps the app's Keychain grants.
+# Cargo's CLI and MCP server run inside the app binary so that they keep the app's Keychain grants.
 mkdir -p "$HOME/.local/bin"
 printf '#!/bin/sh\nexec "%s/Contents/MacOS/Cargo" --cli "$@"\n' "$target" > "$HOME/.local/bin/cargoctl"
 chmod +x "$HOME/.local/bin/cargoctl"
+printf '#!/bin/sh\nexec "%s/Contents/MacOS/Cargo" --mcp\n' "$target" > "$HOME/.local/bin/cargo-mcp"
+chmod +x "$HOME/.local/bin/cargo-mcp"
 printf '%s (version %s, build %s, %s)\n' "$target" "$version" "$build" "$commit"

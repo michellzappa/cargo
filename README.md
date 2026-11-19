@@ -208,6 +208,10 @@ personal watchlist snapshot and persisted URL.
 state file, Put.io's unfiltered listings, and Cargo's log. `cargoctl help` lists
 the commands.
 
+`cargo-mcp` serves the same commands as MCP tools over stdio, for Claude and
+other local agents. Register it with `claude mcp add cargo -- ~/.local/bin/cargo-mcp`,
+or give other clients the absolute path to `~/.local/bin/cargo-mcp` as the command.
+
 See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
 for the working notes on risks — both are the author's ledgers rather than
 polished docs.

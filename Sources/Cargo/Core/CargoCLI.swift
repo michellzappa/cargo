@@ -58,62 +58,71 @@ enum CargoCLI {
 
     private static func run(_ arguments: [String]) async -> Int32 {
         do {
-            var positional: [String] = []
-            var options = ListOptions()
-            var remaining = arguments[...]
-            while let argument = remaining.popFirst() {
-                switch argument {
-                case "--grep":
-                    guard let value = remaining.popFirst() else { throw Failure(message: "--grep needs a value.") }
-                    options.grep = value
-                case "--limit":
-                    guard let value = remaining.popFirst().flatMap(Int.init), value >= 0 else {
-                        throw Failure(message: "--limit needs a number.")
-                    }
-                    options.limit = value
-                default:
-                    positional.append(argument)
-                }
-            }
-            try await dispatch(positional, options: options)
+            print(try await output(of: arguments))
             return 0
-        } catch let failure as Failure {
-            printError(failure.message)
-            return 1
         } catch {
-            printError(error.localizedDescription)
+            printError(message(for: error))
             return 1
         }
     }
 
-    private static func dispatch(_ arguments: [String], options: ListOptions) async throws {
-        guard let command = arguments.first else {
-            print(usage)
-            return
+    /// The text a command prints. `CargoMCP` calls this too, so the CLI and
+    /// the MCP server stay one implementation.
+    static func output(of arguments: [String]) async throws -> String {
+        var positional: [String] = []
+        var options = ListOptions()
+        var remaining = arguments[...]
+        while let argument = remaining.popFirst() {
+            switch argument {
+            case "--grep":
+                guard let value = remaining.popFirst() else { throw Failure(message: "--grep needs a value.") }
+                options.grep = value
+            case "--limit":
+                guard let value = remaining.popFirst().flatMap(Int.init), value >= 0 else {
+                    throw Failure(message: "--limit needs a number.")
+                }
+                options.limit = value
+            default:
+                positional.append(argument)
+            }
         }
+        switch try await dispatch(positional, options: options) {
+        case let text as String:
+            return text
+        case let value:
+            return try json(value)
+        }
+    }
+
+    static func message(for error: Error) -> String {
+        (error as? Failure)?.message ?? error.localizedDescription
+    }
+
+    /// A String result is printed as it is; anything else is printed as JSON.
+    private static func dispatch(_ arguments: [String], options: ListOptions) async throws -> Any? {
+        guard let command = arguments.first else { return usage }
         if let key = snapshotLists[command] {
             let snapshot = try await residentSnapshot()
-            try printJSON(filtered(snapshot[key], options: options))
-            return
+            return filtered(snapshot[key], options: options)
         }
         switch command {
         case "help", "--help", "-h":
-            print(usage)
+            return usage
         case "status":
-            try printJSON(try await status())
+            return try await status()
         case "state":
-            try printJSON(try await residentSnapshot())
+            return try await residentSnapshot()
         case "local":
-            try printJSON(try localState(key: arguments.dropFirst().first, options: options))
+            return try localState(key: arguments.dropFirst().first, options: options)
         case "putio":
-            try printJSON(try await putIO(Array(arguments.dropFirst()), options: options))
+            return try await putIO(Array(arguments.dropFirst()), options: options)
         case "refresh":
-            try await sendCommand(#"{"type":"refresh"}"#)
+            return try await sendCommand(#"{"type":"refresh"}"#)
         case "command":
             guard let body = arguments.dropFirst().first else { throw Failure(message: "command needs a JSON body.") }
-            try await sendCommand(body)
+            return try await sendCommand(body)
         case "logs":
-            try showLogs(minutes: arguments.dropFirst().first.flatMap(Int.init) ?? 60)
+            return try logs(minutes: arguments.dropFirst().first.flatMap(Int.init) ?? 60)
         default:
             throw Failure(message: "Unknown command \(command).\n\n\(usage)")
         }
@@ -172,12 +181,12 @@ enum CargoCLI {
         return result
     }
 
-    private static func sendCommand(_ body: String) async throws {
+    private static func sendCommand(_ body: String) async throws -> [String: Any] {
         guard let data = body.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) != nil else {
             throw Failure(message: "The command body is not valid JSON.")
         }
         _ = try await residentData(path: "/v1/commands", method: "POST", body: data)
-        try printJSON(["ok": true])
+        return ["ok": true]
     }
 
     // MARK: - Local state
@@ -246,15 +255,20 @@ enum CargoCLI {
 
     // MARK: - Logs
 
-    private static func showLogs(minutes: Int) throws {
+    private static func logs(minutes: Int) throws -> String {
         let process = Process()
+        let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/log")
         process.arguments = [
             "show", "--last", "\(max(minutes, 1))m", "--info", "--style", "compact",
             "--predicate", #"subsystem == "app.cargo.Cargo""#
         ]
+        process.standardOutput = pipe
         try process.run()
+        // Read before the wait: a full pipe blocks `log` and the wait never ends.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self)
     }
 
     // MARK: - Output
@@ -277,13 +291,13 @@ enum CargoCLI {
         return list
     }
 
-    private static func printJSON(_ value: Any?) throws {
+    private static func json(_ value: Any?) throws -> String {
         let value = value ?? NSNull()
         let data = try JSONSerialization.data(
             withJSONObject: value,
             options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]
         )
-        print(String(decoding: data, as: UTF8.self))
+        return String(decoding: data, as: UTF8.self)
     }
 
     private static func printError(_ message: String) {

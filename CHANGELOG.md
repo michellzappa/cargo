@@ -11,6 +11,9 @@ independent `0.1.0` marketing line.
 
 ### Added
 
+- Added `cargo-mcp`, a local MCP server that gives Claude and other agents
+  the `cargoctl` commands as tools: status, lists, Put.io listings, logs, and
+  resident commands such as Chill search and retrying a transfer.
 - Added Reveal in Finder to the transfer context menu.
 - Added `cargoctl`, a JSON command line for the running resident, Cargo's state
   file, Put.io's unfiltered listings, and Cargo's log.
