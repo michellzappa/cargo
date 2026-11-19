@@ -1,5 +1,6 @@
 import EasySubsKit
 import Foundation
+import os
 import HouseKit
 
 struct CargoBackgroundCycleSummary: Sendable {
@@ -56,7 +57,7 @@ final class CargoCoordinator {
             case .inboxFileMissing:
                 "The downloaded file is no longer in the Cargo inbox."
             case .ambiguousMedia:
-                "Cargo could not determine whether this is a movie or TV episode."
+                "Cargo could not tell whether this is a movie or a TV episode. Rename it with SxxEyy or the year, then organize it."
             case .destinationAlreadyExists:
                 "A file already exists at the proposed library destination."
             case .unableToCreateDestination:
@@ -541,6 +542,12 @@ final class CargoCoordinator {
     }
 
     private var cyclesSinceInventoryWalk = 0
+    private var rootListing: [RemoteFile] = []
+    private var pendingRemoteJunk: [RemoteFile] = []
+    /// The last inventory walk, unfiltered, for the transfer checks.
+    var inventoryIndex = RemoteInventoryIndex()
+    /// When each transfer first looked stuck. Resets when Cargo restarts.
+    var transferStallSince: [Int: Date] = [:]
     private static let inventoryWalkEvery = 10
 
     /// Pulls account, transfers and the activity feed. The recursive inventory
@@ -548,11 +555,14 @@ final class CargoCoordinator {
     /// changed: a transfer completed since last time (from the event feed or
     /// the transfer list), an extraction in flight, the first run, an explicit
     /// `force` (the Refresh button) — and every tenth cycle regardless.
+    private static let cycleLogger = Logger(subsystem: "app.cargo.Cargo", category: "cycle")
+
     func refreshFromPutIO(force: Bool = true) async {
         do {
             let account = try await putIOClient.fetchAccount()
             let transfers = try await putIOClient.fetchTransfers()
             let remoteFiles = try await putIOClient.fetchFiles(parentID: 0, types: nil)
+            rootListing = remoteFiles
             let previouslyDone = Set(state.transfers.filter { [.completed, .seeding].contains($0.status) }.map(\.id))
             let newlyDone = transfers.contains { [.completed, .seeding].contains($0.status) && !previouslyDone.contains($0.id) }
             state.transfers = transfers
@@ -568,7 +578,9 @@ final class CargoCoordinator {
                 state.remoteMediaFiles = inventory.mediaFiles
                 state.remoteFolders = inventory.folders
                 state.remoteArchiveFiles = inventory.archives
+                Self.cycleLogger.info("inventory walk: \(inventory.mediaFiles.count, privacy: .public) media, \(inventory.folders.count, privacy: .public) folders, \(inventory.archives.count, privacy: .public) archives")
             }
+            assessTransfers()
             remoteFolderStack.removeAll()
             remoteFolderID = 0
             remoteFolderName = "Put.io root"
@@ -581,6 +593,7 @@ final class CargoCoordinator {
                 putIOStatus = "Not connected yet"
             } else {
                 putIOStatus = "Put.io error · \(error.localizedDescription)"
+                Self.cycleLogger.error("refresh failed: \(error.localizedDescription, privacy: .public)")
             }
         }
     }
@@ -637,7 +650,7 @@ final class CargoCoordinator {
                 state.requestedExtractionFileIDs.removeAll { $0 == archive.id }
                 if state.settings.automaticRemoteCleanupEnabled {
                     do {
-                        try await putIOClient.deleteFile(fileID: archive.id, skipTrash: true)
+                        try await putIOClient.deleteFile(fileID: archive.id, skipTrash: false)
                         state.remoteArchiveFiles.removeAll { $0.id == archive.id }
                         recordHistory(kind: .success, title: "Extracted and removed archive", detail: archive.displayPath)
                     } catch {
@@ -653,6 +666,24 @@ final class CargoCoordinator {
                 recordHistory(kind: .failure, title: "Extraction failed", detail: detail)
             case .inProgress, .unknown:
                 break
+            }
+        }
+        persistQuietly()
+    }
+
+    /// Sends extras and leftover release folders to Put.io's trash, so a wrong
+    /// call stays recoverable.
+    private func removeRemoteJunk() async {
+        guard state.settings.automaticRemoteCleanupEnabled else { return }
+        let junk = pendingRemoteJunk
+        pendingRemoteJunk = []
+        for file in junk {
+            do {
+                try await putIOClient.deleteFile(fileID: file.id, skipTrash: false)
+                state.remoteFolders.removeAll { $0.id == file.id }
+                recordHistory(kind: .info, title: "Moved junk to Put.io trash", detail: file.displayPath)
+            } catch {
+                recordHistory(kind: .warning, title: "Could not remove Put.io junk", detail: "\(file.displayPath): \(error.localizedDescription)")
             }
         }
         persistQuietly()
@@ -732,6 +763,8 @@ final class CargoCoordinator {
         var summary = CargoBackgroundCycleSummary()
         await refreshFromPutIO(force: false)
         await reconcileArchives(summary: &summary)
+        await removeRemoteJunk()
+        await removeLeftoverRemoteCopies()
         pruneHistory()
         pruneDeletedMarkers()
         summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
@@ -748,6 +781,7 @@ final class CargoCoordinator {
         persistQuietly()
 
         if !newlyDiscoveredMedia.isEmpty {
+            Self.cycleLogger.info("discovered: \(newlyDiscoveredMedia.map(\.name).joined(separator: ", "), privacy: .public)")
             summary.discovered = newlyDiscoveredMedia.map(\.displayPath)
             let detail = newlyDiscoveredMedia.map(\.displayPath).joined(separator: ", ")
             recordHistory(
@@ -758,7 +792,9 @@ final class CargoCoordinator {
         }
 
         if state.settings.automaticSyncEnabled {
-            for mediaFile in newlyDiscoveredMedia {
+            let (wanted, duplicates) = splitDuplicateReleases(newlyDiscoveredMedia)
+            await removeDuplicateReleases(duplicates)
+            for mediaFile in wanted {
                 enqueueLocalSync(remoteFile: mediaFile)
             }
         }
@@ -819,8 +855,6 @@ final class CargoCoordinator {
         return summary
     }
 
-    private static let inventoryTypes = ["FOLDER", "VIDEO", "ARCHIVE"]
-
     private func fetchRemoteInventory() async throws -> (mediaFiles: [RemoteFile], folders: [RemoteFile], archives: [RemoteFile]) {
         var mediaFilesByID = [Int: RemoteFile]()
         var foldersByID = [Int: RemoteFile]()
@@ -845,11 +879,14 @@ final class CargoCoordinator {
         }
 
         var visitedFolderIDs = Set<Int>()
+        var childrenByFolder: [Int: [RemoteFile]] = [0: rootListing]
 
         while let folder = folderQueue.popLast() {
             guard visitedFolderIDs.insert(folder.id).inserted else { continue }
-            // Server-side filter: sidecars never cross the wire.
-            let files = try await putIOClient.fetchFiles(parentID: folder.id, types: Self.inventoryTypes)
+            // Unfiltered: RemoteJunk needs a folder's full listing to know that
+            // it holds only leftovers.
+            let files = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
+            childrenByFolder[folder.id] = files
             for file in files {
                 if file.isFolder {
                     var folderFile = file
@@ -869,6 +906,15 @@ final class CargoCoordinator {
                 }
             }
         }
+
+        let junk = RemoteJunk.classify(
+            folders: foldersByID,
+            children: childrenByFolder,
+            mediaFiles: Array(mediaFilesByID.values)
+        )
+        pendingRemoteJunk = junk.removable
+        junk.extraVideoIDs.forEach { mediaFilesByID[$0] = nil }
+        inventoryIndex = RemoteInventoryIndex(children: childrenByFolder, extraVideoIDs: junk.extraVideoIDs)
 
         func sorted(_ files: Dictionary<Int, RemoteFile>.Values) -> [RemoteFile] {
             files.sorted { $0.displayPath.localizedStandardCompare($1.displayPath) == .orderedAscending }

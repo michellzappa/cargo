@@ -41,8 +41,8 @@ Every minute (configurable) the background cycle:
 4. downloads newly completed video into `_Inbox` — streamed into a `.part`
    file, resumed from it after sleep, network loss or a restart,
 5. classifies and renames Inbox media into the Movies / TV Shows layout,
-6. deletes the Put.io original after the local copy verifies, skipping the
-   trash so the quota is actually freed,
+6. sends the Put.io original to the Put.io trash after the local copy matches
+   Put.io's size and CRC32 and starts with a valid video header,
 7. fetches a subtitle for what it organized — Put.io's own if it had one,
    else OpenSubtitles through [EasySubsKit](https://github.com/michellzappa/easysubs)
    (hash match, then filename),
@@ -203,6 +203,10 @@ Commands: `refresh`, `refreshChillCatalog`, `sendChillRelease`,
 `refreshPersonalWatchlist`, `clearFailedJobs`, `clearHistory`. Client-scoped
 requests carry `X-Cargo-Client-ID`; the resident uses it to select the
 personal watchlist snapshot and persisted URL.
+
+`cargoctl` wraps this API for the terminal and for agents. It also reads Cargo's
+state file, Put.io's unfiltered listings, and Cargo's log. `cargoctl help` lists
+the commands.
 
 See [PLAN.md](PLAN.md) for milestones and [BUILD_ISSUES.md](BUILD_ISSUES.md)
 for the working notes on risks — both are the author's ledgers rather than

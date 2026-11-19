@@ -437,6 +437,22 @@ final class TransfersPageViewController: PageViewController {
         run { [weak self] in try await self?.coordinator.cleanFinishedTransfers() }
     }
 
+    /// A transfer has no link to its local file. A finished download job with
+    /// the same display title gives the exact file; otherwise the library
+    /// entry gives the movie file or the show folder.
+    private func localPath(for transfer: RemoteTransfer, displayName: String, state: CargoState) -> String? {
+        if let job = state.localJobs.first(where: {
+            $0.status == .completed && LibraryOrganizer.displayTitle(for: $0.name) == displayName
+        }), let destination = job.destination {
+            return destination
+        }
+        guard let root = coordinator.libraryRootURL(),
+              let item = state.libraryItems.first(where: { CargoTitleMatch.matches($0.displayTitle, displayName) }) else {
+            return nil
+        }
+        return root.appendingPathComponent(item.relativePath).path
+    }
+
     override func sections() -> [ListSection] {
         let state = coordinator.dashboardState
         let rows = state.transfers.map { transfer -> ListRow in
@@ -462,6 +478,7 @@ final class TransfersPageViewController: PageViewController {
             ) { [weak self] in
                 self?.run { try await self?.coordinator.cancelTransfer(id: transfer.id) }
             })
+            actions.append(revealAction(localPath(for: transfer, displayName: displayName, state: state)))
             actions.append(copyAction("Copy Name", displayName))
 
             return ListRow(
@@ -470,7 +487,7 @@ final class TransfersPageViewController: PageViewController {
                 details: [
                     "\(Formatters.percent(transfer.progress)) · \(Formatters.bytes(transfer.sizeBytes))",
                     "\(isActive ? "Started" : "Transferred") \(Formatters.dateTime.string(from: transfer.updatedAt))"
-                ],
+                ] + [transfer.problem].compactMap { $0 },
                 badge: Self.badge(for: transfer.status),
                 progress: isActive ? transfer.progress : nil,
                 thumbnail: posterURL,

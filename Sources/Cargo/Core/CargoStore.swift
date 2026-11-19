@@ -6,17 +6,17 @@ final class CargoStore {
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
 
+    static var defaultStateURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Cargo", isDirectory: true)
+            .appendingPathComponent("state.json")
+    }
+
     init(stateURL: URL? = nil) {
         if let stateURL {
             self.stateURL = stateURL
         } else {
-            let applicationSupport = FileManager.default.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            )[0]
-            self.stateURL = applicationSupport
-                .appendingPathComponent("Cargo", isDirectory: true)
-                .appendingPathComponent("state.json")
+            self.stateURL = Self.defaultStateURL
         }
 
         self.encoder = JSONEncoder()

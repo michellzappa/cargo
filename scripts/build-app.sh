@@ -37,12 +37,17 @@ app="build/DerivedData/Build/Products/$config/Cargo.app"
 # Xcode's Debug product is an executable shim that loads Cargo.debug.dylib at
 # launch. Sign nested code first, otherwise the outer app can carry a stable
 # Team ID while dyld rejects the debug dylib's linker/adhoc signature.
+# Two valid certificates can share the "Apple Development" name, and codesign
+# refuses an ambiguous name. Sign by hash. Grants survive because the designated
+# requirement names the certificate's common name, not its hash.
+identity="${CARGO_SIGN_IDENTITY:-$(security find-identity -v -p codesigning | awk '/"Apple Development:/ { print $2; exit }')}"
+[[ -n "$identity" ]] || { print -u2 "No Apple Development signing identity found."; exit 1; }
 setopt null_glob
 for nested in "$app/Contents/MacOS"/*.dylib "$app/Contents/Frameworks"/*.dylib; do
   [[ -e "$nested" ]] || continue
-  codesign --force --sign "Apple Development" --options runtime "$nested"
+  codesign --force --sign "$identity" --options runtime "$nested"
 done
-codesign --force --sign "Apple Development" --entitlements Resources/Cargo.entitlements --options runtime "$app"
+codesign --force --sign "$identity" --entitlements Resources/Cargo.entitlements --options runtime "$app"
 
 target="$installRoot/Cargo.app"
 if pgrep -xq Cargo; then osascript -e 'tell application "Cargo" to quit' >/dev/null 2>&1 || true; sleep 0.5; fi
@@ -60,4 +65,8 @@ else
   codesign --verify --strict "$target"
 fi
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$target/Contents/Info.plist")"
+# Cargo's CLI runs inside the app binary so that it keeps the app's Keychain grants.
+mkdir -p "$HOME/.local/bin"
+printf '#!/bin/sh\nexec "%s/Contents/MacOS/Cargo" --cli "$@"\n' "$target" > "$HOME/.local/bin/cargoctl"
+chmod +x "$HOME/.local/bin/cargoctl"
 printf '%s (version %s, build %s, %s)\n' "$target" "$version" "$build" "$commit"

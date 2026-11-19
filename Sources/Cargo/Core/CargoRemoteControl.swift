@@ -146,6 +146,8 @@ struct CargoRemoteTransfer: Codable, Equatable, Sendable {
     let progress: Double
     let sizeBytes: Int64
     let updatedAt: Date
+    /// Why the transfer looks stuck or failed. Nil when it is fine.
+    let problem: String?
 
     init(_ transfer: RemoteTransfer, displayName: String? = nil, posterURL: String? = nil) {
         id = transfer.id
@@ -157,6 +159,7 @@ struct CargoRemoteTransfer: Codable, Equatable, Sendable {
         progress = transfer.progress
         sizeBytes = transfer.sizeBytes
         updatedAt = transfer.updatedAt
+        problem = transfer.problem
     }
 }
 
@@ -530,7 +533,8 @@ extension CargoRemoteSnapshot {
                 status: $0.status,
                 progress: $0.progress,
                 sizeBytes: $0.sizeBytes,
-                updatedAt: $0.updatedAt
+                updatedAt: $0.updatedAt,
+                problem: $0.problem
             )
         }
         state.remoteFiles = files.map {

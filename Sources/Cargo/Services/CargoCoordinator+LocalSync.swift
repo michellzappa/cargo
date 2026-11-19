@@ -25,10 +25,7 @@ extension CargoCoordinator {
             state.localJobs[existingIndex].status = .queued
             state.localJobs[existingIndex].progress = 0
             state.localJobs[existingIndex].destination = state.settings.libraryRootPath.map {
-                URL(fileURLWithPath: $0, isDirectory: true)
-                    .appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
-                    .appendingPathComponent(Self.safeFilename(remoteFile.name))
-                    .path
+                stagingURL(root: URL(fileURLWithPath: $0, isDirectory: true), remoteFileID: remoteFile.id, name: remoteFile.name).path
             }
             state.localJobs[existingIndex].errorMessage = nil
             state.localJobs[existingIndex].attempts = 0
@@ -83,11 +80,7 @@ extension CargoCoordinator {
             return
         }
 
-        let stagingURL = rootURL.appendingPathComponent(
-            state.settings.stagingDirectoryName,
-            isDirectory: true
-        )
-        let destinationURL = stagingURL.appendingPathComponent(Self.safeFilename(jobName))
+        let destinationURL = stagingURL(root: rootURL, remoteFileID: remoteFileID, name: jobName)
 
         updateLocalJob(
             at: jobIndex,
@@ -117,6 +110,23 @@ extension CargoCoordinator {
                 }
             }
             try verifyLocalCopy(remoteFileID: remoteFileID, localURL: destinationURL)
+            do {
+                try await verifyLocalContent(remoteFileID: remoteFileID, localURL: destinationURL)
+            } catch let failure as DownloadCheck.Failure {
+                // Keep Put.io's copy and drop the local one: a retry downloads
+                // it again, and a broken source needs a new release anyway.
+                try? FileManager.default.removeItem(at: destinationURL)
+                removeEmptyInboxFolders(afterMoving: destinationURL, rootURL: rootURL)
+                updateLocalJob(
+                    at: jobIndex,
+                    status: .failed,
+                    progress: 0,
+                    destination: nil,
+                    errorMessage: failure.localizedDescription
+                )
+                recordHistory(kind: .failure, title: "Download failed the content check", detail: "\(jobName): \(failure.localizedDescription)")
+                return
+            }
             updateLocalJob(
                 at: jobIndex,
                 status: .needsReview,
@@ -172,6 +182,25 @@ extension CargoCoordinator {
 
     static let maximumDownloadAttempts = 8
 
+    /// Each download gets its own folder in the inbox, so two releases that
+    /// share a file name ("Behind the Scenes.mkv") never collide.
+    func stagingURL(root: URL, remoteFileID: Int, name: String) -> URL {
+        root.appendingPathComponent(state.settings.stagingDirectoryName, isDirectory: true)
+            .appendingPathComponent(String(remoteFileID), isDirectory: true)
+            .appendingPathComponent(Self.safeFilename(name))
+    }
+
+    /// The container header and Put.io's CRC32. Runs off the main actor: it
+    /// reads the whole file.
+    func verifyLocalContent(remoteFileID: Int, localURL: URL) async throws {
+        let remoteFile = state.remoteMediaFiles.first(where: { $0.id == remoteFileID })
+            ?? state.remoteFiles.first(where: { $0.id == remoteFileID })
+        let expectedCRC32 = remoteFile?.crc32
+        try await Task.detached(priority: .utility) {
+            try DownloadCheck.verify(fileURL: localURL, expectedCRC32: expectedCRC32)
+        }.value
+    }
+
     func verifyLocalCopy(remoteFileID: Int, localURL: URL) throws {
         guard FileManager.default.fileExists(atPath: localURL.path) else {
             throw SettingsError.localCopyMissing
@@ -182,9 +211,8 @@ extension CargoCoordinator {
             throw SettingsError.remoteFileMissing
         }
 
-        // Verification is the only thing standing between a download and a
-        // trash-skipping remote delete, so an unknown remote size must fail
-        // rather than pass by default.
+        // Verification is the only thing standing between a download and the
+        // remote delete, so an unknown remote size must fail rather than pass.
         guard remoteFile.sizeBytes > 0 else {
             throw SettingsError.remoteSizeUnknown
         }
@@ -194,12 +222,10 @@ extension CargoCoordinator {
         }
     }
 
-    /// User-initiated deletion from the Files page. No local-copy verification —
-    /// the UI is responsible for confirming with the user first.
+    /// User-initiated deletion from the Files page, and Cargo's cleanup after
+    /// a verified copy. Both go to Put.io's trash by default, so a wrong call
+    /// stays recoverable.
     @discardableResult
-    /// Manual deletes go to Put.io's trash (recoverable). Cargo's own cleanup
-    /// after a verified local copy skips the trash — otherwise the quota is
-    /// only freed when someone remembers to empty it.
     func deleteRemoteFile(remoteFileID: Int, reason: String? = nil, skipTrash: Bool = false) async throws -> RemoteFile {
         if isRemoteClientMode {
             let remoteState = dashboardState
@@ -238,8 +264,7 @@ extension CargoCoordinator {
         try verifyLocalCopy(remoteFileID: remoteFileID, localURL: localURL)
         let remoteFile = try await deleteRemoteFile(
             remoteFileID: remoteFileID,
-            reason: "\(jobName) · local copy verified",
-            skipTrash: true
+            reason: "\(jobName) · local copy verified"
         )
         do {
             return try await deleteEmptyRemoteFolders(startingAt: remoteFile.parentID)
@@ -262,7 +287,7 @@ extension CargoCoordinator {
             let children = try await putIOClient.fetchFiles(parentID: folder.id, types: nil)
             guard children.isEmpty else { break }
 
-            try await putIOClient.deleteFile(fileID: folder.id, skipTrash: true)
+            try await putIOClient.deleteFile(fileID: folder.id, skipTrash: false)
             if !state.deletedRemoteFolderIDs.contains(folder.id) {
                 state.deletedRemoteFolderIDs.append(folder.id)
             }

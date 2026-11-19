@@ -11,6 +11,21 @@ independent `0.1.0` marketing line.
 
 ### Added
 
+- Added Reveal in Finder to the transfer context menu.
+- Added `cargoctl`, a JSON command line for the running resident, Cargo's state
+  file, Put.io's unfiltered listings, and Cargo's log.
+- Cargo now checks each download against Put.io's CRC32 and the video
+  container header before it removes the Put.io copy. A failed check keeps
+  the Put.io copy, deletes the local copy, and fails the job.
+- Transfers now show a problem line: Put.io's error message, a torrent with no
+  peers and no data for 6 hours, a transfer stuck at 100% for an hour, or a
+  finished transfer that holds no usable video. Each problem also warns once
+  in History.
+- Cargo retries the Put.io delete for a downloaded file that is still on
+  Put.io, after it verifies the local copy again.
+- Cargo skips a new release of an episode or movie that the library or a
+  running download already has, and sends it to the Put.io trash. Of two new
+  releases of one episode, it keeps the larger file.
 - Added the iOS 17 companion app with resident pairing, Keychain-backed
   credentials, cached snapshots, foreground polling, and dashboard pages for
   transfers, files, library, discovery, watchlist, inbox, history, and
@@ -31,10 +46,22 @@ independent `0.1.0` marketing line.
 - Improved iOS reconnect and offline/cached-state presentation.
 - Kept personal watchlists display-only so they cannot accidentally alter the
   resident's automatic download workflow.
+- Cargo's cleanup after a verified download now sends the Put.io copy and its
+  empty folders to the Put.io trash instead of deleting them for good. Empty
+  the trash in Settings to free the quota.
+- A video with no SxxEyy marker and no year now goes to review instead of
+  Movies. Rename it with the marker or the year, then organize it.
+- Each download now goes to its own folder in `_Inbox`, named by Put.io file
+  ID, so two releases with the same file name no longer collide.
 
 ### Fixed
 
 - Fixed episodic transfer titles to show the series and episode instead of unresolved placeholders.
+- Fixed transfers at 1% showing as 100%.
+- Fixed Put.io dates without a time zone falling back to the current time.
+- Cargo now downloads only the main video. It skips featurettes, specials,
+  samples and small extra videos in a movie folder, and sends those and
+  leftover release folders to the Put.io trash when remote cleanup is on.
 - Fixed transfers and watchlist items matching the wrong poster or file when a short title (such as "Pi") appeared inside another word.
 - Kept remote and local dashboard navigation in the same stable product order.
 - Preserved the resident's source-of-truth boundaries while adding the mobile

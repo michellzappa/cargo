@@ -441,6 +441,11 @@ struct PutIOAPIClient: PutIOClient {
         path: String,
         queryItems: [URLQueryItem] = []
     ) async throws -> Response {
+        try decode(Response.self, from: try await rawGET(path: path, queryItems: queryItems))
+    }
+
+    /// The undecoded response body, for `cargoctl`.
+    func rawGET(path: String, queryItems: [URLQueryItem] = []) async throws -> Data {
         guard !token.isEmpty else { throw ClientError.missingToken }
 
         guard var components = URLComponents(
@@ -459,7 +464,7 @@ struct PutIOAPIClient: PutIOClient {
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
         let (data, _) = try await perform(request, failure: "Request failed.")
-        return try decode(Response.self, from: data)
+        return data
     }
 
     private func post(path: String, form: [String: String], failure: String) async throws -> Data {
@@ -507,9 +512,9 @@ struct PutIOAPIClient: PutIOClient {
     }
 
     static func mapTransfer(_ transfer: PutIOTransferPayload) -> RemoteTransfer {
+        // Put.io reports whole percents (0–100), so 1 means 1%, not finished.
         let rawProgress = transfer.percentDone ?? transfer.completionPercent ?? 0
-        let progress = rawProgress > 1 ? rawProgress / 100 : rawProgress
-        let boundedProgress = min(max(progress, 0), 1)
+        let boundedProgress = min(max(rawProgress / 100, 0), 1)
 
         return RemoteTransfer(
             id: transfer.id,
@@ -517,7 +522,13 @@ struct PutIOAPIClient: PutIOClient {
             status: mapStatus(transfer.status),
             progress: boundedProgress,
             sizeBytes: Int64(max(transfer.size ?? 0, 0)),
-            updatedAt: Self.date(from: transfer.finishedAt ?? transfer.createdAt)
+            updatedAt: Self.date(from: transfer.finishedAt ?? transfer.createdAt),
+            createdAt: transfer.createdAt.map { Self.date(from: $0) },
+            fileID: transfer.fileID,
+            userFileExists: transfer.userfileExists,
+            peersConnected: transfer.peersConnected,
+            downloadSpeed: transfer.downSpeed,
+            errorMessage: transfer.errorMessage.flatMap { $0.isEmpty ? nil : $0 }
         )
     }
 
@@ -528,7 +539,8 @@ struct PutIOAPIClient: PutIOClient {
             type: mapFileType(file.fileType),
             parentID: file.parentID ?? 0,
             sizeBytes: max(file.size ?? 0, 0),
-            createdAt: Self.date(from: file.createdAt)
+            createdAt: Self.date(from: file.createdAt),
+            crc32: file.crc32.flatMap { $0.isEmpty ? nil : $0.lowercased() }
         )
     }
 
@@ -581,11 +593,15 @@ struct PutIOAPIClient: PutIOClient {
             return date
         }
 
-        // Keep compatibility with older responses that use a space instead of T.
+        // files/list and transfers/list send UTC with no zone suffix
+        // ("2026-11-05T23:10:52"). Older responses use a space instead of T.
         let legacyFormatter = DateFormatter()
         legacyFormatter.locale = Locale(identifier: "en_US_POSIX")
         legacyFormatter.timeZone = TimeZone(secondsFromGMT: 0)
-        for format in ["yyyy-MM-dd HH:mm:ss.SSSXXXXX", "yyyy-MM-dd HH:mm:ssXXXXX", "yyyy-MM-dd HH:mm:ss"] {
+        for format in [
+            "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd'T'HH:mm:ss.SSSSSS",
+            "yyyy-MM-dd HH:mm:ss.SSSXXXXX", "yyyy-MM-dd HH:mm:ssXXXXX", "yyyy-MM-dd HH:mm:ss"
+        ] {
             legacyFormatter.dateFormat = format
             if let date = legacyFormatter.date(from: value) {
                 return date
@@ -662,6 +678,7 @@ struct PutIOFilePayload: Decodable {
     let parentID: Int?
     let size: Int64?
     let createdAt: String?
+    let crc32: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -670,6 +687,7 @@ struct PutIOFilePayload: Decodable {
         case parentID = "parent_id"
         case size
         case createdAt = "created_at"
+        case crc32
     }
 }
 
@@ -682,6 +700,11 @@ struct PutIOTransferPayload: Decodable {
     let completionPercent: Double?
     let createdAt: String?
     let finishedAt: String?
+    let fileID: Int?
+    let userfileExists: Bool?
+    let peersConnected: Int?
+    let downSpeed: Int64?
+    let errorMessage: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -692,6 +715,11 @@ struct PutIOTransferPayload: Decodable {
         case completionPercent = "completion_percent"
         case createdAt = "created_at"
         case finishedAt = "finished_at"
+        case fileID = "file_id"
+        case userfileExists = "userfile_exists"
+        case peersConnected = "peers_connected"
+        case downSpeed = "down_speed"
+        case errorMessage = "error_message"
     }
 }
 

@@ -68,12 +68,50 @@ enum LibraryOrganizer {
             )
         }
 
+        // An episode named without SxxEyy ("show-0103-720-web") has no year
+        // either, so a name with neither stays in review instead of landing
+        // in Movies.
+        let stem = URL(fileURLWithPath: safeName).deletingPathExtension().lastPathComponent
+        guard year(in: removeReleaseMetadata(from: stem)) != nil else {
+            return LibrarySortPreview(
+                kind: .review,
+                relativePath: nil,
+                explanation: "No episode marker and no year. Rename it with SxxEyy or the year, then organize it."
+            )
+        }
+
         let renamedFile = cleanedMovieFilename(safeName)
         return LibrarySortPreview(
             kind: .movie,
             relativePath: "\(settings.moviesDirectoryName)/\(renamedFile)",
             explanation: "Video file without a TV episode marker; release metadata will be removed."
         )
+    }
+
+    /// The same episode or movie, whatever the release: `show:battle of fates|1|1`
+    /// or `movie:arrival (2016)`. Nil for a name that goes to review.
+    static func libraryKey(for fileName: String, settings: CargoSettings) -> String? {
+        let safeName = safeFilename(fileName)
+        let sort = preview(for: safeName, settings: settings)
+        guard let relativePath = sort.relativePath else { return nil }
+        let components = relativePath.split(separator: "/").map(String.init)
+        switch sort.kind {
+        case .tvEpisode:
+            guard components.count >= 2, let (season, episode) = LibraryIndex.seasonEpisode(from: safeName) else { return nil }
+            return libraryKey(show: components[1], season: season, episode: episode)
+        case .movie:
+            return libraryKey(movie: URL(fileURLWithPath: relativePath).deletingPathExtension().lastPathComponent)
+        case .review:
+            return nil
+        }
+    }
+
+    static func libraryKey(show displayTitle: String, season: Int, episode: Int) -> String {
+        "show:\(displayTitle.lowercased())|\(season)|\(episode)"
+    }
+
+    static func libraryKey(movie displayTitle: String) -> String {
+        "movie:\(displayTitle.lowercased())"
     }
 
     /// The title shown in media lists. Release metadata such as `[BluRay]`,

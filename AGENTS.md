@@ -5,6 +5,14 @@ Put.io, Chill, metadata, the local library, and the authenticated remote API;
 the iOS app is a remote client and must not receive resident credentials or
 absolute local paths.
 
+## Inspect the app with `cargoctl`
+
+Use `cargoctl` to see what Cargo sees. Run `cargoctl help` for the commands. Do
+not read `state.json` by hand or ask for tokens. `scripts/build-app.sh` installs
+it to `~/.local/bin`. It runs inside the app binary (`Cargo --cli`) and keeps the
+app's Keychain grants, so it needs no prompt and no token file. Cargo must run
+for the resident commands. `local`, `putio` and `logs` work without it.
+
 ## Preserve the worktree
 
 - Treat existing uncommitted changes as user-owned. Inspect them before

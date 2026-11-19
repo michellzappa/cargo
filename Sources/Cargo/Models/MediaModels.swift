@@ -75,6 +75,16 @@ struct RemoteTransfer: Codable, Identifiable, Sendable {
     var progress: Double
     var sizeBytes: Int64
     var updatedAt: Date
+    var createdAt: Date? = nil
+    /// The file or folder the transfer saved, as Put.io reports it.
+    var fileID: Int? = nil
+    /// False once that file or folder is gone from Put.io.
+    var userFileExists: Bool? = nil
+    var peersConnected: Int? = nil
+    var downloadSpeed: Int64? = nil
+    var errorMessage: String? = nil
+    /// Set by the resident when the transfer looks stuck or failed.
+    var problem: String? = nil
 }
 
 struct RemoteFile: Codable, Identifiable, Sendable {
@@ -87,6 +97,8 @@ struct RemoteFile: Codable, Identifiable, Sendable {
     var parentID: Int
     var sizeBytes: Int64
     var createdAt: Date
+    /// Put.io's CRC32 of the content, lowercase hex. Nil for folders.
+    var crc32: String? = nil
 
     var isFolder: Bool {
         type == .folder
@@ -455,6 +467,10 @@ struct CargoState: Codable, Sendable {
     var metadata: [String: TMDBMetadata]
     /// Lookups TMDB had nothing for, and when; retried after a week, not every cycle.
     var metadataMisses: [String: Date]
+    /// What the transfer and file checks already know, so each problem warns
+    /// once: `transfer:ID` warned, `video:ID` transfer seen holding video,
+    /// `leftover:ID` Put.io copy kept. Keys drop out when the ID is gone.
+    var noticeKeys: [String]
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -478,6 +494,7 @@ struct CargoState: Codable, Sendable {
         libraryItems: [LibraryItem] = [],
         metadata: [String: TMDBMetadata] = [:],
         metadataMisses: [String: Date] = [:],
+        noticeKeys: [String] = [],
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -500,6 +517,7 @@ struct CargoState: Codable, Sendable {
         self.libraryItems = libraryItems
         self.metadata = metadata
         self.metadataMisses = metadataMisses
+        self.noticeKeys = noticeKeys
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -528,6 +546,7 @@ struct CargoState: Codable, Sendable {
         libraryItems = try container.decodeIfPresent([LibraryItem].self, forKey: .libraryItems) ?? []
         metadata = try container.decodeIfPresent([String: TMDBMetadata].self, forKey: .metadata) ?? [:]
         metadataMisses = try container.decodeIfPresent([String: Date].self, forKey: .metadataMisses) ?? [:]
+        noticeKeys = try container.decodeIfPresent([String].self, forKey: .noticeKeys) ?? []
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -552,6 +571,7 @@ struct CargoState: Codable, Sendable {
         case libraryItems
         case metadata
         case metadataMisses
+        case noticeKeys
         case settings
         case lastUpdated
     }

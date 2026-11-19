@@ -24,6 +24,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var remoteAPIScope: CargoRemoteNetworkScope?
 
     static func main() {
+        if CargoCLI.isInvocation { CargoCLI.runAndExit() }
         let application = NSApplication.shared
         let delegate = CargoAppDelegate()
         application.delegate = delegate
