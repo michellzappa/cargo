@@ -108,11 +108,20 @@ final class KeychainStore {
         return token
     }
 
+    private static var isRunningUnderTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+    }
+
     private func read(account: String) -> String? {
         readResult(account: account).value
     }
 
     private func readResult(account: String) -> (status: OSStatus, value: String?) {
+        // Unsigned test hosts running on a Mac with live Cargo Keychain items
+        // would block on a legacy login-keychain ACL dialog.
+        if Self.isRunningUnderTests {
+            return (errSecInteractionNotAllowed, nil)
+        }
         var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -135,6 +144,7 @@ final class KeychainStore {
     }
 
     private func save(_ token: String, account: String) throws {
+        if Self.isRunningUnderTests { return }
         let data = Data(token.utf8)
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
@@ -157,6 +167,7 @@ final class KeychainStore {
     }
 
     private func delete(account: String) throws {
+        if Self.isRunningUnderTests { return }
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

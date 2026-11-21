@@ -326,6 +326,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
     var remoteServerURL: String
     /// The first dashboard page shown when the main window opens.
     var startPage: CargoStartPage
+    /// Global quality profile for automatic episode downloads.
+    var qualityProfile: QualityProfile
 
     static let refreshIntervalChoices = [1, 5, 10, 30]
 
@@ -352,7 +354,8 @@ struct CargoSettings: Codable, Equatable, Sendable {
         remoteNetworkScope: CargoRemoteNetworkScope = .localhost,
         remoteClientEnabled: Bool = false,
         remoteServerURL: String = "",
-        startPage: CargoStartPage = .transfers
+        startPage: CargoStartPage = .transfers,
+        qualityProfile: QualityProfile = .default
     ) {
         self.libraryRootBookmark = libraryRootBookmark
         self.libraryRootPath = libraryRootPath
@@ -377,6 +380,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         self.remoteClientEnabled = remoteClientEnabled
         self.remoteServerURL = remoteServerURL
         self.startPage = startPage
+        self.qualityProfile = qualityProfile
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -403,6 +407,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         case remoteClientEnabled
         case remoteServerURL
         case startPage
+        case qualityProfile
     }
 
     init(from decoder: Decoder) throws {
@@ -432,6 +437,7 @@ struct CargoSettings: Codable, Equatable, Sendable {
         remoteClientEnabled = try container.decodeIfPresent(Bool.self, forKey: .remoteClientEnabled) ?? false
         remoteServerURL = try container.decodeIfPresent(String.self, forKey: .remoteServerURL) ?? ""
         startPage = try container.decodeIfPresent(CargoStartPage.self, forKey: .startPage) ?? .transfers
+        qualityProfile = try container.decodeIfPresent(QualityProfile.self, forKey: .qualityProfile) ?? .default
     }
 
     static let `default` = CargoSettings()
@@ -471,6 +477,10 @@ struct CargoState: Codable, Sendable {
     /// once: `transfer:ID` warned, `video:ID` transfer seen holding video,
     /// `leftover:ID` Put.io copy kept. Keys drop out when the ID is gone.
     var noticeKeys: [String]
+    /// Followed series and RSS/Atom feeds owned by Cargo.
+    var subscriptions: [Subscription]
+    /// Shared episode ledger across all subscription sources.
+    var episodeLedger: [EpisodeLedgerEntry]
     var settings: CargoSettings
     var lastUpdated: Date
 
@@ -495,6 +505,8 @@ struct CargoState: Codable, Sendable {
         metadata: [String: TMDBMetadata] = [:],
         metadataMisses: [String: Date] = [:],
         noticeKeys: [String] = [],
+        subscriptions: [Subscription] = [],
+        episodeLedger: [EpisodeLedgerEntry] = [],
         settings: CargoSettings = .default,
         lastUpdated: Date
     ) {
@@ -518,6 +530,8 @@ struct CargoState: Codable, Sendable {
         self.metadata = metadata
         self.metadataMisses = metadataMisses
         self.noticeKeys = noticeKeys
+        self.subscriptions = subscriptions
+        self.episodeLedger = episodeLedger
         self.settings = settings
         self.lastUpdated = lastUpdated
     }
@@ -547,6 +561,8 @@ struct CargoState: Codable, Sendable {
         metadata = try container.decodeIfPresent([String: TMDBMetadata].self, forKey: .metadata) ?? [:]
         metadataMisses = try container.decodeIfPresent([String: Date].self, forKey: .metadataMisses) ?? [:]
         noticeKeys = try container.decodeIfPresent([String].self, forKey: .noticeKeys) ?? []
+        subscriptions = try container.decodeIfPresent([Subscription].self, forKey: .subscriptions) ?? []
+        episodeLedger = try container.decodeIfPresent([EpisodeLedgerEntry].self, forKey: .episodeLedger) ?? []
         settings = try container.decodeIfPresent(CargoSettings.self, forKey: .settings) ?? .default
         lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
     }
@@ -572,6 +588,8 @@ struct CargoState: Codable, Sendable {
         case metadata
         case metadataMisses
         case noticeKeys
+        case subscriptions
+        case episodeLedger
         case settings
         case lastUpdated
     }

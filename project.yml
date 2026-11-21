@@ -94,6 +94,8 @@ targets:
       - path: Tests/CargoTests
     dependencies:
       - target: Cargo
+      - package: CargoRemoteKit
+        product: CargoRemoteKit
   CargoIOS:
     type: application
     platform: iOS

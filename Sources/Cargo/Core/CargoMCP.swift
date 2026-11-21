@@ -41,21 +41,109 @@ enum CargoMCP {
     private static var tools: [Tool] { [
         Tool(
             name: "cargo_status",
-            description: "Cargo's build, Put.io and Chill state, disk space, and counts of transfers, media, library items and jobs.",
+            description: "Cargo's build, Put.io and Chill state, disk space, and counts of transfers, media, library items, subscriptions, ledger entries and jobs.",
             properties: [:],
             required: [],
             arguments: { _ in ["status"] }
         ),
         Tool(
             name: "cargo_list",
-            description: "One list from the running resident's snapshot. media is the downloadable video on Put.io; jobs are local downloads; library is the organized local library.",
+            description: "One list from the running resident's snapshot. media is the downloadable video on Put.io; jobs are local downloads; library is the organized local library; subscriptions are followed series and feeds; ledger is the episode ledger.",
             properties: listOptions.merging([
-                "list": ["type": "string", "enum": ["transfers", "files", "media", "jobs", "history", "library", "watchlist"]]
+                "list": ["type": "string", "enum": ["transfers", "files", "media", "jobs", "history", "library", "watchlist", "subscriptions", "ledger"]]
             ]) { $1 },
             required: ["list"],
             arguments: { input in
                 guard let list = input["list"] as? String else { throw InvalidArguments(message: "list is required.") }
                 return [list] + options(input)
+            }
+        ),
+        Tool(
+            name: "cargo_subscriptions",
+            description: "List, add, pause, resume, or remove series and feed subscriptions on the running resident.",
+            properties: listOptions.merging([
+                "action": ["type": "string", "enum": ["list", "add_series", "add_feed", "pause", "resume", "remove"]],
+                "id": ["type": "string", "description": "Subscription UUID for pause, resume, or remove."],
+                "imdb_id": ["type": "string", "description": "IMDb ID for add_series, such as tt11280740."],
+                "tmdb_id": ["type": "integer", "minimum": 1, "description": "TMDB TV ID for add_series."],
+                "title": ["type": "string", "description": "Series or feed title."],
+                "year": ["type": "integer", "description": "Optional first air year for add_series."],
+                "url": ["type": "string", "description": "RSS or Atom URL for add_feed."],
+                "keywords": ["type": "array", "items": ["type": "string"], "description": "Required keywords for add_feed."],
+                "unwanted_keywords": ["type": "array", "items": ["type": "string"], "description": "Excluded keywords for add_feed."],
+                "backfill": ["type": "string", "enum": ["newOnly", "currentSeason", "all"], "description": "Backfill policy. Defaults to newOnly."]
+            ]) { $1 },
+            required: ["action"],
+            arguments: { input in
+                guard let action = input["action"] as? String else {
+                    throw InvalidArguments(message: "action is required.")
+                }
+                switch action {
+                case "list":
+                    return ["subscriptions"] + options(input)
+                case "add_series":
+                    guard let imdbID = input["imdb_id"] as? String,
+                          let tmdbID = input["tmdb_id"] as? Int,
+                          let title = input["title"] as? String else {
+                        throw InvalidArguments(message: "add_series requires imdb_id, tmdb_id, and title.")
+                    }
+                    var args = ["subscriptions", "add-series", imdbID, String(tmdbID), title]
+                    if let year = input["year"] as? Int { args += ["--year", String(year)] }
+                    if let backfill = input["backfill"] as? String { args += ["--backfill", backfill] }
+                    return args
+                case "add_feed":
+                    guard let url = input["url"] as? String,
+                          let title = input["title"] as? String else {
+                        throw InvalidArguments(message: "add_feed requires url and title.")
+                    }
+                    var args = ["subscriptions", "add-feed", url, title]
+                    if let keywords = input["keywords"] as? [String] {
+                        for keyword in keywords { args += ["--keyword", keyword] }
+                    }
+                    if let unwanted = input["unwanted_keywords"] as? [String] {
+                        for keyword in unwanted { args += ["--unwanted", keyword] }
+                    }
+                    if let backfill = input["backfill"] as? String { args += ["--backfill", backfill] }
+                    return args
+                case "pause", "resume", "remove":
+                    guard let id = input["id"] as? String else {
+                        throw InvalidArguments(message: "\(action) requires id.")
+                    }
+                    return ["subscriptions", action, id]
+                default:
+                    throw InvalidArguments(message: "Unknown subscriptions action \(action).")
+                }
+            }
+        ),
+        Tool(
+            name: "cargo_ledger",
+            description: "List the shared episode ledger or set one episode's state.",
+            properties: listOptions.merging([
+                "action": ["type": "string", "enum": ["list", "set"]],
+                "imdb_id": ["type": "string", "description": "IMDb ID of the series for set."],
+                "season": ["type": "integer", "minimum": 1, "description": "Season number for set."],
+                "episode": ["type": "integer", "minimum": 1, "description": "Episode number for set."],
+                "state": ["type": "string", "enum": EpisodeLedgerState.allCases.map(\.rawValue), "description": "New ledger state for set."]
+            ]) { $1 },
+            required: ["action"],
+            arguments: { input in
+                guard let action = input["action"] as? String else {
+                    throw InvalidArguments(message: "action is required.")
+                }
+                switch action {
+                case "list":
+                    return ["ledger"] + options(input)
+                case "set":
+                    guard let imdbID = input["imdb_id"] as? String,
+                          let season = input["season"] as? Int,
+                          let episode = input["episode"] as? Int,
+                          let state = input["state"] as? String else {
+                        throw InvalidArguments(message: "set requires imdb_id, season, episode, and state.")
+                    }
+                    return ["ledger", "set", imdbID, String(season), String(episode), state]
+                default:
+                    throw InvalidArguments(message: "Unknown ledger action \(action).")
+                }
             }
         ),
         Tool(
@@ -105,7 +193,9 @@ enum CargoMCP {
             cleanFinishedTransfers, requestExtraction {remoteFileID}, deleteRemoteFile {remoteFileID},
             enqueueLocalSync {remoteFileID}, organizeLocalJob {id: uuid}, refreshWatchlist,
             refreshPersonalWatchlist {url?}, clearFailedJobs, clearHistory, playLibraryItem {id},
-            playLibraryEpisode {id, season, episode}.
+            playLibraryEpisode {id, season, episode}, addSeriesSubscription {imdbID, tmdbID, title, year?, backfill?},
+            addFeedSubscription {url, title, keywords?, unwantedKeywords?, backfill?}, removeSubscription {id: uuid},
+            setSubscriptionPaused {id: uuid, paused}, setEpisodeLedgerState {imdbID, season, episode, state}.
             Read the outcome with cargo_list or cargo_state.
             """,
             properties: ["command": ["type": "object", "properties": ["type": ["type": "string"]], "required": ["type"]]],
@@ -126,6 +216,17 @@ enum CargoMCP {
             arguments: { input in ["logs", String(input["minutes"] as? Int ?? 60)] }
         )
     ] }
+
+    static var toolNames: [String] {
+        tools.map(\.name)
+    }
+
+    static func cliArguments(forTool name: String, input: [String: Any]) throws -> [String] {
+        guard let tool = tools.first(where: { $0.name == name }) else {
+            throw InvalidArguments(message: "Unknown tool \(name).")
+        }
+        return try tool.arguments(input)
+    }
 
     private static func options(_ input: [String: Any]) -> [String] {
         var arguments: [String] = []

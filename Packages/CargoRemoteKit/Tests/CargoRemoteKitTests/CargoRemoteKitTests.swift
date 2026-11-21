@@ -14,7 +14,12 @@ final class CargoRemoteKitTests: XCTestCase {
             .goBackRemoteFolder,
             .refreshPersonalWatchlist(url: "https://www.imdb.com/user/ur123/watchlist/"),
             .playLibraryItem(id: "movie-1"),
-            .playLibraryEpisode(id: "show-1", season: 2, episode: 7)
+            .playLibraryEpisode(id: "show-1", season: 2, episode: 7),
+            .addSeriesSubscription(imdbID: "tt11280740", tmdbID: 95396, title: "Severance", year: 2022, backfill: .newOnly),
+            .addFeedSubscription(url: "https://showrss.info/user/42.rss", title: "showRSS", keywords: ["1080p"], unwantedKeywords: ["cam"], backfill: nil),
+            .removeSubscription(id: UUID()),
+            .setSubscriptionPaused(id: UUID(), paused: true),
+            .setEpisodeLedgerState(imdbID: "tt11280740", season: 2, episode: 3, state: .skipped)
         ]
 
         for command in commands {
@@ -59,6 +64,9 @@ final class CargoRemoteKitTests: XCTestCase {
         XCTAssertEqual(snapshot.transfers.first?.status, .downloading)
         XCTAssertTrue(snapshot.putIO.connected)
         XCTAssertNil(snapshot.disk)
+        XCTAssertTrue(snapshot.subscriptions.isEmpty)
+        XCTAssertTrue(snapshot.episodeLedger.isEmpty)
+        XCTAssertNil(snapshot.qualityProfile)
     }
 
     func testSnapshotCarriesDiskUsageAndDetailedSyncErrors() throws {

@@ -21,8 +21,16 @@ enum CargoCLI {
     cargoctl: inspect and drive the running Cargo resident. Output is JSON.
 
       status                   build, Put.io state, disk, counts
-      transfers | files | media | jobs | history | library | watchlist
+      transfers | files | media | jobs | history | library | watchlist | subscriptions | ledger
                                one list from the resident's snapshot
+      subscriptions add-series <imdb-id> <tmdb-id> <title> [--year <n>] [--backfill newOnly|currentSeason|all]
+                               add a series subscription
+      subscriptions add-feed <url> <title> [--keyword <text>] [--unwanted <text>] [--backfill newOnly|currentSeason|all]
+                               add a feed subscription
+      subscriptions pause | resume | remove <id>
+                               pause, resume, or remove a subscription
+      ledger set <imdb-id> <season> <episode> <state>
+                               set one episode's state in the ledger
       state                    the whole snapshot
       local [key]              Cargo's state file, with local paths and settings
       putio files [parent-id]  Put.io's unfiltered listing, with raw file types
@@ -44,7 +52,9 @@ enum CargoCLI {
         "jobs": "syncJobs",
         "history": "history",
         "library": "library",
-        "watchlist": "watchlist"
+        "watchlist": "watchlist",
+        "subscriptions": "subscriptions",
+        "ledger": "episodeLedger"
     ]
 
     private struct Failure: Error {
@@ -101,6 +111,14 @@ enum CargoCLI {
     /// A String result is printed as it is; anything else is printed as JSON.
     private static func dispatch(_ arguments: [String], options: ListOptions) async throws -> Any? {
         guard let command = arguments.first else { return usage }
+        if command == "subscriptions", arguments.count > 1 {
+            let remoteCommand = try parseSubscriptionCommand(Array(arguments.dropFirst()))
+            return try await sendCommand(remoteCommand)
+        }
+        if command == "ledger", arguments.count > 1 {
+            let remoteCommand = try parseLedgerCommand(Array(arguments.dropFirst()))
+            return try await sendCommand(remoteCommand)
+        }
         if let key = snapshotLists[command] {
             let snapshot = try await residentSnapshot()
             return filtered(snapshot[key], options: options)
@@ -174,7 +192,13 @@ enum CargoCLI {
         let jobCounts: [String: Int] = Dictionary(grouping: jobs) { $0["status"] as? String ?? "unknown" }
             .mapValues(\.count)
         var counts: [String: Any] = ["jobs": jobCounts]
-        for (name, key) in [("transfers", "transfers"), ("media", "mediaFiles"), ("library", "library")] {
+        for (name, key) in [
+            ("transfers", "transfers"),
+            ("media", "mediaFiles"),
+            ("library", "library"),
+            ("subscriptions", "subscriptions"),
+            ("ledger", "episodeLedger")
+        ] {
             counts[name] = (snapshot[key] as? [Any])?.count ?? 0
         }
         result["counts"] = counts
@@ -189,13 +213,140 @@ enum CargoCLI {
         return ["ok": true]
     }
 
+    private static func sendCommand(_ command: CargoRemoteCommand) async throws -> [String: Any] {
+        let data = try JSONEncoder().encode(command)
+        _ = try await residentData(path: "/v1/commands", method: "POST", body: data)
+        return ["ok": true]
+    }
+
+    // MARK: - Subscriptions and ledger commands
+
+    static func parseSubscriptionCommand(_ arguments: [String]) throws -> CargoRemoteCommand {
+        guard let action = arguments.first else {
+            throw Failure(message: "subscriptions needs add-series, add-feed, pause, resume, or remove.")
+        }
+        let rest = Array(arguments.dropFirst())
+        switch action {
+        case "add-series":
+            var positional: [String] = []
+            var year: Int?
+            var backfill: SubscriptionBackfillPolicy?
+            var remaining = rest[...]
+            while let token = remaining.popFirst() {
+                switch token {
+                case "--year":
+                    guard let raw = remaining.popFirst(), let parsed = Int(raw) else {
+                        throw Failure(message: "--year needs a number.")
+                    }
+                    year = parsed
+                case "--backfill":
+                    guard let raw = remaining.popFirst(), let parsed = SubscriptionBackfillPolicy(rawValue: raw) else {
+                        throw Failure(message: "--backfill must be newOnly, currentSeason, or all.")
+                    }
+                    backfill = parsed
+                default:
+                    positional.append(token)
+                }
+            }
+            guard positional.count >= 3 else {
+                throw Failure(message: "add-series needs <imdb-id> <tmdb-id> <title>.")
+            }
+            guard let tmdbID = Int(positional[1]), tmdbID > 0 else {
+                throw Failure(message: "tmdb-id must be a positive integer.")
+            }
+            let title = positional.dropFirst(2).joined(separator: " ")
+            return .addSeriesSubscription(
+                imdbID: positional[0],
+                tmdbID: tmdbID,
+                title: title,
+                year: year,
+                backfill: backfill
+            )
+        case "add-feed":
+            var positional: [String] = []
+            var keywords: [String] = []
+            var unwanted: [String] = []
+            var backfill: SubscriptionBackfillPolicy?
+            var remaining = rest[...]
+            while let token = remaining.popFirst() {
+                switch token {
+                case "--keyword":
+                    guard let value = remaining.popFirst() else { throw Failure(message: "--keyword needs a value.") }
+                    keywords.append(value)
+                case "--unwanted":
+                    guard let value = remaining.popFirst() else { throw Failure(message: "--unwanted needs a value.") }
+                    unwanted.append(value)
+                case "--backfill":
+                    guard let raw = remaining.popFirst(), let parsed = SubscriptionBackfillPolicy(rawValue: raw) else {
+                        throw Failure(message: "--backfill must be newOnly, currentSeason, or all.")
+                    }
+                    backfill = parsed
+                default:
+                    positional.append(token)
+                }
+            }
+            guard positional.count >= 2 else {
+                throw Failure(message: "add-feed needs <url> <title>.")
+            }
+            let title = positional.dropFirst().joined(separator: " ")
+            return .addFeedSubscription(
+                url: positional[0],
+                title: title,
+                keywords: keywords,
+                unwantedKeywords: unwanted,
+                backfill: backfill
+            )
+        case "pause":
+            guard let raw = rest.first, let id = UUID(uuidString: raw) else {
+                throw Failure(message: "pause needs a subscription UUID.")
+            }
+            return .setSubscriptionPaused(id: id, paused: true)
+        case "resume":
+            guard let raw = rest.first, let id = UUID(uuidString: raw) else {
+                throw Failure(message: "resume needs a subscription UUID.")
+            }
+            return .setSubscriptionPaused(id: id, paused: false)
+        case "remove":
+            guard let raw = rest.first, let id = UUID(uuidString: raw) else {
+                throw Failure(message: "remove needs a subscription UUID.")
+            }
+            return .removeSubscription(id: id)
+        default:
+            throw Failure(message: "Unknown subscriptions action \(action). Use add-series, add-feed, pause, resume, or remove.")
+        }
+    }
+
+    static func parseLedgerCommand(_ arguments: [String]) throws -> CargoRemoteCommand {
+        guard let action = arguments.first else {
+            throw Failure(message: "ledger needs set <imdb-id> <season> <episode> <state>.")
+        }
+        guard action == "set" else {
+            throw Failure(message: "Unknown ledger action \(action). Use set <imdb-id> <season> <episode> <state>.")
+        }
+        let rest = Array(arguments.dropFirst())
+        guard rest.count == 4 else {
+            throw Failure(message: "ledger set needs <imdb-id> <season> <episode> <state>.")
+        }
+        guard let season = Int(rest[1]), season > 0, let episode = Int(rest[2]), episode > 0 else {
+            throw Failure(message: "season and episode must be positive integers.")
+        }
+        guard let state = EpisodeLedgerState(rawValue: rest[3]) else {
+            let valid = EpisodeLedgerState.allCases.map(\.rawValue).joined(separator: ", ")
+            throw Failure(message: "Invalid ledger state \(rest[3]). Valid states: \(valid).")
+        }
+        return .setEpisodeLedgerState(imdbID: rest[0], season: season, episode: episode, state: state)
+    }
+
     // MARK: - Local state
 
     private static func localState(key: String?, options: ListOptions) throws -> Any {
         // Not `CargoStore()`: its init moves an undecodable state file aside.
         let data = try Data(contentsOf: CargoStore.defaultStateURL)
-        guard let state = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard var state = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw Failure(message: "Cargo's state file has an unexpected shape.")
+        }
+        if let subscriptions = state["subscriptions"] as? [[String: Any]] {
+            state["subscriptions"] = subscriptions.map(sanitizedLocalSubscription)
         }
         guard let key else {
             return state.mapValues { value -> Any in
@@ -206,6 +357,17 @@ enum CargoCLI {
             throw Failure(message: "The state file has no key \(key). Keys: \(state.keys.sorted().joined(separator: ", "))")
         }
         return filtered(value, options: options) ?? NSNull()
+    }
+
+    private static func sanitizedLocalSubscription(_ entry: [String: Any]) -> [String: Any] {
+        var copy = entry
+        if var kind = copy["kind"] as? [String: Any],
+           kind["type"] as? String == "feed",
+           let url = kind["url"] as? String {
+            kind["url"] = CargoRemoteLinkSanitizer.sanitizeFeedURL(url)
+            copy["kind"] = kind
+        }
+        return copy
     }
 
     // MARK: - Put.io

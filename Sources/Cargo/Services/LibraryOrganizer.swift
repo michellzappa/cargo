@@ -114,6 +114,21 @@ enum LibraryOrganizer {
         "movie:\(displayTitle.lowercased())"
     }
 
+    /// Parses a TV episode identity from a filename or transfer release name,
+    /// whether or not it carries a video file extension.
+    static func parsedEpisode(from name: String) -> (showTitle: String, year: Int?, season: Int, episode: Int)? {
+        let safeName = safeFilename(name)
+        guard let marker = episodeMarker(in: safeName),
+              let (season, episode) = LibraryIndex.seasonEpisode(from: safeName) else {
+            return nil
+        }
+        let showDisplay = normalizedShowTitle(marker.prefix)
+        guard !showDisplay.isEmpty else { return nil }
+        let (title, year) = LibraryIndex.titleAndYear(from: showDisplay)
+        guard !title.isEmpty else { return nil }
+        return (showTitle: title, year: year, season: season, episode: episode)
+    }
+
     /// The title shown in media lists. Release metadata such as `[BluRay]`,
     /// resolution, codec and release-group tags are implementation details,
     /// not the title the user is looking for.

@@ -32,6 +32,100 @@ struct RemoteInventoryIndex {
     }
 }
 
+/// Shared index of movies and TV episodes already held by the library, active
+/// local jobs, and optionally live Put.io transfers. Both duplicate-release
+/// filtering and `isEpisodeKnown(imdbID:season:episode:)` query this index.
+struct KnownMediaIndex: Sendable {
+    private struct EpisodeRecord: Sendable {
+        let year: Int?
+        let season: Int
+        let episode: Int
+        let holder: String
+    }
+
+    private var moviesByKey: [String: String] = [:]
+    private var episodesByShow: [String: [EpisodeRecord]] = [:]
+
+    mutating func insertLibraryItem(_ item: LibraryItem) {
+        switch item.kind {
+        case .movie:
+            let key = LibraryOrganizer.libraryKey(movie: item.displayTitle)
+            if moviesByKey[key] == nil {
+                moviesByKey[key] = item.relativePath
+            }
+        case .show:
+            let showKey = CargoTitleMatch.normalize(item.title)
+            guard !showKey.isEmpty else { return }
+            for (season, episodes) in item.episodes {
+                for episode in episodes {
+                    let holder = String(format: "%@ S%02dE%02d", item.relativePath, season, episode)
+                    insertEpisode(showKey: showKey, year: item.year, season: season, episode: episode, holder: holder)
+                }
+            }
+        }
+    }
+
+    mutating func insertMediaFileName(_ fileName: String, holder: String, settings: CargoSettings) {
+        let preview = LibraryOrganizer.preview(for: fileName, settings: settings)
+        switch preview.kind {
+        case .tvEpisode:
+            guard let parsed = LibraryOrganizer.parsedEpisode(from: fileName) else { return }
+            let showKey = CargoTitleMatch.normalize(parsed.showTitle)
+            guard !showKey.isEmpty else { return }
+            insertEpisode(showKey: showKey, year: parsed.year, season: parsed.season, episode: parsed.episode, holder: holder)
+        case .movie:
+            guard let key = LibraryOrganizer.libraryKey(for: fileName, settings: settings),
+                  moviesByKey[key] == nil else { return }
+            moviesByKey[key] = holder
+        case .review:
+            break
+        }
+    }
+
+    mutating func insertTransferName(_ transferName: String, holder: String) {
+        guard let parsed = LibraryOrganizer.parsedEpisode(from: transferName) else { return }
+        let showKey = CargoTitleMatch.normalize(parsed.showTitle)
+        guard !showKey.isEmpty else { return }
+        insertEpisode(showKey: showKey, year: parsed.year, season: parsed.season, episode: parsed.episode, holder: holder)
+    }
+
+    func holder(forFileName fileName: String, settings: CargoSettings) -> String? {
+        let preview = LibraryOrganizer.preview(for: fileName, settings: settings)
+        switch preview.kind {
+        case .tvEpisode:
+            guard let parsed = LibraryOrganizer.parsedEpisode(from: fileName) else { return nil }
+            return holder(forEpisodeOfShow: parsed.showTitle, year: parsed.year, season: parsed.season, episode: parsed.episode)
+        case .movie:
+            guard let key = LibraryOrganizer.libraryKey(for: fileName, settings: settings) else { return nil }
+            return moviesByKey[key]
+        case .review:
+            return nil
+        }
+    }
+
+    func holder(forEpisodeOfShow showTitle: String, year: Int?, season: Int, episode: Int) -> String? {
+        let showKey = CargoTitleMatch.normalize(showTitle)
+        guard !showKey.isEmpty, let records = episodesByShow[showKey] else { return nil }
+        return records.first {
+            $0.season == season && $0.episode == episode && Self.yearsCompatible($0.year, year)
+        }?.holder
+    }
+
+    private mutating func insertEpisode(showKey: String, year: Int?, season: Int, episode: Int, holder: String) {
+        let existing = episodesByShow[showKey] ?? []
+        if existing.contains(where: { $0.season == season && $0.episode == episode && $0.year == year }) {
+            return
+        }
+        episodesByShow[showKey, default: []].append(
+            EpisodeRecord(year: year, season: season, episode: episode, holder: holder)
+        )
+    }
+
+    private static func yearsCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
+        lhs == nil || rhs == nil || lhs == rhs
+    }
+}
+
 // Transfer health, leftover Put.io copies and duplicate releases.
 extension CargoCoordinator {
     /// A downloading torrent with no peers and no data for this long is dead.
@@ -166,24 +260,14 @@ extension CargoCoordinator {
         persistQuietly()
     }
 
-    /// Splits new Put.io media into what to download and what the library or
-    /// a running job already has. Of two new releases of one episode, the
-    /// larger file wins.
-    func splitDuplicateReleases(_ files: [RemoteFile]) -> (wanted: [RemoteFile], duplicates: [(file: RemoteFile, holder: String)]) {
+    /// Builds the shared index of already-known movies and TV episodes from
+    /// the library, active local jobs, and optionally live Put.io transfers.
+    func knownMediaIndex(includeTransfers: Bool) -> KnownMediaIndex {
         let settings = state.settings
-        var holders: [String: String] = [:]
+        var index = KnownMediaIndex()
+
         for item in state.libraryItems {
-            switch item.kind {
-            case .movie:
-                holders[LibraryOrganizer.libraryKey(movie: item.displayTitle)] = item.relativePath
-            case .show:
-                for (season, episodes) in item.episodes {
-                    for episode in episodes {
-                        let key = LibraryOrganizer.libraryKey(show: item.displayTitle, season: season, episode: episode)
-                        holders[key] = String(format: "%@ S%02dE%02d", item.relativePath, season, episode)
-                    }
-                }
-            }
+            index.insertLibraryItem(item)
         }
         for job in state.localJobs {
             switch job.status {
@@ -195,18 +279,40 @@ extension CargoCoordinator {
             case .completed, .failed:
                 continue
             }
-            if let key = LibraryOrganizer.libraryKey(for: job.name, settings: settings), holders[key] == nil {
-                holders[key] = job.name
+            index.insertMediaFileName(job.name, holder: job.name, settings: settings)
+        }
+        if includeTransfers {
+            for transfer in state.transfers where Self.isKnownTransfer(transfer) {
+                index.insertTransferName(transfer.name, holder: transfer.name)
             }
         }
+        return index
+    }
+
+    private static func isKnownTransfer(_ transfer: RemoteTransfer) -> Bool {
+        switch transfer.status {
+        case .waiting, .downloading, .seeding:
+            return true
+        case .completed:
+            return transfer.userFileExists != false
+        case .failed, .cancelled, .unknown:
+            return false
+        }
+    }
+
+    /// Splits new Put.io media into what to download and what the library or
+    /// a running job already has. Of two new releases of one episode, the
+    /// larger file wins.
+    func splitDuplicateReleases(_ files: [RemoteFile]) -> (wanted: [RemoteFile], duplicates: [(file: RemoteFile, holder: String)]) {
+        let settings = state.settings
+        var index = knownMediaIndex(includeTransfers: false)
 
         var duplicateIDs: [Int: String] = [:]
         for file in files.sorted(by: { $0.sizeBytes > $1.sizeBytes }) {
-            guard let key = LibraryOrganizer.libraryKey(for: file.name, settings: settings) else { continue }
-            if let holder = holders[key] {
+            if let holder = index.holder(forFileName: file.name, settings: settings) {
                 duplicateIDs[file.id] = holder
             } else {
-                holders[key] = file.name
+                index.insertMediaFileName(file.name, holder: file.name, settings: settings)
             }
         }
         let wanted = files.filter { duplicateIDs[$0.id] == nil }

@@ -219,6 +219,12 @@ final class CargoRemoteAPIRouter {
         case "/v1/watchlist":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
             return success(controller.snapshot(clientID: clientID).watchlist, requestID: requestID)
+        case "/v1/subscriptions":
+            guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
+            return success(controller.snapshot(clientID: clientID).subscriptions, requestID: requestID)
+        case "/v1/ledger":
+            guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
+            return success(controller.snapshot(clientID: clientID).episodeLedger, requestID: requestID)
         case "/v1/discover/catalog":
             guard request.method == "GET" else { throw CargoRemoteAPIError.methodNotAllowed }
             return success(controller.snapshot(clientID: clientID).chillCatalog, requestID: requestID)

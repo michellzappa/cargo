@@ -438,8 +438,11 @@ struct CargoRemoteMovie: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-private enum CargoRemoteLinkSanitizer {
+enum CargoRemoteLinkSanitizer {
     private static let sensitiveQueryNames = Set(["access_token", "download_token", "token"])
+    private static let sensitiveFeedQuerySubstrings = [
+        "passkey", "pass", "token", "key", "secret", "auth", "sig", "hash", "credential", "session"
+    ]
 
     static func sanitize(_ link: String) -> String {
         guard let components = URLComponents(string: link) else { return link }
@@ -447,6 +450,104 @@ private enum CargoRemoteLinkSanitizer {
             sensitiveQueryNames.contains(item.name.lowercased())
         } == true
         return containsSensitiveQuery ? "" : link
+    }
+
+    /// Strips credentials and token-like query parameters from a feed URL so
+    /// passkeys never appear in snapshots, API responses, CLI or MCP output.
+    static func sanitizeFeedURL(_ link: String) -> String {
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var components = URLComponents(string: trimmed) else { return "" }
+        components.user = nil
+        components.password = nil
+        if let items = components.queryItems {
+            let safeItems = items.filter { !isSensitiveFeedQueryItem($0) }
+            components.queryItems = safeItems.isEmpty ? nil : safeItems
+        }
+        return components.string ?? ""
+    }
+
+    private static func isSensitiveFeedQueryItem(_ item: URLQueryItem) -> Bool {
+        let lowerName = item.name.lowercased()
+        if sensitiveFeedQuerySubstrings.contains(where: { lowerName.contains($0) }) {
+            return true
+        }
+        if let value = item.value, looksLikeToken(value) {
+            return true
+        }
+        return false
+    }
+
+    private static func looksLikeToken(_ value: String) -> Bool {
+        guard value.count >= 16 else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return false }
+        let hasLetter = value.unicodeScalars.contains { CharacterSet.letters.contains($0) }
+        let hasDigit = value.unicodeScalars.contains { CharacterSet.decimalDigits.contains($0) }
+        return hasLetter && hasDigit
+    }
+}
+
+struct CargoRemoteSubscription: Codable, Equatable, Identifiable, Sendable {
+    let id: UUID
+    let kind: SubscriptionKind
+    let quality: QualityProfile?
+    let backfill: SubscriptionBackfillPolicy
+    let paused: Bool
+    let createdAt: Date
+    let lastCheckedAt: Date?
+    let lastError: String?
+
+    init(_ subscription: Subscription) {
+        id = subscription.id
+        switch subscription.kind {
+        case .series(let imdbID, let tmdbID, let title, let year):
+            kind = .series(imdbID: imdbID, tmdbID: tmdbID, title: title, year: year)
+        case .feed(let url, let title, let keywords, let unwantedKeywords):
+            kind = .feed(
+                url: CargoRemoteLinkSanitizer.sanitizeFeedURL(url),
+                title: title,
+                keywords: keywords,
+                unwantedKeywords: unwantedKeywords
+            )
+        }
+        quality = subscription.quality
+        backfill = subscription.backfill
+        paused = subscription.paused
+        createdAt = subscription.createdAt
+        lastCheckedAt = subscription.lastCheckedAt
+        lastError = subscription.lastError
+    }
+}
+
+struct CargoRemoteEpisodeLedgerEntry: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let imdbID: String
+    let season: Int
+    let episode: Int
+    let state: EpisodeLedgerState
+    let stateLabel: String
+    let subscriptionID: UUID?
+    let releaseTitle: String?
+    let putIOTransferID: Int?
+    let airedAt: Date?
+    let updatedAt: Date
+    let attempts: Int
+    let nextAttemptAt: Date?
+
+    init(_ entry: EpisodeLedgerEntry) {
+        id = entry.id
+        imdbID = entry.imdbID
+        season = entry.season
+        episode = entry.episode
+        state = entry.state
+        stateLabel = entry.state.displayName
+        subscriptionID = entry.subscriptionID
+        releaseTitle = entry.releaseTitle
+        putIOTransferID = entry.putIOTransferID
+        airedAt = entry.airedAt
+        updatedAt = entry.updatedAt
+        attempts = entry.attempts
+        nextAttemptAt = entry.nextAttemptAt
     }
 }
 
@@ -517,6 +618,94 @@ struct CargoRemoteSnapshot: Codable, Equatable, Sendable {
     /// The URL belonging to the requesting client, or the resident URL when
     /// this snapshot is produced locally.
     let watchlistURL: String?
+    let subscriptions: [CargoRemoteSubscription]
+    let episodeLedger: [CargoRemoteEpisodeLedgerEntry]
+    let qualityProfile: QualityProfile?
+
+    init(
+        generatedAt: Date,
+        lastUpdated: Date,
+        putIO: CargoRemoteConnection,
+        chill: CargoRemoteConnection,
+        appleTV: CargoRemoteConnection?,
+        disk: CargoRemoteDiskUsage?,
+        remoteFolderID: Int,
+        remoteFolderName: String,
+        canGoBackRemoteFolder: Bool,
+        transfers: [CargoRemoteTransfer],
+        files: [CargoRemoteFile],
+        mediaFiles: [CargoRemoteFile],
+        syncJobs: [CargoRemoteSyncJob],
+        library: [CargoRemoteLibraryItem],
+        watchlist: [CargoRemoteWatchlistItem],
+        history: [CargoRemoteHistoryEntry],
+        chillSearch: CargoRemoteSearchState,
+        chillCatalog: CargoRemoteCatalogState,
+        watchlistStatus: String,
+        watchlistURL: String?,
+        subscriptions: [CargoRemoteSubscription] = [],
+        episodeLedger: [CargoRemoteEpisodeLedgerEntry] = [],
+        qualityProfile: QualityProfile? = nil
+    ) {
+        self.generatedAt = generatedAt
+        self.lastUpdated = lastUpdated
+        self.putIO = putIO
+        self.chill = chill
+        self.appleTV = appleTV
+        self.disk = disk
+        self.remoteFolderID = remoteFolderID
+        self.remoteFolderName = remoteFolderName
+        self.canGoBackRemoteFolder = canGoBackRemoteFolder
+        self.transfers = transfers
+        self.files = files
+        self.mediaFiles = mediaFiles
+        self.syncJobs = syncJobs
+        self.library = library
+        self.watchlist = watchlist
+        self.history = history
+        self.chillSearch = chillSearch
+        self.chillCatalog = chillCatalog
+        self.watchlistStatus = watchlistStatus
+        self.watchlistURL = watchlistURL
+        self.subscriptions = subscriptions
+        self.episodeLedger = episodeLedger
+        self.qualityProfile = qualityProfile
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case generatedAt, lastUpdated, putIO, chill, appleTV, disk
+        case remoteFolderID, remoteFolderName, canGoBackRemoteFolder
+        case transfers, files, mediaFiles, syncJobs, library, watchlist, history
+        case chillSearch, chillCatalog, watchlistStatus, watchlistURL
+        case subscriptions, episodeLedger, qualityProfile
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        generatedAt = try c.decode(Date.self, forKey: .generatedAt)
+        lastUpdated = try c.decode(Date.self, forKey: .lastUpdated)
+        putIO = try c.decode(CargoRemoteConnection.self, forKey: .putIO)
+        chill = try c.decode(CargoRemoteConnection.self, forKey: .chill)
+        appleTV = try c.decodeIfPresent(CargoRemoteConnection.self, forKey: .appleTV)
+        disk = try c.decodeIfPresent(CargoRemoteDiskUsage.self, forKey: .disk)
+        remoteFolderID = try c.decode(Int.self, forKey: .remoteFolderID)
+        remoteFolderName = try c.decode(String.self, forKey: .remoteFolderName)
+        canGoBackRemoteFolder = try c.decode(Bool.self, forKey: .canGoBackRemoteFolder)
+        transfers = try c.decode([CargoRemoteTransfer].self, forKey: .transfers)
+        files = try c.decode([CargoRemoteFile].self, forKey: .files)
+        mediaFiles = try c.decode([CargoRemoteFile].self, forKey: .mediaFiles)
+        syncJobs = try c.decode([CargoRemoteSyncJob].self, forKey: .syncJobs)
+        library = try c.decode([CargoRemoteLibraryItem].self, forKey: .library)
+        watchlist = try c.decode([CargoRemoteWatchlistItem].self, forKey: .watchlist)
+        history = try c.decode([CargoRemoteHistoryEntry].self, forKey: .history)
+        chillSearch = try c.decode(CargoRemoteSearchState.self, forKey: .chillSearch)
+        chillCatalog = try c.decode(CargoRemoteCatalogState.self, forKey: .chillCatalog)
+        watchlistStatus = try c.decode(String.self, forKey: .watchlistStatus)
+        watchlistURL = try c.decodeIfPresent(String.self, forKey: .watchlistURL)
+        subscriptions = try c.decodeIfPresent([CargoRemoteSubscription].self, forKey: .subscriptions) ?? []
+        episodeLedger = try c.decodeIfPresent([CargoRemoteEpisodeLedgerEntry].self, forKey: .episodeLedger) ?? []
+        qualityProfile = try c.decodeIfPresent(QualityProfile.self, forKey: .qualityProfile)
+    }
 }
 
 extension CargoRemoteSnapshot {
@@ -593,6 +782,33 @@ extension CargoRemoteSnapshot {
         }
         state.history = history.map {
             CargoHistoryEntry(id: $0.id, date: $0.date, kind: $0.kind, title: $0.title, detail: $0.detail)
+        }
+        state.subscriptions = subscriptions.map {
+            Subscription(
+                id: $0.id,
+                kind: $0.kind,
+                quality: $0.quality,
+                backfill: $0.backfill,
+                paused: $0.paused,
+                createdAt: $0.createdAt,
+                lastCheckedAt: $0.lastCheckedAt,
+                lastError: $0.lastError
+            )
+        }
+        state.episodeLedger = episodeLedger.map {
+            EpisodeLedgerEntry(
+                imdbID: $0.imdbID,
+                season: $0.season,
+                episode: $0.episode,
+                state: $0.state,
+                subscriptionID: $0.subscriptionID,
+                releaseTitle: $0.releaseTitle,
+                putIOTransferID: $0.putIOTransferID,
+                airedAt: $0.airedAt,
+                updatedAt: $0.updatedAt,
+                attempts: $0.attempts,
+                nextAttemptAt: $0.nextAttemptAt
+            )
         }
         state.lastUpdated = lastUpdated
         return state
@@ -702,6 +918,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
     case clearHistory
     case playLibraryItem(id: String)
     case playLibraryEpisode(id: String, season: Int, episode: Int)
+    case addSeriesSubscription(imdbID: String, tmdbID: Int, title: String, year: Int?, backfill: SubscriptionBackfillPolicy?)
+    case addFeedSubscription(url: String, title: String, keywords: [String], unwantedKeywords: [String], backfill: SubscriptionBackfillPolicy?)
+    case removeSubscription(id: UUID)
+    case setSubscriptionPaused(id: UUID, paused: Bool)
+    case setEpisodeLedgerState(imdbID: String, season: Int, episode: Int, state: EpisodeLedgerState)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -712,6 +933,14 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case remoteFileID
         case season
         case episode
+        case imdbID
+        case tmdbID
+        case year
+        case keywords
+        case unwantedKeywords
+        case backfill
+        case paused
+        case state
     }
 
     private enum Kind: String, Codable {
@@ -737,6 +966,11 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
         case clearHistory
         case playLibraryItem
         case playLibraryEpisode
+        case addSeriesSubscription
+        case addFeedSubscription
+        case removeSubscription
+        case setSubscriptionPaused
+        case setEpisodeLedgerState
     }
 
     init(from decoder: Decoder) throws {
@@ -792,6 +1026,36 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
                 id: try values.decode(String.self, forKey: .id),
                 season: try values.decode(Int.self, forKey: .season),
                 episode: try values.decode(Int.self, forKey: .episode)
+            )
+        case .addSeriesSubscription:
+            self = .addSeriesSubscription(
+                imdbID: try values.decode(String.self, forKey: .imdbID),
+                tmdbID: try values.decode(Int.self, forKey: .tmdbID),
+                title: try values.decode(String.self, forKey: .title),
+                year: try values.decodeIfPresent(Int.self, forKey: .year),
+                backfill: try values.decodeIfPresent(SubscriptionBackfillPolicy.self, forKey: .backfill)
+            )
+        case .addFeedSubscription:
+            self = .addFeedSubscription(
+                url: try values.decode(String.self, forKey: .url),
+                title: try values.decode(String.self, forKey: .title),
+                keywords: try values.decodeIfPresent([String].self, forKey: .keywords) ?? [],
+                unwantedKeywords: try values.decodeIfPresent([String].self, forKey: .unwantedKeywords) ?? [],
+                backfill: try values.decodeIfPresent(SubscriptionBackfillPolicy.self, forKey: .backfill)
+            )
+        case .removeSubscription:
+            self = .removeSubscription(id: try values.decode(UUID.self, forKey: .id))
+        case .setSubscriptionPaused:
+            self = .setSubscriptionPaused(
+                id: try values.decode(UUID.self, forKey: .id),
+                paused: try values.decode(Bool.self, forKey: .paused)
+            )
+        case .setEpisodeLedgerState:
+            self = .setEpisodeLedgerState(
+                imdbID: try values.decode(String.self, forKey: .imdbID),
+                season: try values.decode(Int.self, forKey: .season),
+                episode: try values.decode(Int.self, forKey: .episode),
+                state: try values.decode(EpisodeLedgerState.self, forKey: .state)
             )
         }
     }
@@ -861,6 +1125,33 @@ enum CargoRemoteCommand: Codable, Equatable, Sendable {
             try values.encode(id, forKey: .id)
             try values.encode(season, forKey: .season)
             try values.encode(episode, forKey: .episode)
+        case .addSeriesSubscription(let imdbID, let tmdbID, let title, let year, let backfill):
+            try values.encode(Kind.addSeriesSubscription, forKey: .type)
+            try values.encode(imdbID, forKey: .imdbID)
+            try values.encode(tmdbID, forKey: .tmdbID)
+            try values.encode(title, forKey: .title)
+            try values.encodeIfPresent(year, forKey: .year)
+            try values.encodeIfPresent(backfill, forKey: .backfill)
+        case .addFeedSubscription(let url, let title, let keywords, let unwantedKeywords, let backfill):
+            try values.encode(Kind.addFeedSubscription, forKey: .type)
+            try values.encode(url, forKey: .url)
+            try values.encode(title, forKey: .title)
+            try values.encode(keywords, forKey: .keywords)
+            try values.encode(unwantedKeywords, forKey: .unwantedKeywords)
+            try values.encodeIfPresent(backfill, forKey: .backfill)
+        case .removeSubscription(let id):
+            try values.encode(Kind.removeSubscription, forKey: .type)
+            try values.encode(id, forKey: .id)
+        case .setSubscriptionPaused(let id, let paused):
+            try values.encode(Kind.setSubscriptionPaused, forKey: .type)
+            try values.encode(id, forKey: .id)
+            try values.encode(paused, forKey: .paused)
+        case .setEpisodeLedgerState(let imdbID, let season, let episode, let state):
+            try values.encode(Kind.setEpisodeLedgerState, forKey: .type)
+            try values.encode(imdbID, forKey: .imdbID)
+            try values.encode(season, forKey: .season)
+            try values.encode(episode, forKey: .episode)
+            try values.encode(state, forKey: .state)
         }
     }
 }
@@ -948,7 +1239,10 @@ final class CargoRemoteController: CargoRemoteControlling {
                 series: coordinator.chillCatalogShows.map(CargoRemoteSeries.init)
             ),
             watchlistStatus: clientWatchlist?.status ?? coordinator.imdbWatchlistStatus,
-            watchlistURL: clientWatchlist?.url ?? state.settings.imdbWatchlistURL
+            watchlistURL: clientWatchlist?.url ?? state.settings.imdbWatchlistURL,
+            subscriptions: state.subscriptions.map(CargoRemoteSubscription.init),
+            episodeLedger: state.episodeLedger.map(CargoRemoteEpisodeLedgerEntry.init),
+            qualityProfile: state.settings.qualityProfile
         )
     }
 
@@ -1057,6 +1351,41 @@ final class CargoRemoteController: CargoRemoteControlling {
             case .needsSetup:
                 throw CargoRemoteControlError.appleTVUnavailable(coordinator.appleTVPlayback.statusText)
             }
+        case .addSeriesSubscription(let imdbID, let tmdbID, let title, let year, let backfill):
+            try coordinator.addSeriesSubscription(
+                imdbID: imdbID,
+                tmdbID: tmdbID,
+                title: title,
+                year: year,
+                backfill: backfill ?? .newOnly
+            )
+        case .addFeedSubscription(let url, let title, let keywords, let unwantedKeywords, let backfill):
+            try coordinator.addFeedSubscription(
+                url: url,
+                title: title,
+                keywords: keywords,
+                unwantedKeywords: unwantedKeywords,
+                backfill: backfill ?? .newOnly
+            )
+        case .removeSubscription(let id):
+            do {
+                try coordinator.removeSubscription(id: id)
+            } catch SubscriptionError.subscriptionNotFound {
+                throw CargoRemoteControlError.targetNotFound("subscription \(id.uuidString.lowercased())")
+            }
+        case .setSubscriptionPaused(let id, let paused):
+            do {
+                try coordinator.setSubscriptionPaused(id: id, paused: paused)
+            } catch SubscriptionError.subscriptionNotFound {
+                throw CargoRemoteControlError.targetNotFound("subscription \(id.uuidString.lowercased())")
+            }
+        case .setEpisodeLedgerState(let imdbID, let season, let episode, let state):
+            try coordinator.setEpisodeLedgerState(
+                imdbID: imdbID,
+                season: season,
+                episode: episode,
+                state: state
+            )
         }
         return snapshot(clientID: clientID)
     }

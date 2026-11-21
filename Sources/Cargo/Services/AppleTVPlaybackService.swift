@@ -51,6 +51,10 @@ final class AppleTVPlaybackService {
     func start() {
         guard !hasStarted else { return }
         hasStarted = true
+        // Unit tests must not scan the local network or read Apple TV Keychain credentials.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            return
+        }
         manager.startScanning()
         if manager.lastConnectedDeviceID != nil {
             _ = manager.connectToLastConnectedDevice()

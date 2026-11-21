@@ -30,6 +30,12 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if CargoCLI.isInvocation { CargoCLI.runAndExit() }
         if CargoMCP.isInvocation { CargoMCP.runAndExit() }
         let application = NSApplication.shared
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            // Tests build their own coordinators and windows. Avoid starting
+            // the live resident app, HTTP server, or background cycle.
+            application.run()
+            return
+        }
         let delegate = CargoAppDelegate()
         application.delegate = delegate
         application.run()
