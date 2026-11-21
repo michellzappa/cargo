@@ -10,11 +10,11 @@ final class CargoTests: XCTestCase {
         )
         XCTAssertEqual(
             CargoNavigationDestination.compactMore,
-            [.files, .inbox, .history, .settings]
+            [.subscriptions, .files, .inbox, .history, .settings]
         )
         XCTAssertEqual(
             CargoNavigationDestination.macSidebarOrder,
-            [.transfers, .library, .discover, .watchlist, .files, .inbox, .history]
+            [.transfers, .library, .discover, .watchlist, .subscriptions, .files, .inbox, .history]
         )
         XCTAssertFalse(CargoNavigationDestination.compactPrimary.contains(.files))
         XCTAssertTrue(CargoNavigationDestination.compactMore.contains(.files))

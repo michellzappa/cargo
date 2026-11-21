@@ -7,6 +7,10 @@ a tag. The app bundles this file for HouseKit (`Changelog.load`).
 
 ### Added
 
+- Added a Subscriptions page on macOS and iOS. Subscribe to a series by name,
+  from a show in Library, or from a series in Discover, or add an RSS or
+  Atom feed. Pause, resume and unsubscribe from the page. Cargo does not
+  fetch episodes for a subscription yet.
 - Added `cargo-mcp`, a local MCP server that gives Claude and other agents
   the `cargoctl` commands as tools: status, lists, Put.io listings, logs, and
   resident commands such as Chill search and retrying a transfer.

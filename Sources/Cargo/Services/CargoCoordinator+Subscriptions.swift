@@ -362,3 +362,63 @@ extension CargoCoordinator {
         return (candidates, matchedLibraryIDs)
     }
 }
+
+// MARK: - UI entry points
+
+// The dashboard calls these. In remote client mode they run on the resident;
+// otherwise they change local state like the storage functions above.
+extension CargoCoordinator {
+    /// The series subscription for an IMDb ID in what the dashboard shows.
+    func dashboardSeriesSubscription(imdbID: String?) -> Subscription? {
+        guard let imdbID else { return nil }
+        let normalized = EpisodeLedgerEntry.normalizeIMDbID(imdbID)
+        return dashboardState.subscriptions.first {
+            $0.imdbID.map(EpisodeLedgerEntry.normalizeIMDbID) == normalized
+        }
+    }
+
+    /// Poster for a series subscription, from the library or Discover metadata cache.
+    func posterURL(for subscription: Subscription) -> URL? {
+        guard let imdbID = subscription.imdbID.map(EpisodeLedgerEntry.normalizeIMDbID) else { return nil }
+        let tmdbID = subscription.tmdbID
+        return dashboardState.metadata.values.first {
+            $0.mediaType == .tv && ($0.tmdbID == tmdbID || $0.imdbID.map(EpisodeLedgerEntry.normalizeIMDbID) == imdbID)
+        }?.posterURL
+    }
+
+    func subscribeSeries(imdbID: String, tmdbID: Int, title: String, year: Int?) async throws {
+        let command = CargoRemoteCommand.addSeriesSubscription(imdbID: imdbID, tmdbID: tmdbID, title: title, year: year, backfill: nil)
+        if try await executeRemoteIfNeeded(command) { return }
+        try addSeriesSubscription(imdbID: imdbID, tmdbID: tmdbID, title: title, year: year)
+        recordHistory(kind: .info, title: "Subscribed to \(title)", detail: "New episodes only")
+    }
+
+    /// Looks the series up on TMDB, then subscribes. TMDB gives the IDs a subscription needs.
+    func subscribeSeries(metadata: TMDBMetadata) async throws {
+        guard let imdbID = metadata.imdbID, !imdbID.isEmpty else {
+            throw SubscriptionError.invalidIMDbID
+        }
+        try await subscribeSeries(imdbID: imdbID, tmdbID: metadata.tmdbID, title: metadata.title, year: metadata.year)
+    }
+
+    func subscribeFeed(url: String, title: String, keywords: [String], unwantedKeywords: [String]) async throws {
+        let command = CargoRemoteCommand.addFeedSubscription(
+            url: url, title: title, keywords: keywords, unwantedKeywords: unwantedKeywords, backfill: nil
+        )
+        if try await executeRemoteIfNeeded(command) { return }
+        try addFeedSubscription(url: url, title: title, keywords: keywords, unwantedKeywords: unwantedKeywords)
+        recordHistory(kind: .info, title: "Subscribed to feed \(title)", detail: "New items only")
+    }
+
+    func setSubscriptionPausedFromDashboard(id: UUID, paused: Bool) async throws {
+        if try await executeRemoteIfNeeded(.setSubscriptionPaused(id: id, paused: paused)) { return }
+        try setSubscriptionPaused(id: id, paused: paused)
+    }
+
+    func unsubscribe(id: UUID) async throws {
+        if try await executeRemoteIfNeeded(.removeSubscription(id: id)) { return }
+        let title = state.subscriptions.first(where: { $0.id == id })?.title
+        try removeSubscription(id: id)
+        if let title { recordHistory(kind: .info, title: "Unsubscribed from \(title)", detail: "") }
+    }
+}

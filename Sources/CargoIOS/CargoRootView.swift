@@ -159,6 +159,7 @@ struct CargoDashboardView: View {
         case .library: CargoLibraryView()
         case .discover: CargoDiscoverView()
         case .watchlist: CargoWatchlistView()
+        case .subscriptions: CargoSubscriptionsView()
         case .files: CargoFilesView()
         case .inbox: CargoInboxView()
         case .history: CargoHistoryView()
@@ -1352,6 +1353,81 @@ struct CargoSettingsView: View {
             .navigationTitle("Settings")
             .onAppear { watchlistURL = model.watchlistURL }
         }
+    }
+}
+
+struct CargoSubscriptionsView: View {
+    @Environment(CargoClientModel.self) private var model
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if let snapshot = model.snapshot, snapshot.subscriptions.isEmpty {
+                    ContentUnavailableView(
+                        "No subscriptions",
+                        systemImage: "dot.radiowaves.up.forward",
+                        description: Text("Subscribe to a series on the Mac.")
+                    )
+                }
+                ForEach(model.snapshot?.subscriptions ?? []) { subscription in
+                    CargoSubscriptionRow(subscription: subscription)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                Task { await model.execute(.removeSubscription(id: subscription.id)) }
+                            } label: {
+                                Label("Unsubscribe", systemImage: "minus.circle")
+                            }
+                            Button {
+                                Task { await model.execute(.setSubscriptionPaused(id: subscription.id, paused: !subscription.paused)) }
+                            } label: {
+                                Label(subscription.paused ? "Resume" : "Pause", systemImage: subscription.paused ? "play" : "pause")
+                            }
+                        }
+                }
+            }
+            .refreshable { await model.refresh() }
+            .navigationTitle("Subscriptions")
+        }
+    }
+}
+
+private struct CargoSubscriptionRow: View {
+    let subscription: CargoRemoteSubscription
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                Spacer()
+                Text(subscription.paused ? "Paused" : "Active")
+                    .font(.caption)
+                    .foregroundStyle(subscription.paused ? .secondary : .primary)
+            }
+            Text(detail)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let error = subscription.lastError, !error.isEmpty {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var title: String {
+        switch subscription.kind {
+        case .series(_, _, let title, let year): year.map { "\(title) (\($0))" } ?? title
+        case .feed(_, let title, _, _): title
+        }
+    }
+
+    private var detail: String {
+        let kind = if case .series = subscription.kind { "Series" } else { "Feed" }
+        let checked = subscription.lastCheckedAt.map { "checked \($0.formatted(.relative(presentation: .named)))" } ?? "not checked yet"
+        return "\(kind) · \(checked)"
     }
 }
 

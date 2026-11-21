@@ -52,6 +52,7 @@ final class DiscoverDetailViewController: NSViewController {
     private let imdbLinkButton = NSButton(title: "Open on IMDb", target: nil, action: nil)
     private let searchButton = NSButton(title: "Search Releases", target: nil, action: nil)
     private let sendButton = NSButton(title: "Send to Put.io", target: nil, action: nil)
+    private let subscribeButton = NSButton(title: "Subscribe", target: nil, action: nil)
     private let statusLabel = Theme.label(style: .detail, color: .secondaryLabelColor, wraps: true)
     private var tmdbMetadata: TMDBMetadata?
     private var requestTask: Task<Void, Never>?
@@ -229,7 +230,7 @@ final class DiscoverDetailViewController: NSViewController {
         actionStack.spacing = 6
         actionStack.translatesAutoresizingMaskIntoConstraints = false
 
-        for button in [searchButton, sendButton, tmdbLinkButton, imdbLinkButton] {
+        for button in [searchButton, sendButton, subscribeButton, tmdbLinkButton, imdbLinkButton] {
             button.bezelStyle = .rounded
             button.controlSize = .small
         }
@@ -237,12 +238,15 @@ final class DiscoverDetailViewController: NSViewController {
         searchButton.action = #selector(searchReleases)
         sendButton.target = self
         sendButton.action = #selector(sendToPutIO)
+        subscribeButton.target = self
+        subscribeButton.action = #selector(toggleSubscription)
         tmdbLinkButton.target = self
         tmdbLinkButton.action = #selector(openMetadataPage)
         imdbLinkButton.target = self
         imdbLinkButton.action = #selector(openIMDb)
         actionStack.addArrangedSubview(searchButton)
         actionStack.addArrangedSubview(sendButton)
+        actionStack.addArrangedSubview(subscribeButton)
         actionStack.addArrangedSubview(tmdbLinkButton)
         actionStack.addArrangedSubview(imdbLinkButton)
     }
@@ -316,6 +320,7 @@ final class DiscoverDetailViewController: NSViewController {
         loadPoster(metadata?.posterURL ?? seed.posterURL, into: backdropView)
 
         sendButton.isHidden = onSend == nil
+        refreshSubscribeButton()
         tmdbLinkButton.title = "Open on TMDB"
         tmdbLinkButton.isHidden = metadata == nil
         imdbLinkButton.isHidden = seed.externalURL == nil && seed.imdbID == nil
@@ -422,6 +427,32 @@ final class DiscoverDetailViewController: NSViewController {
     }
 
     @objc private func sendToPutIO() { onSend?() }
+
+    /// Series only. A subscription needs TMDB's ID, so the button waits for the TMDB lookup.
+    private func refreshSubscribeButton() {
+        subscribeButton.isHidden = seed.kind != .series
+        let subscribed = coordinator.dashboardSeriesSubscription(imdbID: resolvedIMDbID) != nil
+        subscribeButton.title = subscribed ? "Unsubscribe" : "Subscribe"
+        subscribeButton.isEnabled = subscribed || (tmdbMetadata != nil && resolvedIMDbID != nil)
+    }
+
+    @objc private func toggleSubscription() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                if let existing = coordinator.dashboardSeriesSubscription(imdbID: resolvedIMDbID) {
+                    try await coordinator.unsubscribe(id: existing.id)
+                } else if let metadata = tmdbMetadata, let imdbID = resolvedIMDbID {
+                    try await coordinator.subscribeSeries(
+                        imdbID: imdbID, tmdbID: metadata.tmdbID, title: metadata.title, year: metadata.year ?? seed.year
+                    )
+                }
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            refreshSubscribeButton()
+        }
+    }
 
     @objc private func openMetadataPage() {
         guard let url = tmdbMetadata?.pageURL else { return }

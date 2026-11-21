@@ -12,6 +12,7 @@ extension CargoNavigationDestination {
         case .library: coordinator.dashboardState.libraryItems.count
         case .discover: coordinator.dashboardChillSearchResults.count
         case .watchlist: coordinator.dashboardState.imdbWatchlistItems.count
+        case .subscriptions: coordinator.dashboardState.subscriptions.count
         case .files: coordinator.dashboardState.remoteMediaFiles.count
         case .inbox: coordinator.isRemoteClientMode
             ? coordinator.dashboardState.localJobs.filter { $0.status != .completed }.count
@@ -28,6 +29,7 @@ extension CargoNavigationDestination {
         case .library: LibraryPageViewController(page: self, coordinator: coordinator)
         case .discover: DiscoverPageViewController(page: self, coordinator: coordinator)
         case .watchlist: WatchlistPageViewController(page: self, coordinator: coordinator)
+        case .subscriptions: SubscriptionsPageViewController(page: self, coordinator: coordinator)
         case .files: FilesPageViewController(page: self, coordinator: coordinator)
         case .inbox: InboxPageViewController(page: self, coordinator: coordinator)
         case .history: HistoryPageViewController(page: self, coordinator: coordinator)
@@ -1968,6 +1970,9 @@ final class LibraryPageViewController: PageViewController {
             }
             var menu = [reveal, playOnAppleTV, playLocally]
             menu.insert(openDetail, at: 0)
+            if item.kind == .show {
+                menu.insert(subscriptionAction(for: meta), at: 1)
+            }
             if let primary { menu.insert(primary, at: 0) }
             if let meta {
                 menu.append(RowAction(title: "Open on TMDB") { NSWorkspace.shared.open(meta.pageURL) })
@@ -2067,6 +2072,20 @@ final class LibraryPageViewController: PageViewController {
             .replacingOccurrences(of: "[^a-z0-9]+", with: " ", options: .regularExpression)
             .split(separator: " ")
             .joined(separator: " ")
+    }
+
+    /// Subscribe or Unsubscribe for a show, keyed by the IMDb ID TMDB matched.
+    private func subscriptionAction(for meta: TMDBMetadata?) -> RowAction {
+        if let existing = coordinator.dashboardSeriesSubscription(imdbID: meta?.imdbID) {
+            return RowAction(title: "Unsubscribe") { [weak self] in
+                guard let self else { return }
+                run { try await self.coordinator.unsubscribe(id: existing.id) }
+            }
+        }
+        return RowAction(title: "Subscribe", isEnabled: meta?.imdbID?.isEmpty == false) { [weak self] in
+            guard let self, let meta else { return }
+            run { try await self.coordinator.subscribeSeries(metadata: meta) }
+        }
     }
 
     private func findMissing(for item: LibraryItem) {

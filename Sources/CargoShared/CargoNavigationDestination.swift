@@ -11,6 +11,7 @@ enum CargoNavigationDestination: String, CaseIterable, Hashable, Identifiable, S
     case library
     case discover
     case watchlist
+    case subscriptions
     case files
     case inbox
     case history
@@ -24,6 +25,7 @@ enum CargoNavigationDestination: String, CaseIterable, Hashable, Identifiable, S
         case .library: "Library"
         case .discover: "Discover"
         case .watchlist: "Watchlist"
+        case .subscriptions: "Subscriptions"
         case .files: "Files"
         case .inbox: "Inbox"
         case .history: "History"
@@ -37,6 +39,7 @@ enum CargoNavigationDestination: String, CaseIterable, Hashable, Identifiable, S
         case .library: "film.stack"
         case .discover: "sparkles"
         case .watchlist: "star"
+        case .subscriptions: "dot.radiowaves.up.forward"
         case .files: "folder"
         case .inbox: "tray"
         case .history: "clock"
@@ -48,10 +51,10 @@ enum CargoNavigationDestination: String, CaseIterable, Hashable, Identifiable, S
     static let compactPrimary: [Self] = [.transfers, .library, .discover, .watchlist]
 
     /// Destinations exposed from iOS More, in stable product order.
-    static let compactMore: [Self] = [.files, .inbox, .history, .settings]
+    static let compactMore: [Self] = [.subscriptions, .files, .inbox, .history, .settings]
 
     static var compactTabOrder: [Self] { compactPrimary + compactMore }
 
     /// macOS shows all main destinations in the same order as the iOS model.
-    static let macSidebarOrder: [Self] = compactPrimary + [.files, .inbox, .history]
+    static let macSidebarOrder: [Self] = compactPrimary + [.subscriptions, .files, .inbox, .history]
 }
