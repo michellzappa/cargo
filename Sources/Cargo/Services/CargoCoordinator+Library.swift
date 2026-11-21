@@ -56,12 +56,16 @@ extension CargoCoordinator {
     }
 
 
-    /// Rescans the SSD. Cheap — directory listings only — so it runs every cycle.
-    func scanLibrary() {
+    /// Rescans the SSD every cycle. Directory listings only, but off the main
+    /// actor: a volume that blocks `open()` must not freeze the app.
+    func scanLibrary() async {
         guard let root = libraryRootURL() else { return }
-        let accessing = root.startAccessingSecurityScopedResource()
-        defer { if accessing { root.stopAccessingSecurityScopedResource() } }
-        let items = LibraryIndex.scan(root: root, settings: state.settings)
+        let settings = state.settings
+        let items = await Task.detached(priority: .utility) {
+            let accessing = root.startAccessingSecurityScopedResource()
+            defer { if accessing { root.stopAccessingSecurityScopedResource() } }
+            return LibraryIndex.scan(root: root, settings: settings)
+        }.value
         guard items != state.libraryItems else { return }
         state.libraryItems = items
         persistQuietly()
@@ -181,6 +185,6 @@ extension CargoCoordinator {
         state.libraryItems.removeAll { $0.id == item.id }
         try persist()
         recordHistory(kind: .success, title: "Moved to Trash", detail: item.displayTitle)
-        scanLibrary()
+        Task { await scanLibrary() }
     }
 }

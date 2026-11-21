@@ -16,7 +16,7 @@ extension CargoNavigationDestination {
         case .files: coordinator.dashboardState.remoteMediaFiles.count
         case .inbox: coordinator.isRemoteClientMode
             ? coordinator.dashboardState.localJobs.filter { $0.status != .completed }.count
-            : coordinator.inboxFileURLs().count
+            : coordinator.inboxListing.count
         case .history: coordinator.dashboardState.history.count
         case .settings: 0
         }
@@ -1144,6 +1144,11 @@ final class FilesPageViewController: PageViewController {
 // MARK: - Inbox
 
 final class InboxPageViewController: PageViewController {
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        coordinator.refreshInboxListing()
+    }
+
     private struct InboxEntry {
         let sourceURL: URL
         let job: LocalSyncJob?
@@ -1215,7 +1220,7 @@ final class InboxPageViewController: PageViewController {
             .reduce(into: [String: LocalSyncJob]()) { result, job in
                 if let destination = job.destination { result[destination] = job }
             }
-        let inbox = coordinator.inboxFileURLs()
+        let inbox = coordinator.inboxListing
             .map { InboxEntry(sourceURL: $0, job: pendingByDestination[$0.path]) }
             .map { entry -> ListRow in
                 let exists = FileManager.default.fileExists(atPath: entry.sourceURL.path)
@@ -1763,7 +1768,10 @@ final class LibraryPageViewController: PageViewController {
 
     override func listActions() -> [RowAction] {
         [
-            RowAction(title: "Rescan Library", isEnabled: !coordinator.isRemoteClientMode) { [weak self] in self?.coordinator.scanLibrary() },
+            RowAction(title: "Rescan Library", isEnabled: !coordinator.isRemoteClientMode) { [weak self] in
+                guard let self else { return }
+                Task { await self.coordinator.scanLibrary(); self.coordinator.refreshInboxListing() }
+            },
             RowAction(title: "Open Library in Finder", isEnabled: !coordinator.isRemoteClientMode && coordinator.libraryRootURL() != nil) { [weak self] in
                 guard let url = self?.coordinator.libraryRootURL() else { return }
                 NSWorkspace.shared.open(url)

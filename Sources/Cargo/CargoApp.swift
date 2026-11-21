@@ -211,6 +211,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startBackgroundCycle() {
         refreshTask?.cancel()
+        coordinator.refreshInboxListing()
         refreshTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -306,7 +307,7 @@ final class CargoAppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !state.transfers.isEmpty { parts.append("\(state.transfers.count) transfers") }
         let inboxCount = coordinator.isRemoteClientMode
             ? state.localJobs.filter { $0.status != .completed }.count
-            : coordinator.inboxFileURLs().count
+            : coordinator.inboxListing.count
         if inboxCount > 0 { parts.append("\(inboxCount) in Inbox") }
         if coordinator.lastPersistError != nil { parts.append("⚠︎ state not saved") }
         statusHeaderItem.title = parts.joined(separator: " · ")

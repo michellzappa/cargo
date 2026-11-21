@@ -1066,7 +1066,7 @@ final class CargoTests: XCTestCase {
     }
 
     @MainActor
-    func testInboxScanFindsAndOrganizesUntrackedFile() throws {
+    func testInboxScanFindsAndOrganizesUntrackedFile() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("CargoInboxTests-\(UUID().uuidString)", isDirectory: true)
         let stateURL = directory.appendingPathComponent("state.json")
@@ -1090,6 +1090,13 @@ final class CargoTests: XCTestCase {
 
         let coordinator = CargoCoordinator(store: store, client: StubPutIOClient())
         XCTAssertEqual(coordinator.inboxFileURLs().map(\.lastPathComponent), ["Untracked.Movie.2026.mp4"])
+
+        // The dashboard reads the listing that the off-main scan publishes.
+        coordinator.refreshInboxListing()
+        for _ in 0..<100 where coordinator.inboxListing.isEmpty {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(coordinator.inboxListing.map(\.lastPathComponent), ["Untracked.Movie.2026.mp4"])
 
         try coordinator.organizeInboxFile(at: sourceURL)
 

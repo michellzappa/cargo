@@ -82,6 +82,7 @@ extension CargoCoordinator {
 
     @discardableResult
     func organizeInboxFile(at sourceURL: URL) throws -> URL {
+        defer { refreshInboxListing() }
         guard let rootURL = libraryRootURL() else {
             throw SettingsError.inboxFileMissing
         }

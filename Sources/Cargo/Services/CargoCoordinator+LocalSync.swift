@@ -54,6 +54,7 @@ extension CargoCoordinator {
     }
 
     func processLocalSync(remoteFileID: Int) async {
+        defer { refreshInboxListing() }
         guard let jobIndex = state.localJobs.firstIndex(where: { $0.remoteFileID == remoteFileID }),
               state.localJobs[jobIndex].status == .queued,
               LibraryOrganizer.isMediaFile(named: state.localJobs[jobIndex].name) else {
@@ -306,6 +307,7 @@ extension CargoCoordinator {
 
     @discardableResult
     func organizeLocalJob(jobID: UUID) throws -> URL {
+        defer { refreshInboxListing() }
         guard let jobIndex = state.localJobs.firstIndex(where: { $0.id == jobID }),
               state.localJobs[jobIndex].status == .needsReview,
               let sourcePath = state.localJobs[jobIndex].destination else {

@@ -59,6 +59,9 @@ a tag. The app bundles this file for HouseKit (`Changelog.load`).
 
 ### Fixed
 
+- Fixed Cargo freezing at launch, and its API timing out, when the library
+  volume blocked file access. The Inbox and library scans now run off the
+  main thread.
 - Fixed episodic transfer titles to show the series and episode instead of unresolved placeholders.
 - Fixed transfers at 1% showing as 100%.
 - Fixed Put.io dates without a time zone falling back to the current time.

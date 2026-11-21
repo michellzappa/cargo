@@ -507,8 +507,30 @@ final class CargoCoordinator {
         return url
     }
 
+    /// Walks the inbox on the calling thread. UI code reads `inboxListing`
+    /// instead: a volume that blocks `open()` must not freeze the main thread.
     func inboxFileURLs() -> [URL] {
         guard let rootURL = libraryRootURL() else { return [] }
+        return Self.scanInbox(root: rootURL, stagingDirectoryName: state.settings.stagingDirectoryName)
+    }
+
+    /// Re-lists the inbox off the main actor and publishes it to `inboxListing`.
+    /// A scan that never returns blocks only later refreshes, never the UI.
+    func refreshInboxListing() {
+        guard !inboxScanRunning, let rootURL = libraryRootURL() else { return }
+        inboxScanRunning = true
+        let stagingDirectoryName = state.settings.stagingDirectoryName
+        Task { [weak self] in
+            let urls = await Task.detached(priority: .utility) {
+                Self.scanInbox(root: rootURL, stagingDirectoryName: stagingDirectoryName)
+            }.value
+            guard let self else { return }
+            inboxScanRunning = false
+            if urls != inboxListing { inboxListing = urls }
+        }
+    }
+
+    nonisolated static func scanInbox(root rootURL: URL, stagingDirectoryName: String) -> [URL] {
         let isAccessingScopedResource = rootURL.startAccessingSecurityScopedResource()
         defer {
             if isAccessingScopedResource {
@@ -516,10 +538,7 @@ final class CargoCoordinator {
             }
         }
 
-        let inboxURL = rootURL.appendingPathComponent(
-            state.settings.stagingDirectoryName,
-            isDirectory: true
-        )
+        let inboxURL = rootURL.appendingPathComponent(stagingDirectoryName, isDirectory: true)
         let keys: [URLResourceKey] = [.isDirectoryKey]
         guard let enumerator = FileManager.default.enumerator(
             at: inboxURL,
@@ -548,6 +567,11 @@ final class CargoCoordinator {
     var inventoryIndex = RemoteInventoryIndex()
     /// When each transfer first looked stuck. Resets when Cargo restarts.
     var transferStallSince: [Int: Date] = [:]
+    /// The last inbox listing, for the dashboard. See `refreshInboxListing()`.
+    private(set) var inboxListing: [URL] = [] {
+        didSet { scheduleChangeNotification() }
+    }
+    private var inboxScanRunning = false
     private static let inventoryWalkEvery = 10
 
     /// Pulls account, transfers and the activity feed. The recursive inventory
@@ -768,7 +792,7 @@ final class CargoCoordinator {
         pruneHistory()
         pruneDeletedMarkers()
         summary.watchlistAdded = await refreshIMDbWatchlist(force: false)
-        scanLibrary()
+        await scanLibrary()
         await enrichMetadata()
 
         let previousRemoteMediaFileIDs = Set(state.seenRemoteMediaFileIDs)
@@ -841,7 +865,8 @@ final class CargoCoordinator {
             }
         }
 
-        scanLibrary()
+        await scanLibrary()
+        refreshInboxListing()
         if state.settings.automaticTransferCleanEnabled,
            state.transfers.contains(where: { [.completed, .seeding].contains($0.status) }) {
             do {
